@@ -459,6 +459,7 @@ export const FocusTracker: React.FC = () => {
 
       <BreakModal
         isOpen={showBreakModal}
+        onEndBreak={handleEndBreak}
         onClose={handleEndBreak}
       />
 

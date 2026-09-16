@@ -4,7 +4,8 @@ import { formatDigitalClock } from '../services/storage';
 
 interface BreakModalProps {
   isOpen: boolean;
-  onEndBreak: () => void;
+  onEndBreak?: () => void;
+  onClose?: () => void;
 }
 
 const BREAK_OPTIONS = [
@@ -14,10 +15,18 @@ const BREAK_OPTIONS = [
   { label: '20 min', seconds: 20 * 60 }
 ];
 
-export const BreakModal: React.FC<BreakModalProps> = ({ isOpen, onEndBreak }) => {
+export const BreakModal: React.FC<BreakModalProps> = ({ isOpen, onEndBreak, onClose }) => {
   const [selectedDuration, setSelectedDuration] = useState(5 * 60);
   const [remainingSeconds, setRemainingSeconds] = useState(5 * 60);
   const [breathPhase, setBreathPhase] = useState<'Inhale' | 'Hold' | 'Exhale'>('Inhale');
+
+  const handleReturnToFocus = () => {
+    if (onEndBreak) {
+      onEndBreak();
+    } else if (onClose) {
+      onClose();
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -107,7 +116,8 @@ export const BreakModal: React.FC<BreakModalProps> = ({ isOpen, onEndBreak }) =>
 
         {/* Resume Button */}
         <button
-          onClick={onEndBreak}
+          onClick={handleReturnToFocus}
+          type="button"
           className="w-full py-3 px-6 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer"
         >
           <span>Return to Focus Session</span>
