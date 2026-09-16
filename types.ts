@@ -45,12 +45,27 @@ export interface MockResult {
   totalMarks: number;
   testType?: 'FULL' | 'SECTIONAL' | 'TOPIC';
   sheet?: string;
+  seriesId?: string;
+  seriesName?: string;
+  testLink?: string;
   rightQuestions?: number;
   wrongQuestions?: number;
   durationMinutes?: number;
   attempted?: number;
   accuracy?: number;
   notes?: string;
+}
+
+export interface TestSeriesItem {
+  id: string;
+  name: string;
+  provider: string;
+  targetExam: string;
+  url: string;
+  description?: string;
+  status: 'active' | 'completed' | 'upcoming';
+  badge?: string;
+  enrolledDate?: string;
 }
 
 export interface PYQPracticeEntry {

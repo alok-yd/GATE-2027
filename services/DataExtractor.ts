@@ -9,6 +9,7 @@ import {
   StudentProfile,
   StudentSubjectPerformance,
   SubjectPYQPerformance,
+  TestSeriesItem,
   WeeklyStudyTarget,
 } from '../types';
 
@@ -250,6 +251,55 @@ export const deleteMockResult = (id: string) => {
   const mocks = getMockResults().filter((mock) => mock.id !== id);
   localStorage.setItem('gate_mocks', JSON.stringify(mocks));
   window.dispatchEvent(new Event('storage'));
+};
+
+export const DEFAULT_TEST_SERIES: TestSeriesItem[] = [
+  {
+    id: 'ace-ots-gate-2027',
+    name: 'ACE Online Test Series (OTS)',
+    provider: 'ACE Engineering Academy',
+    targetExam: 'GATE 2027 (CS & IT)',
+    url: 'https://ots.aceenggacademy.com/#/user-app/userSubscriptions/userSubView/8021f68f-c9c1-4a19-b235-84b144bf78da/userSubscriptions',
+    description: 'Official Enrolled Online Test Series: Topic-wise, Subject-wise, Multi-Subject, and Full-Length All India Mock Tests.',
+    status: 'active',
+    badge: 'Primary Test Series',
+    enrolledDate: '2026',
+  },
+];
+
+export const getTestSeriesList = (): TestSeriesItem[] => {
+  const stored = safeParse<TestSeriesItem[]>(localStorage.getItem('gate_test_series'), []);
+  if (!stored || stored.length === 0) {
+    localStorage.setItem('gate_test_series', JSON.stringify(DEFAULT_TEST_SERIES));
+    return DEFAULT_TEST_SERIES;
+  }
+  const ace = stored.find((s) => s.id === 'ace-ots-gate-2027');
+  if (ace && ace.url !== DEFAULT_TEST_SERIES[0].url) {
+    ace.url = DEFAULT_TEST_SERIES[0].url;
+    localStorage.setItem('gate_test_series', JSON.stringify(stored));
+  }
+  return stored;
+};
+
+export const saveTestSeries = (item: TestSeriesItem): TestSeriesItem[] => {
+  const current = getTestSeriesList();
+  const exists = current.findIndex((s) => s.id === item.id);
+  let updated: TestSeriesItem[];
+  if (exists >= 0) {
+    updated = current.map((s) => (s.id === item.id ? item : s));
+  } else {
+    updated = [...current, item];
+  }
+  localStorage.setItem('gate_test_series', JSON.stringify(updated));
+  window.dispatchEvent(new Event('storage'));
+  return updated;
+};
+
+export const deleteTestSeries = (id: string): TestSeriesItem[] => {
+  const current = getTestSeriesList().filter((s) => s.id !== id);
+  localStorage.setItem('gate_test_series', JSON.stringify(current));
+  window.dispatchEvent(new Event('storage'));
+  return current;
 };
 
 export const getPYQEntries = (): PYQPracticeEntry[] =>
