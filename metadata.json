@@ -1,0 +1,8 @@
+{
+  "name": "GATE 2027 Prep Tracker",
+  "description": "A strategic roadmap and progress tracker for GATE CS & IT 2027 targeting AIR < 100.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
