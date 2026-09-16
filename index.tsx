@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { seedHistoricalData } from './services/HistoricalDataSeeder';
+import './firebase'; // Initialize Firebase & Analytics
 
 // Initialize and fill previous records/entries from progress report
 seedHistoricalData();
