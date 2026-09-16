@@ -7,12 +7,33 @@ export class GoogleCalendarService {
     return onAuthChanged(cb);
   }
 
-  static async signInWithGoogle(): Promise<{ success: boolean; user?: any; error?: string }> {
+  static async signInWithGoogle(): Promise<{ success: boolean; user?: any; error?: string; errorCode?: string; isConfigError?: boolean }> {
     try {
       const res = await firebaseSignIn();
       return { success: true, user: res.user };
     } catch (e: any) {
-      return { success: false, error: e.message };
+      console.error('Google Calendar sign in error:', e);
+      const code = e.code || '';
+      const msg = e.message || '';
+      const isConfigError = code === 'auth/configuration-not-found' || msg.includes('configuration-not-found');
+
+      let friendlyMsg = msg || 'Failed to authenticate with Google';
+      if (isConfigError) {
+        friendlyMsg = 'Google Sign-In is not enabled yet in your Firebase Project (gate-2027-a8850). Please enable Google Sign-In under Firebase Console -> Authentication -> Sign-in method.';
+      } else if (code === 'auth/popup-closed-by-user') {
+        friendlyMsg = 'The sign-in popup was closed before finishing authentication.';
+      } else if (code === 'auth/popup-blocked') {
+        friendlyMsg = 'The sign-in popup was blocked by your browser. Please allow popups for localhost.';
+      } else if (code === 'auth/unauthorized-domain') {
+        friendlyMsg = 'Current domain is not authorized in Firebase Console (Authentication > Settings > Authorized domains).';
+      }
+
+      return {
+        success: false,
+        error: friendlyMsg,
+        errorCode: code,
+        isConfigError
+      };
     }
   }
 

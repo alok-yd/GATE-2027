@@ -1,6 +1,4 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
-  getAuth,
   signInWithPopup,
   GoogleAuthProvider,
   signOut,
@@ -8,10 +6,8 @@ import {
   User,
   OAuthCredential
 } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
-
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const auth = getAuth(app);
+import { auth } from '../../../services/firebase';
+export { auth };
 
 // In-memory access token cache (MANDATORY: Never store access token in localStorage/sessionStorage)
 let cachedAccessToken: string | null = null;
@@ -31,6 +27,9 @@ export function setCachedAccessToken(token: string | null): void {
 export async function signInWithGoogle(): Promise<{ user: User; accessToken: string | null }> {
   const provider = new GoogleAuthProvider();
   SCOPES.forEach(scope => provider.addScope(scope));
+  provider.setCustomParameters({
+    prompt: 'select_account'
+  });
 
   const result = await signInWithPopup(auth, provider);
   const credential = GoogleAuthProvider.credentialFromResult(result) as OAuthCredential | null;

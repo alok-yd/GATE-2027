@@ -11,7 +11,8 @@ import {
   LogOut,
   ExternalLink,
   BookOpen,
-  CalendarDays
+  CalendarDays,
+  AlertTriangle
 } from 'lucide-react';
 import { formatTimeHoursMins } from '../services/storage';
 
@@ -26,6 +27,7 @@ export const GoogleCalendarSync: React.FC<GoogleCalendarSyncProps> = ({ todaySes
   const [events, setEvents] = useState<GoogleCalendarEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [isConfigError, setIsConfigError] = useState(false);
 
   // Schedule Study Block form state
   const [scheduleSubject, setScheduleSubject] = useState('Algorithms');
@@ -54,6 +56,7 @@ export const GoogleCalendarSync: React.FC<GoogleCalendarSyncProps> = ({ todaySes
   const handleSignIn = async () => {
     setIsLoading(true);
     setStatusMsg(null);
+    setIsConfigError(false);
     const result = await GoogleCalendarService.signInWithGoogle();
     setIsLoading(false);
 
@@ -64,6 +67,9 @@ export const GoogleCalendarSync: React.FC<GoogleCalendarSyncProps> = ({ todaySes
       await loadUpcomingEvents();
     } else {
       setStatusMsg({ type: 'error', text: result.error || 'Sign in failed' });
+      if (result.isConfigError) {
+        setIsConfigError(true);
+      }
     }
   };
 
@@ -191,6 +197,76 @@ export const GoogleCalendarSync: React.FC<GoogleCalendarSyncProps> = ({ todaySes
         }`}>
           {statusMsg.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
           <span>{statusMsg.text}</span>
+        </div>
+      )}
+
+      {/* Configuration Error Guide Box */}
+      {isConfigError && (
+        <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 space-y-4 shadow-xl">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 mt-0.5 shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <h4 className="text-sm font-bold text-amber-200">
+                1-Click Step Required: Enable Google Sign-In in Firebase Console
+              </h4>
+              <p className="text-xs text-amber-300/80 leading-relaxed">
+                Firebase reported <code className="px-1.5 py-0.5 rounded bg-amber-950/60 font-mono text-[11px] text-amber-300">auth/configuration-not-found</code>. This error happens because Google Sign-In has not been turned on yet in your Firebase Project (<span className="font-semibold text-white">gate-2027-a8850</span>).
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3.5 space-y-2">
+              <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 inline-flex items-center justify-center text-[11px] font-bold">1</span>
+                Enable Google Auth in Firebase
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                In Firebase Console, click <strong>"Get started"</strong> under Authentication. Then under <strong>Sign-in method</strong>, select <strong>Google</strong>, toggle <strong>Enable</strong>, select your support email, and click <strong>Save</strong>.
+              </p>
+              <a
+                href="https://console.firebase.google.com/u/1/project/gate-2027-a8850/authentication/providers"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-xs font-medium transition-colors"
+              >
+                <span>Open Firebase Auth Console</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+
+            <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3.5 space-y-2">
+              <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 inline-flex items-center justify-center text-[11px] font-bold">2</span>
+                Enable Google Calendar API
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Enable Google Calendar API on this project so your verified study sessions can sync with your Google Calendar schedule.
+              </p>
+              <a
+                href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=gate-2027-a8850"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-xs font-medium transition-colors"
+              >
+                <span>Open Google Calendar API</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              onClick={handleSignIn}
+              disabled={isLoading}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-amber-600/20"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Retry Connecting Google Calendar</span>
+            </button>
+          </div>
         </div>
       )}
 
