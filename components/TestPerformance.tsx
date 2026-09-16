@@ -253,10 +253,192 @@ const TestPerformance: React.FC = () => {
             className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold tracking-wide hover:bg-indigo-700 transition shadow-lg shadow-indigo-100 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>{isFormOpen ? 'Close Form' : 'Log New Test'}</span>
+            <span>{isFormOpen ? 'Hide Manual Entry Form' : '+ Manually Log New Test'}</span>
           </button>
         </div>
       </section>
+
+      {/* Manual Test Entry Form */}
+      {isFormOpen && (
+        <section className="bg-white rounded-2xl border-2 border-indigo-500/40 shadow-xl p-6 space-y-5 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <span>Manual Test Entry — Record Your Test Performance</span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                Manually record test results from ACE OTS, full mocks, subject tests, or previous year papers
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsFormOpen(false)}
+              className="text-xs font-bold text-slate-400 hover:text-slate-600 px-2 py-1 rounded cursor-pointer"
+            >
+              ✕ Close
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* Test Series / Platform Selector */}
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Platform / Test Source</label>
+              <select
+                value={form.seriesId || 'other'}
+                onChange={(e) => handleSeriesSelect(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-medium bg-white"
+              >
+                {testSeries.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+                <option value="self-practice">Self Practice Mock</option>
+                <option value="pyq-paper">Previous Year GATE Paper (PYQ)</option>
+                <option value="made-easy">Made Easy Test Series</option>
+                <option value="other">Other / Custom</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Test Date</label>
+              <input
+                type="date"
+                value={form.date}
+                onChange={(event) => setForm({ ...form, date: event.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Test Category</label>
+              <select
+                value={form.testType}
+                onChange={(event) => handleTypeChange(event.target.value as MockResult['testType'])}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-medium bg-white"
+              >
+                <option value="FULL">Full Mock Exam (100 Marks • 180 min)</option>
+                <option value="SECTIONAL">Sectional / Subject Test (30 Marks • 60 min)</option>
+                <option value="TOPIC">Topic / Chapter Test (20 Marks • 40 min)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Sheet / Subject / Test Title *</label>
+              <input
+                value={form.sheet}
+                onChange={(event) => setForm({ ...form, sheet: event.target.value })}
+                placeholder="e.g. Algorithms Topic 1, Full Mock 2024..."
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-medium"
+                required
+              />
+            </div>
+
+            {/* Quick Prefill Chips */}
+            <div className="md:col-span-4 flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-slate-400 text-[11px] font-semibold">Quick Suggestions:</span>
+              {['ACE OTS - Full Mock 1', 'ACE OTS - Algorithms', 'ACE OTS - Operating Systems', 'ACE OTS - TOC', 'ACE OTS - DBMS', 'Engineering Math', 'Discrete Math', 'Digital Logic'].map((chip) => (
+                <button
+                  type="button"
+                  key={chip}
+                  onClick={() => setForm((prev) => ({ ...prev, sheet: chip }))}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 text-[11px] font-medium transition cursor-pointer"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Obtained Score *</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.score}
+                  onChange={(event) => setForm({ ...form, score: event.target.value })}
+                  placeholder="e.g. 68.5"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-bold text-slate-900"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Total Marks</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={form.totalMarks}
+                  onChange={(event) => setForm({ ...form, totalMarks: event.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Correct Qs</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={form.rightQuestions}
+                  onChange={(event) => setForm({ ...form, rightQuestions: event.target.value })}
+                  placeholder="35"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Wrong Qs</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={form.wrongQuestions}
+                  onChange={(event) => setForm({ ...form, wrongQuestions: event.target.value })}
+                  placeholder="8"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Time (mins)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={form.durationMinutes}
+                  onChange={(event) => setForm({ ...form, durationMinutes: event.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Performance & Error Analysis Notes</label>
+              <input
+                value={form.notes}
+                onChange={(event) => setForm({ ...form, notes: event.target.value })}
+                placeholder="Identified conceptual gaps in Dijkstra, silly calculation mistake in Q14..."
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-medium"
+              />
+            </div>
+
+            <div className="md:col-span-4 flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsFormOpen(false)}
+                className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-600 text-xs font-bold hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md cursor-pointer transition-colors"
+              >
+                Save Manual Test Record
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
 
       {/* Enrolled Test Series Portals Showcase */}
       <section className="space-y-4">
