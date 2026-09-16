@@ -21,7 +21,7 @@ export class GoogleCalendarService {
       if (isConfigError) {
         friendlyMsg = 'Google Sign-In is not enabled yet in your Firebase Project (gate-2027-a8850). Please enable Google Sign-In under Firebase Console -> Authentication -> Sign-in method.';
       } else if (code === 'auth/popup-closed-by-user') {
-        friendlyMsg = 'The sign-in popup was closed before finishing authentication.';
+        friendlyMsg = 'The sign-in popup was closed before completing. If you saw "Access blocked (Error 403: access_denied)", your account must be added under Test Users in Google Cloud Console.';
       } else if (code === 'auth/popup-blocked') {
         friendlyMsg = 'The sign-in popup was blocked by your browser. Please allow popups for localhost.';
       } else if (code === 'auth/unauthorized-domain') {

@@ -12,7 +12,9 @@ import {
   ExternalLink,
   BookOpen,
   CalendarDays,
-  AlertTriangle
+  AlertTriangle,
+  ShieldCheck,
+  HelpCircle
 } from 'lucide-react';
 import { formatTimeHoursMins } from '../services/storage';
 
@@ -28,6 +30,7 @@ export const GoogleCalendarSync: React.FC<GoogleCalendarSyncProps> = ({ todaySes
   const [isLoading, setIsLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [isConfigError, setIsConfigError] = useState(false);
+  const [showOAuth403Help, setShowOAuth403Help] = useState(false);
 
   // Schedule Study Block form state
   const [scheduleSubject, setScheduleSubject] = useState('Algorithms');
@@ -63,12 +66,15 @@ export const GoogleCalendarSync: React.FC<GoogleCalendarSyncProps> = ({ todaySes
     if (result.success) {
       setIsSignedIn(true);
       setCurrentUser(result.user);
+      setShowOAuth403Help(false);
       setStatusMsg({ type: 'success', text: `Connected Google Calendar as ${result.user?.email}` });
       await loadUpcomingEvents();
     } else {
       setStatusMsg({ type: 'error', text: result.error || 'Sign in failed' });
       if (result.isConfigError) {
         setIsConfigError(true);
+      } else {
+        setShowOAuth403Help(true);
       }
     }
   };
@@ -176,14 +182,24 @@ export const GoogleCalendarSync: React.FC<GoogleCalendarSyncProps> = ({ todaySes
               </button>
             </div>
           ) : (
-            <button
-              onClick={handleSignIn}
-              disabled={isLoading}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/20 transition-all cursor-pointer disabled:opacity-50"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>Connect Google Calendar</span>
-            </button>
+            <div className="flex flex-col sm:items-end gap-1.5">
+              <button
+                onClick={handleSignIn}
+                disabled={isLoading}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <LogIn className="w-4 h-4" />
+                <span>Connect Google Calendar</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowOAuth403Help(prev => !prev)}
+                className="text-[11px] text-zinc-400 hover:text-indigo-400 flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <HelpCircle className="w-3 h-3" />
+                <span>Seeing Error 403 / Access blocked?</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -266,6 +282,72 @@ export const GoogleCalendarSync: React.FC<GoogleCalendarSyncProps> = ({ todaySes
               <LogIn className="w-3.5 h-3.5" />
               <span>Retry Connecting Google Calendar</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* OAuth 403 / Test User Fix Box */}
+      {(showOAuth403Help || (!isSignedIn && statusMsg?.type === 'error' && !isConfigError)) && (
+        <div className="p-5 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 space-y-4 shadow-xl">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 mt-0.5 shrink-0">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-indigo-200">
+                  Fix for "Access blocked (Error 403: access_denied)"
+                </h4>
+                <p className="text-xs text-indigo-300/80 leading-relaxed">
+                  Google blocks sign-in when an app in <em>Testing mode</em> requests sensitive calendar permissions. Simply add your Google account (<span className="font-semibold text-white">alokyadav1422003@gmail.com</span>) to <strong>Test users</strong> in Google Cloud Console.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowOAuth403Help(false)}
+              className="text-xs text-zinc-400 hover:text-zinc-200 px-2 py-1 rounded cursor-pointer"
+            >
+              &times; Close
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3.5 space-y-2">
+              <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 inline-flex items-center justify-center text-[11px] font-bold">1</span>
+                Add Test User (Takes ~10 seconds)
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Open OAuth Consent Screen &rarr; Scroll down to <strong>Test users</strong> &rarr; Click <strong>+ ADD USERS</strong> &rarr; Enter <strong>alokyadav1422003@gmail.com</strong> &rarr; Click <strong>Save</strong>.
+              </p>
+              <a
+                href="https://console.cloud.google.com/apis/credentials/consent?project=gate-2027-a8850"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 rounded-lg text-xs font-medium transition-colors"
+              >
+                <span>Open Google OAuth Consent Screen</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+
+            <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3.5 space-y-2">
+              <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 inline-flex items-center justify-center text-[11px] font-bold">2</span>
+                Approve &amp; Sync Calendar
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Click <strong>Try Connecting Now</strong> below. When Google shows <em>"Google hasn't verified this app"</em>, click <strong>Advanced &rarr; Go to gate-2027-a8850 (unsafe)</strong>, check Calendar permissions, and click <strong>Continue</strong>.
+              </p>
+              <button
+                onClick={handleSignIn}
+                disabled={isLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Try Connecting Now</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
