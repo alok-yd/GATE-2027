@@ -1,7 +1,7 @@
 import { CalibrationProfile, VisionData, ActivityData } from '../../../types';
 import { PoseAnalysisResult } from './PoseAnalyzer';
 import { HandAnalysisResult } from './HandAnalyzer';
-import { phoneDisambiguation } from '../PhoneDisambiguation';
+import { PhoneDisambiguation } from '../PhoneDisambiguation';
 
 export interface PhoneAnalysisResult {
   phoneConfidence: number; // 0.0 to 1.0
@@ -13,6 +13,7 @@ export interface PhoneAnalysisResult {
 }
 
 export class PhoneAnalyzer {
+  private disambiguator = new PhoneDisambiguation();
   private phoneHistory: number[] = [];
   private phoneStartTime: number | null = null;
 
@@ -26,7 +27,7 @@ export class PhoneAnalyzer {
     const now = vision.timestamp || Date.now();
 
     // 1. Explicit Phone vs. Paper Disambiguation Layer
-    const disambiguation = phoneDisambiguation.disambiguate(vision, pose, hand, activity, now);
+    const disambiguation = this.disambiguator.disambiguate(vision, pose, hand, activity, now);
 
     let instantaneousScore = disambiguation.phoneConfidence;
     if (disambiguation.isPhone) {
@@ -85,6 +86,7 @@ export class PhoneAnalyzer {
   reset(): void {
     this.phoneHistory = [];
     this.phoneStartTime = null;
+    this.disambiguator.reset();
   }
 }
 

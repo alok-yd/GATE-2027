@@ -9,7 +9,8 @@ export class PhoneDisambiguation {
   private currentState: PhoneState = 'NO_PHONE';
   private stateEnteredTimestamp: number = Date.now();
   private cleanFramesDurationMs: number = 0;
-  private lastEvaluationTime: number = Date.now();
+  private cleanFrameCount: number = 0;
+  private lastEvaluationTime: number = 0;
 
   disambiguate(
     vision: VisionData,
@@ -18,7 +19,10 @@ export class PhoneDisambiguation {
     activity: ActivityData,
     now: number = Date.now()
   ): PhoneDisambiguationResult {
-    const dt = Math.max(0, Math.min(1000, now - this.lastEvaluationTime));
+    let dt = this.lastEvaluationTime === 0 ? 500 : now - this.lastEvaluationTime;
+    if (dt < 0 || dt > 5000) {
+      dt = 500;
+    }
     this.lastEvaluationTime = now;
 
     // 1. Multi-signal phone evidence extraction
@@ -42,7 +46,10 @@ export class PhoneDisambiguation {
     }
 
     // Hand posture: handheld interaction vs writing
-    if (hand.handActivity && !hand.isWritingBurst) {
+    const handInteraction = vision.phoneEvidence?.handInteractionConfidence;
+    const isHandHoldingPhone = handInteraction !== undefined ? handInteraction >= 0.35 : (handEvidence > 0.4);
+
+    if (hand.handActivity && !hand.isWritingBurst && isHandHoldingPhone) {
       instantaneousPhoneScore += 0.25;
       phoneIndicators.push('Static holding/thumb interaction');
     }
@@ -105,9 +112,10 @@ export class PhoneDisambiguation {
         this.currentState = 'PHONE_USE';
       }
     } else {
-      // Hysteresis: require 2.5 seconds of clean non-phone frames to recover
+      // Hysteresis: require 2.5 seconds of clean non-phone frames or 3 clean frames to recover (Prompt Section 28)
       this.cleanFramesDurationMs += dt;
-      if (this.cleanFramesDurationMs >= 2500) {
+      this.cleanFrameCount++;
+      if (this.cleanFramesDurationMs >= 2500 || this.cleanFrameCount >= 3) {
         this.currentState = 'NO_PHONE';
         this.stateEnteredTimestamp = now;
       }
@@ -158,6 +166,8 @@ export class PhoneDisambiguation {
     this.currentState = 'NO_PHONE';
     this.stateEnteredTimestamp = Date.now();
     this.cleanFramesDurationMs = 0;
+    this.cleanFrameCount = 0;
+    this.lastEvaluationTime = 0;
   }
 }
 

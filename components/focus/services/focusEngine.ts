@@ -191,7 +191,9 @@ export class FocusEngine {
     } else {
       this.settings = newSettings;
     }
-    this.evaluate();
+    if (this.lastVision.timestamp > 0) {
+      this.evaluate();
+    }
   }
 
   getTransitionLogs(): StateTransitionLog[] {
@@ -206,8 +208,61 @@ export class FocusEngine {
     if (this.lastEvaluationOutput) {
       return this.lastEvaluationOutput;
     }
-    this.evaluate();
-    return this.lastEvaluationOutput!;
+    if (this.lastVision.timestamp > 0) {
+      this.evaluate();
+      if (this.lastEvaluationOutput) return this.lastEvaluationOutput;
+    }
+    return {
+      state: this.currentState,
+      score: 85,
+      rawScore: 85,
+      facePresent: false,
+      personPresenceState: 'PERSON_ABSENT',
+      visionQualityScore: 0,
+      activity: 'UNKNOWN',
+      confidenceVector: {
+        paperStudyConfidence: 0,
+        screenStudyConfidence: 0,
+        thinkingConfidence: 0,
+        phoneConfidence: 0,
+        conversationConfidence: 0,
+        sleepConfidence: 0,
+        awayConfidence: 1,
+        overallFocusConfidence: 0
+      },
+      faceVisibility: 'LOW_VISIBILITY',
+      distractionReason: undefined,
+      stateExplanation: 'Waiting for camera initialization...',
+      isGracePeriodActive: false,
+      graceSecondsRemaining: 0,
+      returnConfirmationRemaining: 0,
+      signalBreakdown: { faceScore: 0, headPoseScore: 0, eyeGazeScore: 0, activityScore: 0, appContextScore: 0 },
+      telemetry: {
+        headPitch: 0,
+        headYaw: 0,
+        headRoll: 0,
+        gazeScore: 0,
+        handActivity: false,
+        bodyPostureStable: false,
+        keyboardActive: false,
+        mouseActive: false,
+        idleSeconds: 0,
+        studyMedium: this.settings.studyMedium || 'Screen Study',
+        lightingLevel: 'normal',
+        faceCount: 0,
+        primaryActivity: 'UNKNOWN',
+        phoneConfidence: 0,
+        sleepConfidence: 0,
+        conversationConfidence: 0,
+        inStudyZone: false,
+        personPresenceState: 'PERSON_ABSENT',
+        visionQualityScore: 0,
+        isPersonPresent: false,
+        signalConflicts: []
+      },
+      recentTransitions: [],
+      activityEvents: []
+    };
   }
 
   updateVision(data: VisionData): void {
@@ -248,7 +303,9 @@ export class FocusEngine {
     if (newState === 'BREAK' || newState === 'IDLE' || newState === 'COMPLETED' || newState === 'UNVERIFIED') {
       this.temporalEngine.resetAllTimers();
     }
-    this.evaluate();
+    if (this.lastVision.timestamp > 0) {
+      this.evaluate();
+    }
   }
 
   reset(): void {
@@ -289,6 +346,9 @@ export class FocusEngine {
   }
 
   private evaluate(): void {
+    if (this.lastVision.timestamp === 0) {
+      return;
+    }
     const now = this.lastVision.timestamp || Date.now();
     const profile = calibrationEngine.getProfile();
     const medium = this.settings.studyMedium || 'Screen Study';
@@ -460,20 +520,6 @@ export function isVerifiedFocus(
                   (output?.confidenceVector?.screenStudyConfidence ?? 0) > 0.35 || 
                   (output?.confidenceVector?.thinkingConfidence ?? 0) > 0.40;
 
-  if (state === 'AWAY' || !present) {
-    return {
-      verified: false,
-      state: 'PAUSED_ABSENT',
-      reason: 'User is away from desk',
-      confidence: 0.0,
-      personPresent: false,
-      cameraHealthy: camOk,
-      phoneDetected: phone,
-      studyEvidence: false,
-      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
-    };
-  }
-
   if (!camOk || state === 'UNVERIFIED') {
     return {
       verified: false,
@@ -482,6 +528,20 @@ export function isVerifiedFocus(
       confidence: 0.0,
       personPresent: present,
       cameraHealthy: false,
+      phoneDetected: phone,
+      studyEvidence: false,
+      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+    };
+  }
+
+  if (state === 'AWAY' || !present) {
+    return {
+      verified: false,
+      state: 'PAUSED_ABSENT',
+      reason: 'User is away from desk',
+      confidence: 0.0,
+      personPresent: false,
+      cameraHealthy: camOk,
       phoneDetected: phone,
       studyEvidence: false,
       studyMedium: output?.telemetry?.studyMedium || 'Screen Study'

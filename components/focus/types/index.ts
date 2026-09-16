@@ -54,6 +54,22 @@ export interface FocusVerificationGateResult {
   studyMedium: StudyMedium;
 }
 
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PresenceEvidence {
+  present: boolean;
+  faceConfidence: number;
+  poseConfidence: number;
+  temporalConfidence: number;
+  confidence: number;
+  timestamp: number;
+}
+
 export interface PhoneEvidence {
   detected: boolean;
   confidence: number; // 0 to 1
@@ -61,6 +77,11 @@ export interface PhoneEvidence {
   handPhoneEvidence: number; // 0 to 1
   proximityEvidence: number; // 0 to 1
   temporalEvidence: number; // 0 to 1
+  bbox?: BoundingBox;
+  handInteractionConfidence?: number;
+  faceProximityConfidence?: number;
+  persistenceMs?: number;
+  timestamp?: number;
 }
 
 export type ActivityType =
@@ -263,6 +284,11 @@ export interface EvaluationMetrics {
   falsePositiveRate: number;
   falseNegativeRate: number;
   falsePauseRate: number;
+  falseVerifiedFocusRate?: number;
+  falsePhoneDetectionRate?: number;
+  falseAwayDetectionRate?: number;
+  missedPhoneRate?: number;
+  missedAwayRate?: number;
   confusionMatrix: EvaluationConfusionMatrix;
   totalScenarios: number;
   passedScenarios: number;
@@ -375,6 +401,7 @@ export interface FocusSession {
   notes?: string;
   transitionLogs?: StateTransitionLog[];
   activityEvents?: ActivityEventLog[];
+  segments?: FocusSegment[];
 
   // GATE Tracker structured integration fields
   sessionId?: string;
@@ -459,4 +486,118 @@ export interface GoogleCalendarEvent {
   start: { dateTime?: string; date?: string };
   end: { dateTime?: string; date?: string };
   htmlLink?: string;
+}
+
+// ----------------------------------------------------------------------------
+// Timestamp-Based Verified Segments
+// ----------------------------------------------------------------------------
+export interface FocusSegment {
+  id: string;
+  sessionId: string;
+  start: number;
+  end: number;
+  durationMs: number;
+  state: FocusState;
+  verified: boolean;
+  medium?: StudyMedium;
+  reason?: string;
+}
+
+// ----------------------------------------------------------------------------
+// AI / ML Perception & Tracking Types
+// ----------------------------------------------------------------------------
+export type AIRuntimeProvider = 'WebGPU' | 'WASM' | 'CPU';
+
+export interface DeviceCapabilities {
+  hasWebGPU: boolean;
+  hasWasm: boolean;
+  selectedProvider: AIRuntimeProvider;
+  screenWidth: number;
+  screenHeight: number;
+  hardwareConcurrency: number;
+  isMobile: boolean;
+}
+
+export type ModelReadinessState = 'uninitialized' | 'loading' | 'ready' | 'degraded' | 'failed' | 'fallback';
+
+export interface ModelStatusMap {
+  face: ModelReadinessState;
+  pose: ModelReadinessState;
+  hands: ModelReadinessState;
+  object: ModelReadinessState;
+}
+
+export interface TrackedObject {
+  trackId: string;
+  label: 'cell phone' | 'person' | 'laptop' | 'book' | 'tablet' | 'notebook' | 'other';
+  confidence: number;
+  bbox: BoundingBox;
+  centroid: { x: number; y: number };
+  velocity: { vx: number; vy: number };
+  ageMs: number;
+  firstSeen: number;
+  lastSeen: number;
+  isHeldInHand: boolean;
+  nearFace: boolean;
+  isOnDesk: boolean;
+  handOverlapScore: number;
+}
+
+export interface AIDiagnosticsData {
+  cameraHealth: 'HEALTHY' | 'DEGRADED' | 'FAILED' | 'STALE';
+  personPresent: boolean;
+  personConfidence: number;
+  faceConfidence: number;
+  poseConfidence: number;
+  handsConfidence: number;
+  phoneConfidence: number;
+  phoneUseConfidence: number;
+  paperStudyConfidence: number;
+  screenStudyConfidence: number;
+  thinkingConfidence: number;
+  focusConfidence: number;
+  focusState: FocusState;
+  isVerified: boolean;
+  timerRunning: boolean;
+  inferenceFps: number;
+  avgInferenceLatencyMs: number;
+  aiRuntime: AIRuntimeProvider;
+  droppedFrames: number;
+  modelStatus: ModelStatusMap;
+  lastUpdateTimestamp: number;
+}
+
+export interface FocusFeatureVector {
+  facePresent: boolean;
+  faceConfidence: number;
+  headYaw: number;
+  headPitch: number;
+  headRoll: number;
+  gazeScore: number;
+  poseConfidence: number;
+  postureStable: boolean;
+  handActivity: boolean;
+  handDeskScore: number;
+  phoneConfidence: number;
+  phoneDistanceFromFace: number;
+  phoneHandOverlap: number;
+  keyboardActivity: boolean;
+  mouseActivity: boolean;
+  paperActivityScore: number;
+  deskActivityScore: number;
+  screenActivityScore: number;
+  temporalStabilityScore: number;
+  cameraHealthConfidence: number;
+  studyMedium: StudyMedium;
+}
+
+export interface FocusClassificationResult {
+  recommendedState: FocusState;
+  confidence: number;
+  explanation: string;
+  featureScores: Record<string, number>;
+}
+
+export interface FocusClassifier {
+  classify(features: FocusFeatureVector): FocusClassificationResult;
 }

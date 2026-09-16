@@ -1,5 +1,7 @@
-import { VisionData } from '../types';
+import { VisionData, PhoneEvidence } from '../types';
 import { calibrationEngine } from '../services/calibrationEngine';
+import { frameScheduler, PerceptionFrame } from '../services/ml/FrameScheduler';
+import { modelManager } from '../services/ml/ModelManager';
 
 export type VisionCallback = (data: VisionData) => void;
 export type CameraFailureCallback = (reason: string) => void;
@@ -15,6 +17,8 @@ export class VisionEngine {
   private isSimulated: boolean = false;
   private callbacks: Set<VisionCallback> = new Set();
   private failureCallbacks: Set<CameraFailureCallback> = new Set();
+  private latestPerception: PerceptionFrame | null = null;
+  private unsubscribeScheduler: (() => void) | null = null;
   
   // Smoothing history
   private yawHistory: number[] = [];
@@ -93,6 +97,14 @@ export class VisionEngine {
       this.isRunning = true;
       this.isSimulated = false;
       this.consecutiveBlankFrames = 0;
+
+      // Start ModelManager and FrameScheduler for AI/ML perception
+      modelManager.initialize().catch(console.warn);
+      this.unsubscribeScheduler = frameScheduler.subscribe((perception) => {
+        this.latestPerception = perception;
+      });
+      frameScheduler.start(this.videoElement);
+
       this.loop(fps);
 
       return { success: true };
@@ -162,6 +174,12 @@ export class VisionEngine {
   stop(): void {
     this.isRunning = false;
     this.isSimulated = false;
+    if (this.unsubscribeScheduler) {
+      this.unsubscribeScheduler();
+      this.unsubscribeScheduler = null;
+    }
+    frameScheduler.stop();
+    this.latestPerception = null;
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -324,7 +342,8 @@ export class VisionEngine {
       faceAspectRatio <= 2.2 &&
       faceCentroidY < (ch * 0.70);
 
-    const rawFacePresent = skinRatio >= 0.04 && skinRatio <= 0.80 && isFaceGeometricMatch;
+    const isPerceptionFace = this.latestPerception?.face.detected ?? false;
+    const rawFacePresent = (isPerceptionFace || (skinRatio >= 0.04 && skinRatio <= 0.80 && isFaceGeometricMatch));
 
     this.presenceHistory.push(rawFacePresent);
     if (this.presenceHistory.length > 5) this.presenceHistory.shift();
@@ -365,17 +384,19 @@ export class VisionEngine {
       this.lastHandActivityTimestamp = now;
     }
 
+    const mlHandsActive = this.latestPerception?.hands.detected && (this.latestPerception.hands.isDeskActivity || this.latestPerception.hands.isWritingLikeMovement);
+
     // Hand activity: If face is present, allow up to 20s thinking pause.
     // If face is ABSENT, NEVER persist hand activity — must drop immediately to instant motion!
     const handActivity = facePresent 
-      ? (now - this.lastHandActivityTimestamp) < 20000
+      ? (mlHandsActive || (now - this.lastHandActivityTimestamp) < 20000)
       : instantHandMotion;
 
     const deskActivityScore = instantHandMotion 
       ? Math.max(0.65, deskMotionScore) 
       : (handActivity ? 0.40 : 0.05);
 
-    // 3. Visual Phone / Device Detection Scan in chest/hand region
+    // 3. Visual Phone / Device Detection & Tracking Fusion
     let visualPhoneScore = 0.0;
     let handPhoneScore = 0.0;
     const phoneScanStartY = Math.floor(ch * 0.35);
@@ -408,7 +429,6 @@ export class VisionEngine {
     const brightRatio = brightScreenPixels / totalPhoneSamples;
     const gradientRatio = candidateVerticalGradients / totalPhoneSamples;
 
-    // A phone held in hand produces either a localized dark screen slab or bright glow with strong border edges
     if (gradientRatio > 0.12 && (darkRatio > 0.08 || brightRatio > 0.06)) {
       visualPhoneScore = Math.min(0.95, Number((0.45 + (darkRatio + brightRatio) * 1.5 + gradientRatio * 1.2).toFixed(2)));
       if (deskSkinPresent) {
@@ -416,20 +436,50 @@ export class VisionEngine {
       }
     }
 
-    const phoneDetectedScore = Math.max(visualPhoneScore, handPhoneScore);
-    const phoneDetected = phoneDetectedScore >= 0.50;
+    // Blend with ObjectTracker ML phone track if available
+    let phoneEvidence: PhoneEvidence;
+    const trackedPhone = this.latestPerception?.phoneTrack;
 
-    const phoneEvidence = {
-      detected: phoneDetected,
-      confidence: phoneDetectedScore,
-      visualEvidence: visualPhoneScore,
-      handPhoneEvidence: handPhoneScore,
-      proximityEvidence: (facePresent && phoneDetectedScore > 0.40) ? 0.75 : 0.20,
-      temporalEvidence: 0.50
-    };
+    if (trackedPhone) {
+      const isHeld = trackedPhone.isHeldInHand || trackedPhone.nearFace;
+      visualPhoneScore = Math.max(visualPhoneScore, trackedPhone.confidence);
+      handPhoneScore = isHeld ? Math.max(0.85, trackedPhone.confidence) : 0.25;
+      const phoneDetectedScore = isHeld ? Math.max(visualPhoneScore, handPhoneScore) : Math.min(0.35, visualPhoneScore * 0.5);
+      const phoneDetected = isHeld && (phoneDetectedScore >= 0.55);
+
+      phoneEvidence = {
+        detected: phoneDetected,
+        confidence: phoneDetectedScore,
+        visualEvidence: visualPhoneScore,
+        handPhoneEvidence: handPhoneScore,
+        proximityEvidence: trackedPhone.nearFace ? 0.95 : (isHeld ? 0.75 : 0.2),
+        temporalEvidence: Math.min(1.0, trackedPhone.ageMs / 1500),
+        bbox: trackedPhone.bbox,
+        handInteractionConfidence: trackedPhone.handOverlapScore,
+        faceProximityConfidence: trackedPhone.nearFace ? 0.95 : 0.1,
+        persistenceMs: trackedPhone.ageMs,
+        timestamp: now
+      };
+    } else {
+      const phoneDetectedScore = Math.max(visualPhoneScore, handPhoneScore);
+      const phoneDetected = phoneDetectedScore >= 0.50;
+      phoneEvidence = {
+        detected: phoneDetected,
+        confidence: phoneDetectedScore,
+        visualEvidence: visualPhoneScore,
+        handPhoneEvidence: handPhoneScore,
+        proximityEvidence: (facePresent && phoneDetectedScore > 0.40) ? 0.75 : 0.20,
+        temporalEvidence: 0.50,
+        persistenceMs: 0,
+        timestamp: now
+      };
+    }
+
+    const phoneDetectedScore = phoneEvidence.confidence;
 
     let headYaw = 0;
     let headPitch = 0;
+    let headRoll = 0;
     let eyeOpen = true;
     let gazeScore = 0.9;
     let confidence = 0.0;
@@ -517,10 +567,26 @@ export class VisionEngine {
         width: Math.round((boxW / cw) * 100),
         height: Math.round((boxH / ch) * 100)
       };
+
+      if (this.latestPerception?.face.detected) {
+        headYaw = this.latestPerception.face.yaw;
+        headPitch = this.latestPerception.face.pitch;
+        headRoll = this.latestPerception.face.roll;
+        gazeScore = this.latestPerception.face.gazeScore;
+        eyeOpen = this.latestPerception.face.eyeOpen;
+        if (this.latestPerception.face.bbox) {
+          faceBox = this.latestPerception.face.bbox;
+        }
+      }
+
+      if (this.latestPerception?.pose.detected) {
+        bodyPostureStable = this.latestPerception.pose.isPostureStable;
+      }
     } else {
       confidence = 0.0;
       headYaw = 0;
       headPitch = 0;
+      headRoll = 0;
       gazeScore = 0.0;
       eyeOpen = false;
       bodyPostureStable = false;
@@ -533,7 +599,7 @@ export class VisionEngine {
       confidence: cameraHealthy ? confidence : 0.0,
       headYaw: facePresent && cameraHealthy ? headYaw : 0,
       headPitch: facePresent && cameraHealthy ? headPitch : 0,
-      headRoll: 0,
+      headRoll: facePresent && cameraHealthy ? headRoll : 0,
       eyeOpen: facePresent && cameraHealthy ? eyeOpen : false,
       gazeScore: facePresent && cameraHealthy ? gazeScore : 0.0,
       faceBox: facePresent && cameraHealthy ? faceBox : undefined,

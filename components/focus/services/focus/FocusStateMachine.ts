@@ -201,7 +201,8 @@ export class FocusStateMachine {
         currentState === 'POSSIBLE_SLEEP';
 
       if (wasInterrupted) {
-        const returnConfirm = temporal.handleReturnConfirmation(true, now, returnConfirmationSeconds);
+        const requiredConfirmSeconds = currentState === 'PHONE_USE' ? 2.5 : returnConfirmationSeconds;
+        const returnConfirm = temporal.handleReturnConfirmation(true, now, requiredConfirmSeconds);
         if (returnConfirm.isFocusConfirmed) {
           nextState = targetFocusedState;
           stateExplanation = 'Focus re-established and confirmed.';

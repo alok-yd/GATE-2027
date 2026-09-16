@@ -120,7 +120,7 @@ export class TemporalEngine {
         this.returnFocusStartTime = now;
       }
       const focusDuration = (now - this.returnFocusStartTime) / 1000;
-      const isFocusConfirmed = focusDuration >= requiredSeconds;
+      const isFocusConfirmed = focusDuration >= (requiredSeconds - 0.05);
       const returnSecondsRemaining = Math.max(0, Math.ceil(requiredSeconds - focusDuration));
 
       if (isFocusConfirmed) {

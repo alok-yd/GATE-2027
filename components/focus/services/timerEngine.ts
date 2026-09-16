@@ -1,5 +1,5 @@
 import { FocusEngine, FocusEngineOutput } from './focusEngine';
-import { FocusMode, FocusSession, FocusState, FocusTimelineEvent, isFocusedState, StudyMedium } from '../types';
+import { FocusMode, FocusSegment, FocusSession, FocusState, FocusTimelineEvent, isFocusedState, StudyMedium } from '../types';
 import { StorageService } from './storage';
 import { soundFx } from './audio';
 
@@ -85,10 +85,49 @@ export class TimerEngine {
   private timelineBuffer: FocusTimelineEvent[] = [];
   private lastTimelineLog: number = 0;
 
+  // Timestamp-based Verified Segments
+  private activeSegments: FocusSegment[] = [];
+  private currentSegment: FocusSegment | null = null;
+
   constructor(focusEngine: FocusEngine) {
     this.focusEngine = focusEngine;
     this.medium = focusEngine.getStudyMedium();
     this.focusEngine.subscribe(this.handleFocusEngineOutput);
+  }
+
+  private transitionSegment(newState: FocusState, verified: boolean, reason?: string, now: number = Date.now()): void {
+    if (!this.activeSessionId) return;
+
+    if (this.currentSegment) {
+      this.currentSegment.end = now;
+      this.currentSegment.durationMs = Math.max(0, now - this.currentSegment.start);
+      this.activeSegments.push({ ...this.currentSegment });
+    }
+
+    this.currentSegment = {
+      id: `seg_${now}_${this.activeSegments.length + 1}`,
+      sessionId: this.activeSessionId,
+      start: now,
+      end: now,
+      durationMs: 0,
+      state: newState,
+      verified,
+      medium: this.medium,
+      reason
+    };
+  }
+
+  getSegments(): FocusSegment[] {
+    const list = [...this.activeSegments];
+    if (this.currentSegment) {
+      const now = Date.now();
+      list.push({
+        ...this.currentSegment,
+        end: now,
+        durationMs: Math.max(0, now - this.currentSegment.start)
+      });
+    }
+    return list;
   }
 
   subscribe(callback: TimerTickCallback): () => void {
@@ -164,6 +203,10 @@ export class TimerEngine {
       this.previousState = 'UNCERTAIN';
       this.focusEngine.setState('UNCERTAIN', 'Session started; waiting for camera verification');
     }
+
+    this.activeSegments = [];
+    this.currentSegment = null;
+    this.transitionSegment(this.previousState, verification.verified, 'Session initiated', now);
 
     if (this.intervalId !== null) {
       if (typeof window !== 'undefined') {
@@ -279,8 +322,17 @@ export class TimerEngine {
       distractionCount: this.distractionCount,
       status: focusedSec >= this.targetSeconds ? 'COMPLETED' : 'STOPPED',
       transitionLogs: this.focusEngine.getTransitionLogs(),
-      activityEvents: this.focusEngine.getActivityEvents()
+      activityEvents: this.focusEngine.getActivityEvents(),
+      segments: [...this.activeSegments]
     };
+
+    if (this.currentSegment) {
+      this.currentSegment.end = endTime;
+      this.currentSegment.durationMs = Math.max(0, endTime - this.currentSegment.start);
+      this.activeSegments.push({ ...this.currentSegment });
+      this.currentSegment = null;
+      completedSession.segments = [...this.activeSegments];
+    }
 
     StorageService.saveSession(completedSession);
     if (this.timelineBuffer.length > 0) {
@@ -310,6 +362,12 @@ export class TimerEngine {
 
     const curr = output.state;
     const prev = this.previousState;
+    const verification = this.focusEngine.getVerificationStatus();
+
+    // Record verified segment transition if state or verification changes
+    if (curr !== prev || (this.currentSegment && this.currentSegment.verified !== verification.verified)) {
+      this.transitionSegment(curr, verification.verified, output.stateExplanation || output.distractionReason);
+    }
 
     // Transitions between focused states (SCREEN, PAPER, MIXED) are continuous and do not fragment
     const isBothFocused = isFocusedState(curr) && isFocusedState(prev);

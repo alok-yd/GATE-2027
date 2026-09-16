@@ -3,6 +3,7 @@ import { FocusEngineOutput } from '../services/focusEngine';
 import { TimerTickData } from '../services/timerEngine';
 import { StudyMedium, VisionData } from '../types';
 import { visionEngine } from '../vision/visionEngine';
+import { AIDiagnosticsHUD } from './AIDiagnosticsHUD';
 import {
   Play,
   Pause,
@@ -746,6 +747,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* Real-Time AI Diagnostics HUD */}
+      <AIDiagnosticsHUD engineOutput={engineOutput} tickData={tickData} />
 
       {/* Main Focus Arena: Timer + State Status Banner + Camera Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

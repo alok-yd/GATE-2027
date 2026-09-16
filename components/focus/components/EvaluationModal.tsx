@@ -77,7 +77,7 @@ export const EvaluationModal: React.FC<EvaluationModalProps> = ({
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {/* Top Score Cards */}
           {metrics && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div className="bg-zinc-950 p-3 rounded-2xl border border-zinc-800 space-y-1">
                 <span className="text-[11px] text-zinc-500 block">Precision</span>
                 <span className="text-xl font-bold font-mono text-emerald-400">
@@ -108,6 +108,14 @@ export const EvaluationModal: React.FC<EvaluationModalProps> = ({
                   {(metrics.falsePauseRate * 100).toFixed(1)}%
                 </span>
                 <span className="text-[10px] text-emerald-500/80 block">Target: 0.0% (Passed)</span>
+              </div>
+
+              <div className="bg-zinc-950 p-3 rounded-2xl border border-rose-500/30 bg-rose-950/10 space-y-1 col-span-2 sm:col-span-1">
+                <span className="text-[11px] text-rose-400 font-semibold block">False Focus Rate</span>
+                <span className="text-xl font-bold font-mono text-emerald-400">
+                  {((metrics.falseVerifiedFocusRate ?? 0) * 100).toFixed(1)}%
+                </span>
+                <span className="text-[10px] text-emerald-500/80 block">Zero false focus target</span>
               </div>
             </div>
           )}
