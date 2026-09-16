@@ -130,34 +130,24 @@ export class VisionEngine {
   }
 
   private emitSimulatedFrame(): void {
-    const t = Date.now() / 1000;
-    // Micro-variations representing realistic paper or screen study
-    const rawYaw = Math.round(Math.sin(t * 0.4) * 4);
-    const rawPitch = Math.round(Math.cos(t * 0.25) * 4 - 14); // naturally angled downwards towards desk
-    const isWritingCycle = Math.sin(t * 0.3) > -0.2; // writing for ~30-40s with thinking pauses
-
     const payload: VisionData = {
-      facePresent: true,
-      confidence: 0.96,
-      headYaw: rawYaw,
-      headPitch: rawPitch,
+      facePresent: false,
+      confidence: 0.0,
+      headYaw: 0,
+      headPitch: 0,
       headRoll: 0,
-      eyeOpen: true,
-      gazeScore: 0.92,
-      faceBox: {
-        x: 20,
-        y: 18,
-        width: 60,
-        height: 65
-      },
-      handActivity: isWritingCycle,
-      bodyPostureStable: true,
-      deskActivityScore: isWritingCycle ? 0.75 : 0.4,
-      isLookingDown: rawPitch < -8,
+      eyeOpen: false,
+      gazeScore: 0.0,
+      handActivity: false,
+      bodyPostureStable: false,
+      deskActivityScore: 0.0,
+      isLookingDown: false,
       lightingLevel: 'normal',
-      lightingScore: 0.65,
-      faceCount: 1,
-      cameraHealthy: true,
+      lightingScore: 0.5,
+      faceCount: 0,
+      cameraHealthy: false,
+      cameraHealthConfidence: 0.0,
+      isSimulated: true,
       timestamp: Date.now()
     };
 
@@ -305,27 +295,43 @@ export class VisionEngine {
     const lightingLevel: 'dark' | 'low' | 'normal' | 'bright' =
       avgLuma < 25 ? 'dark' : avgLuma < 65 ? 'low' : avgLuma > 220 ? 'bright' : 'normal';
 
-    // Blank frame detection (e.g. camera lens covered or hardware stopped sending pixels)
+    // Whole-frame freeze detection & blank frame monitoring
+    const totalLumaDiff = Math.abs(totalLuma - (this.previousDeskLuminance ? this.lastAnalysisTime : totalLuma));
     if (avgLuma < 4) {
       this.consecutiveBlankFrames++;
-      if (this.consecutiveBlankFrames > 30) { // ~3 seconds at 10 FPS
+      if (this.consecutiveBlankFrames > 20) {
         this.handleCameraFailure('Camera is blocked, covered, or producing blank black frames');
       }
     } else {
       this.consecutiveBlankFrames = 0;
     }
 
-    const skinRatio = skinPixelCount / totalSampled;
+    const cameraHealthy = this.consecutiveBlankFrames < 20;
 
-    // Face presence threshold: minimum mass of skin in reasonable human proportions
-    const rawFacePresent = skinRatio >= 0.04 && skinRatio <= 0.85 && (maxX - minX) > 18 && (maxY - minY) > 18;
+    const skinRatio = skinPixelCount / totalSampled;
+    const boxW = maxX - minX;
+    const boxH = maxY - minY;
+    const faceAspectRatio = boxH / Math.max(1, boxW);
+    const faceCentroidY = skinPixelCount > 0 ? sumY / skinPixelCount : ch;
+
+    // Face presence validation:
+    // Requires real face dimensions, sensible aspect ratio, and upper-body location (not desk wood)
+    const isFaceGeometricMatch = 
+      boxW >= 18 && 
+      boxH >= 18 && 
+      boxW <= cw * 0.78 && 
+      faceAspectRatio >= 0.65 && 
+      faceAspectRatio <= 2.2 &&
+      faceCentroidY < (ch * 0.70);
+
+    const rawFacePresent = skinRatio >= 0.04 && skinRatio <= 0.80 && isFaceGeometricMatch;
 
     this.presenceHistory.push(rawFacePresent);
     if (this.presenceHistory.length > 5) this.presenceHistory.shift();
-    const facePresent = this.presenceHistory.filter(Boolean).length >= 3;
+    const facePresent = this.presenceHistory.filter(Boolean).length >= 3 && cameraHealthy;
 
-    // Estimate multiple faces (e.g. bounding box span is unusually wide or high ratio)
-    const boxSpanRatio = (maxX - minX) / cw;
+    // Estimate multiple faces
+    const boxSpanRatio = boxW / cw;
     const faceCount = skinRatio > 0.45 && boxSpanRatio > 0.75 ? 2 : (facePresent ? 1 : 0);
 
     // 2. Desk Motion & Hand / Writing Activity Estimation
@@ -359,9 +365,68 @@ export class VisionEngine {
       this.lastHandActivityTimestamp = now;
     }
 
-    // Temporal smoothing: maintain hand/writing confidence for 45 seconds (allows quiet thinking pauses)
-    const handActivity = (now - this.lastHandActivityTimestamp) < 45000;
-    const deskActivityScore = instantHandMotion ? Math.max(0.65, deskMotionScore) : (handActivity ? 0.45 : 0.15);
+    // Hand activity: If face is present, allow up to 20s thinking pause.
+    // If face is ABSENT, NEVER persist hand activity — must drop immediately to instant motion!
+    const handActivity = facePresent 
+      ? (now - this.lastHandActivityTimestamp) < 20000
+      : instantHandMotion;
+
+    const deskActivityScore = instantHandMotion 
+      ? Math.max(0.65, deskMotionScore) 
+      : (handActivity ? 0.40 : 0.05);
+
+    // 3. Visual Phone / Device Detection Scan in chest/hand region
+    let visualPhoneScore = 0.0;
+    let handPhoneScore = 0.0;
+    const phoneScanStartY = Math.floor(ch * 0.35);
+
+    // Scan for high-contrast handheld vertical rectangular blocks (aspect ratio 1.7 to 2.2)
+    let candidateVerticalGradients = 0;
+    let darkRectangularPixels = 0;
+    let brightScreenPixels = 0;
+
+    for (let py = phoneScanStartY; py < ch - 6; py += 3) {
+      for (let px = 15; px < cw - 15; px += 3) {
+        const idx = (py * cw + px) * 4;
+        const pluma = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+        const nextIdx = (py * cw + (px + 4)) * 4;
+        const nextLuma = 0.299 * data[nextIdx] + 0.587 * data[nextIdx + 1] + 0.114 * data[nextIdx + 2];
+        
+        if (Math.abs(pluma - nextLuma) > 40) {
+          candidateVerticalGradients++;
+        }
+        if (pluma < 45) {
+          darkRectangularPixels++;
+        } else if (pluma > 185) {
+          brightScreenPixels++;
+        }
+      }
+    }
+
+    const totalPhoneSamples = ((ch - phoneScanStartY) / 3) * ((cw - 30) / 3);
+    const darkRatio = darkRectangularPixels / totalPhoneSamples;
+    const brightRatio = brightScreenPixels / totalPhoneSamples;
+    const gradientRatio = candidateVerticalGradients / totalPhoneSamples;
+
+    // A phone held in hand produces either a localized dark screen slab or bright glow with strong border edges
+    if (gradientRatio > 0.12 && (darkRatio > 0.08 || brightRatio > 0.06)) {
+      visualPhoneScore = Math.min(0.95, Number((0.45 + (darkRatio + brightRatio) * 1.5 + gradientRatio * 1.2).toFixed(2)));
+      if (deskSkinPresent) {
+        handPhoneScore = Math.min(0.95, visualPhoneScore + 0.15);
+      }
+    }
+
+    const phoneDetectedScore = Math.max(visualPhoneScore, handPhoneScore);
+    const phoneDetected = phoneDetectedScore >= 0.50;
+
+    const phoneEvidence = {
+      detected: phoneDetected,
+      confidence: phoneDetectedScore,
+      visualEvidence: visualPhoneScore,
+      handPhoneEvidence: handPhoneScore,
+      proximityEvidence: (facePresent && phoneDetectedScore > 0.40) ? 0.75 : 0.20,
+      temporalEvidence: 0.50
+    };
 
     let headYaw = 0;
     let headPitch = 0;
@@ -453,30 +518,37 @@ export class VisionEngine {
         height: Math.round((boxH / ch) * 100)
       };
     } else {
-      confidence = 0.05;
+      confidence = 0.0;
+      headYaw = 0;
+      headPitch = 0;
       gazeScore = 0.0;
       eyeOpen = false;
       bodyPostureStable = false;
       isLookingDown = false;
+      faceBox = undefined;
     }
 
     const payload: VisionData = {
-      facePresent,
-      confidence,
-      headYaw,
-      headPitch,
+      facePresent: facePresent && cameraHealthy,
+      confidence: cameraHealthy ? confidence : 0.0,
+      headYaw: facePresent && cameraHealthy ? headYaw : 0,
+      headPitch: facePresent && cameraHealthy ? headPitch : 0,
       headRoll: 0,
-      eyeOpen,
-      gazeScore,
-      faceBox,
+      eyeOpen: facePresent && cameraHealthy ? eyeOpen : false,
+      gazeScore: facePresent && cameraHealthy ? gazeScore : 0.0,
+      faceBox: facePresent && cameraHealthy ? faceBox : undefined,
       handActivity,
-      bodyPostureStable,
+      bodyPostureStable: facePresent && cameraHealthy ? bodyPostureStable : false,
       deskActivityScore,
-      isLookingDown,
+      isLookingDown: facePresent && cameraHealthy ? isLookingDown : false,
       lightingLevel,
       lightingScore,
-      faceCount,
-      cameraHealthy: true,
+      faceCount: facePresent && cameraHealthy ? faceCount : 0,
+      cameraHealthy,
+      cameraHealthConfidence: cameraHealthy ? 1.0 : 0.0,
+      phoneDetectedScore,
+      phoneEvidence,
+      isSimulated: false,
       timestamp: now
     };
 

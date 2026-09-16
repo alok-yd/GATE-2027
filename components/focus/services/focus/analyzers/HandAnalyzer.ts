@@ -30,8 +30,9 @@ export class HandAnalyzer {
     // Recent hand activity: within last 45 seconds
     const handActivity = elapsedSeconds <= 45;
 
-    // Writing burst: immediate high movement in desk quadrant
-    const isWritingBurst = instantMotion && rawDeskActivity > 0.4;
+    // Writing burst: immediate high movement in desk quadrant (suppressed if phone is visually present)
+    const hasVisualPhone = (vision.phoneDetectedScore !== undefined && vision.phoneDetectedScore > 0.40) || (vision.phoneEvidence?.detected === true);
+    const isWritingBurst = instantMotion && rawDeskActivity > 0.4 && !hasVisualPhone;
 
     // Thinking pause: hands still for 5 to 120 seconds, preceded by writing, with head still looking down at desk
     const isThinkingPause =

@@ -77,39 +77,41 @@ export class FocusStateMachine {
     let distractionReason: string | undefined;
 
     // 2. Person Presence & Absence / AWAY Check
-    // Use multi-cue person presence rather than fragile face-alone check
-    const isPersonPresent = presence ? presence.isPersonPresent : (face.facePresent || pose.bodyPresence);
-    const awayTiming = temporal.handleAwayTiming(isPersonPresent, now, awayThresholdSeconds);
+    // When person presence engine determines absence, transition immediately to AWAY
+    const isPersonPresent = presence ? presence.isPersonPresent : (face.facePresent && pose.bodyPresence);
+    const isAbsenceConfirmed = presence ? presence.state === 'PERSON_ABSENT' : !isPersonPresent;
 
     if (!isPersonPresent) {
       this.uncertaintyStartTimestamp = null;
-      if (awayTiming.isConfirmedAway) {
+      // If PersonPresenceEngine has confirmed absence or awayTiming confirmed:
+      const awayTiming = temporal.handleAwayTiming(false, now, 2); // 2s max grace
+      
+      if (isAbsenceConfirmed || awayTiming.isConfirmedAway) {
         nextState = 'AWAY';
-        distractionReason = `Absence confirmed: No subject detected at workstation for ${awayThresholdSeconds}s`;
-        stateExplanation = 'Workstation unoccupied. Timer safely held.';
+        distractionReason = presence?.explanation || 'No subject detected at workstation';
+        stateExplanation = 'Workstation unoccupied. Verified timer paused.';
       } else {
-        nextState = 'UNCERTAIN';
-        isGraceActive = true;
-        graceSecondsRemaining = awayTiming.awaySecondsRemaining;
-        distractionReason = `Subject absent from camera (${graceSecondsRemaining}s grace)`;
-        stateExplanation = 'Observing workstation occupancy grace period.';
+        nextState = 'AWAY'; // Strictly AWAY when not present
+        isGraceActive = false;
+        distractionReason = 'Subject absent from workstation';
+        stateExplanation = 'Subject left workstation. Verified timer paused.';
       }
 
       return {
         nextState,
         stateExplanation,
         distractionReason,
-        isGracePeriodActive: isGraceActive,
-        graceSecondsRemaining,
+        isGracePeriodActive: false,
+        graceSecondsRemaining: 0,
         returnConfirmationRemaining: 0,
         hasStateChanged: nextState !== currentState
       };
     }
 
-    // 3. Specific Threat Check: Smartphone Use
-    if (phone.isPersistentPhoneUse) {
+    // 3. Specific Threat Check: Smartphone Use (Highest Priority Disruption)
+    if (phone.isPersistentPhoneUse || phone.phoneConfidence >= 0.55) {
       nextState = 'PHONE_USE';
-      distractionReason = phone.reason || 'Persistent smartphone distraction confirmed.';
+      distractionReason = phone.reason || 'Smartphone distraction confirmed.';
       stateExplanation = 'Smartphone interaction active; study session paused.';
       return {
         nextState,

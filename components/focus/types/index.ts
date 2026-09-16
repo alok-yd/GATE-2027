@@ -24,6 +24,45 @@ export const isFocusedState = (state: FocusState): boolean =>
   state === 'FOCUSED_MIXED' ||
   state === 'THINKING';
 
+export const isVerifiedFocusState = (state: FocusState): boolean =>
+  state === 'FOCUSED' ||
+  state === 'FOCUSED_SCREEN' ||
+  state === 'FOCUSED_PAPER' ||
+  state === 'FOCUSED_MIXED' ||
+  state === 'THINKING';
+
+export type FocusVerificationState = 
+  | 'VERIFIED'
+  | 'PAUSED_ABSENT'
+  | 'PAUSED_PHONE'
+  | 'PAUSED_DISTRACTED'
+  | 'PAUSED_CAMERA_ERROR'
+  | 'PAUSED_UNCERTAIN'
+  | 'PAUSED_CONVERSATION'
+  | 'PAUSED_SLEEP'
+  | 'PAUSED_MANUAL';
+
+export interface FocusVerificationGateResult {
+  verified: boolean;
+  state: FocusVerificationState;
+  reason: string;
+  confidence: number;
+  personPresent: boolean;
+  cameraHealthy: boolean;
+  phoneDetected: boolean;
+  studyEvidence: boolean;
+  studyMedium: StudyMedium;
+}
+
+export interface PhoneEvidence {
+  detected: boolean;
+  confidence: number; // 0 to 1
+  visualEvidence: number; // 0 to 1
+  handPhoneEvidence: number; // 0 to 1
+  proximityEvidence: number; // 0 to 1
+  temporalEvidence: number; // 0 to 1
+}
+
 export type ActivityType =
   | 'SCREEN_READING'
   | 'SCREEN_TYPING'
@@ -71,6 +110,7 @@ export interface PhoneDisambiguationResult {
   handGripConfidence: number;
   aspectRatioMatch: boolean;
   reason: string;
+  phoneEvidence?: PhoneEvidence;
 }
 
 export interface FocusConfidenceVector {
@@ -124,11 +164,15 @@ export interface VisionData {
   mouthMovementScore?: number; // 0 to 1
   phoneDetectedScore?: number; // 0 to 1
   phoneDisambiguation?: PhoneDisambiguationResult;
+  phoneEvidence?: PhoneEvidence;
   lightingLevel?: 'dark' | 'low' | 'normal' | 'bright';
   lightingScore?: number; // 0 to 1
   visionQualityScore?: number; // 0 to 1
   faceCount?: number;
   cameraHealthy?: boolean;
+  cameraHealthConfidence?: number;
+  isStale?: boolean;
+  isSimulated?: boolean;
   timestamp: number;
 }
 

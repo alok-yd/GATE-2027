@@ -7,6 +7,8 @@ import {
   FocusConfidenceVector,
   FocusEngineSettings,
   FocusState,
+  FocusVerificationGateResult,
+  isVerifiedFocusState,
   StateTransitionLog,
   StudyMedium,
   UserSettings,
@@ -105,39 +107,62 @@ export class FocusEngine {
   // Cached last evaluation output
   private lastEvaluationOutput: FocusEngineOutput | null = null;
 
-  // Last known raw sensory inputs
+  // Last known raw sensory inputs — defaulted to unverified and absent
   private lastVision: VisionData = {
-    facePresent: true,
-    confidence: 0.9,
+    facePresent: false,
+    confidence: 0.0,
     headYaw: 0,
-    headPitch: -4,
+    headPitch: 0,
     headRoll: 0,
-    eyeOpen: true,
-    gazeScore: 0.9,
+    eyeOpen: false,
+    gazeScore: 0.0,
     handActivity: false,
-    bodyPostureStable: true,
-    deskActivityScore: 0.2,
+    bodyPostureStable: false,
+    deskActivityScore: 0.0,
     isLookingDown: false,
     lightingLevel: 'normal',
-    lightingScore: 0.65,
-    faceCount: 1,
-    cameraHealthy: true,
-    timestamp: Date.now()
+    lightingScore: 0.5,
+    faceCount: 0,
+    cameraHealthy: false,
+    cameraHealthConfidence: 0.0,
+    isStale: true,
+    timestamp: 0
   };
 
   private lastActivity: ActivityData = {
     keyboardActive: false,
     mouseActive: false,
     idleSeconds: 0,
-    activeApp: 'Visual Studio Code',
+    activeApp: 'Study Workspace',
     isWindowFocused: true,
     lastActivityTimestamp: Date.now()
   };
 
   private callbacks: Set<FocusEngineCallback> = new Set();
+  private watchdogInterval: any = null;
 
   constructor(settings: FocusEngineSettings = DEFAULT_FOCUS_SETTINGS) {
     this.settings = settings;
+    // Start watchdog to catch frozen or stalled camera streams
+    if (typeof window !== 'undefined') {
+      this.watchdogInterval = setInterval(() => {
+        const now = Date.now();
+        if (this.lastVision.timestamp > 0 && (now - this.lastVision.timestamp > 2500)) {
+          if (!this.lastVision.isStale) {
+            this.lastVision.isStale = true;
+            this.lastVision.cameraHealthy = false;
+            this.evaluate();
+          }
+        }
+      }, 1000);
+    }
+  }
+
+  getVerificationStatus(): import('../types').FocusVerificationGateResult {
+    const out = this.getCurrentOutput();
+    const isPresent = out.facePresent && out.personPresenceState !== 'PERSON_ABSENT';
+    const isCamHealthy = !this.lastVision.isStale && this.lastVision.cameraHealthy !== false;
+    return isVerifiedFocus(this.currentState, out, isCamHealthy, isPresent);
   }
 
   getStudyMedium(): StudyMedium {
@@ -224,6 +249,43 @@ export class FocusEngine {
       this.temporalEngine.resetAllTimers();
     }
     this.evaluate();
+  }
+
+  reset(): void {
+    this.currentState = 'IDLE';
+    this.temporalEngine.resetAllTimers();
+    this.contextMemory.reset();
+    this.faceAnalyzer = new FaceAnalyzer();
+    this.poseAnalyzer = new PoseAnalyzer();
+    this.handAnalyzer = new HandAnalyzer();
+    this.phoneAnalyzer = new PhoneAnalyzer();
+    this.conversationAnalyzer = new ConversationAnalyzer();
+    this.sleepAnalyzer = new SleepAnalyzer();
+    this.computerActivityAnalyzer = new ComputerActivityAnalyzer();
+    this.activityRecognizer = new ActivityRecognizer();
+    this.evidenceFusionEngine = new EvidenceFusionEngine();
+    this.focusStateMachine = new FocusStateMachine();
+    this.lastEvaluationOutput = null;
+    this.lastVision = {
+      facePresent: false,
+      confidence: 0.0,
+      headYaw: 0,
+      headPitch: 0,
+      headRoll: 0,
+      eyeOpen: false,
+      gazeScore: 0.0,
+      handActivity: false,
+      bodyPostureStable: false,
+      deskActivityScore: 0.0,
+      isLookingDown: false,
+      lightingLevel: 'normal',
+      lightingScore: 0.5,
+      faceCount: 0,
+      cameraHealthy: false,
+      cameraHealthConfidence: 0.0,
+      isStale: true,
+      timestamp: 0
+    };
   }
 
   private evaluate(): void {
@@ -383,4 +445,143 @@ export class FocusEngine {
 }
 
 export const focusEngine = new FocusEngine();
+
+export function isVerifiedFocus(
+  state: FocusState,
+  output?: FocusEngineOutput | null,
+  cameraHealthy?: boolean,
+  isPersonPresent?: boolean
+): FocusVerificationGateResult {
+  const isFocusState = isVerifiedFocusState(state);
+  const camOk = cameraHealthy ?? (output?.visionQualityScore !== undefined && output.visionQualityScore >= 0.25);
+  const present = isPersonPresent ?? (output?.facePresent ?? false);
+  const phone = (output?.confidenceVector?.phoneConfidence ?? 0) >= 0.45 || state === 'PHONE_USE';
+  const studyEv = (output?.confidenceVector?.paperStudyConfidence ?? 0) > 0.35 || 
+                  (output?.confidenceVector?.screenStudyConfidence ?? 0) > 0.35 || 
+                  (output?.confidenceVector?.thinkingConfidence ?? 0) > 0.40;
+
+  if (state === 'AWAY' || !present) {
+    return {
+      verified: false,
+      state: 'PAUSED_ABSENT',
+      reason: 'User is away from desk',
+      confidence: 0.0,
+      personPresent: false,
+      cameraHealthy: camOk,
+      phoneDetected: phone,
+      studyEvidence: false,
+      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+    };
+  }
+
+  if (!camOk || state === 'UNVERIFIED') {
+    return {
+      verified: false,
+      state: 'PAUSED_CAMERA_ERROR',
+      reason: 'Camera unverified, blocked, or stream frozen',
+      confidence: 0.0,
+      personPresent: present,
+      cameraHealthy: false,
+      phoneDetected: phone,
+      studyEvidence: false,
+      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+    };
+  }
+
+  if (phone) {
+    return {
+      verified: false,
+      state: 'PAUSED_PHONE',
+      reason: 'Smartphone distraction active',
+      confidence: 0.0,
+      personPresent: present,
+      cameraHealthy: true,
+      phoneDetected: true,
+      studyEvidence: false,
+      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+    };
+  }
+
+  if (state === 'DISTRACTED') {
+    return {
+      verified: false,
+      state: 'PAUSED_DISTRACTED',
+      reason: output?.distractionReason || 'Looking away from study material',
+      confidence: 0.0,
+      personPresent: present,
+      cameraHealthy: true,
+      phoneDetected: false,
+      studyEvidence: false,
+      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+    };
+  }
+
+  if (state === 'CONVERSATION') {
+    return {
+      verified: false,
+      state: 'PAUSED_CONVERSATION',
+      reason: 'Conversation with second person detected',
+      confidence: 0.0,
+      personPresent: present,
+      cameraHealthy: true,
+      phoneDetected: false,
+      studyEvidence: false,
+      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+    };
+  }
+
+  if (state === 'POSSIBLE_SLEEP') {
+    return {
+      verified: false,
+      state: 'PAUSED_SLEEP',
+      reason: 'Prolonged sleep or eyes-closed rest posture',
+      confidence: 0.0,
+      personPresent: present,
+      cameraHealthy: true,
+      phoneDetected: false,
+      studyEvidence: false,
+      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+    };
+  }
+
+  if (state === 'UNCERTAIN' || state === 'WARNING') {
+    return {
+      verified: false,
+      state: 'PAUSED_UNCERTAIN',
+      reason: output?.distractionReason || 'Verifying study posture & evidence',
+      confidence: (output?.score ?? 0) / 100,
+      personPresent: present,
+      cameraHealthy: true,
+      phoneDetected: false,
+      studyEvidence: studyEv,
+      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+    };
+  }
+
+  if (isFocusState && present && camOk && (output?.score ?? 0) >= 40) {
+    return {
+      verified: true,
+      state: 'VERIFIED',
+      reason: output?.stateExplanation || 'Verified study active',
+      confidence: (output?.score ?? 85) / 100,
+      personPresent: true,
+      cameraHealthy: true,
+      phoneDetected: false,
+      studyEvidence: true,
+      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+    };
+  }
+
+  return {
+    verified: false,
+    state: 'PAUSED_UNCERTAIN',
+    reason: 'Waiting for verified study evidence',
+    confidence: 0.0,
+    personPresent: present,
+    cameraHealthy: camOk,
+    phoneDetected: phone,
+    studyEvidence: false,
+    studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
+  };
+}
 

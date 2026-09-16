@@ -23,18 +23,24 @@ export class PersonPresenceEngine {
     validation: SignalValidationReport,
     now: number = Date.now()
   ): PersonPresenceResult {
-    const rawFacePresent = vision.facePresent;
-    const bodyPostureStable = vision.bodyPostureStable ?? false;
-    const deskMotion = (vision.deskActivityScore ?? 0) > 0.04 || vision.handActivity;
-    const isPosePlausible = validation.headPose.isTrustworthy && Math.abs(vision.headPitch) <= 45;
+    const isStale = (now - vision.timestamp > 2500) || (vision.isStale === true);
+    const cameraHealthy = vision.cameraHealthy !== false && !isStale && validation.visionQuality.isTrustworthy;
     
     // 1. Evaluate instant sensory evidence
-    const faceEvidence = rawFacePresent && validation.facePresence.confidence >= 0.50;
-    const bodyEvidence = bodyPostureStable || isPosePlausible;
+    // Face evidence strictly requires camera healthy, raw face present, and trustworthy signal
+    const rawFacePresent = !isStale && !!vision.facePresent;
+    const faceEvidence = cameraHealthy && rawFacePresent && validation.facePresence.confidence >= 0.45;
+    
+    // Desk evidence: physical hand motion on notebook / keyboard
+    const deskMotion = !isStale && ((vision.deskActivityScore ?? 0) > 0.35 || !!vision.handActivity);
+    
+    // Body evidence: stable posture requires an active face / upper torso centroid
+    const bodyEvidence = cameraHealthy && rawFacePresent && !!vision.bodyPostureStable;
     const deskEvidence = deskMotion;
 
-    // Check historical evidence (within last 10 seconds)
-    const instantPresence = faceEvidence || (bodyEvidence && (deskEvidence || isPosePlausible));
+    // Instant presence: User is visually present right now
+    const instantPresence = faceEvidence || (rawFacePresent && deskEvidence);
+    
     this.presenceHistory.push(instantPresence);
     if (this.presenceHistory.length > 20) this.presenceHistory.shift();
 
@@ -44,41 +50,40 @@ export class PersonPresenceEngine {
     if (instantPresence) {
       this.lastConfirmedPresenceTimestamp = now;
     }
-    const secondsSinceConfirmed = Math.floor((now - this.lastConfirmedPresenceTimestamp) / 1000);
+    const secondsSinceConfirmed = (now - this.lastConfirmedPresenceTimestamp) / 1000;
 
     // 2. Classify 4-State Person Presence
     let state: PersonPresenceState;
     let confidence: number;
     let explanation: string;
 
-    if (faceEvidence && bodyEvidence) {
-      // Definitive presence
+    if (!cameraHealthy) {
+      state = 'VISION_UNCERTAIN';
+      confidence = 0.20;
+      explanation = 'Camera unverified, blocked, or stream frozen.';
+    } else if (faceEvidence && bodyEvidence) {
+      // Definitive confirmed presence
       state = 'PERSON_PRESENT';
       confidence = 0.98;
-      explanation = 'Subject confirmed present at study desk (face & body detected).';
-    } else if (!faceEvidence && bodyEvidence && (deskEvidence || recentFramesEvidence || secondsSinceConfirmed < 8)) {
-      // Sensor discrepancy: Face dropped (likely looking down or lighting shadow), but body/desk shows presence
+      explanation = 'Subject confirmed present at study desk (face & body verified).';
+    } else if (faceEvidence) {
+      state = 'PERSON_PRESENT';
+      confidence = 0.90;
+      explanation = 'Subject detected in frame.';
+    } else if (secondsSinceConfirmed < 2.5 && (deskEvidence || recentFramesEvidence)) {
+      // Brief head dip / note-taking transition window (max 2.5 seconds)
       state = 'PERSON_PROBABLY_PRESENT';
-      confidence = 0.88;
-      explanation = 'Subject probably present: head tilted down into notes or momentary face shadow; desk posture stable.';
-    } else if (validation.visionQuality.value < 0.35 && secondsSinceConfirmed < 12) {
-      // Poor vision quality / severe underexposure
-      state = 'VISION_UNCERTAIN';
-      confidence = 0.60;
-      explanation = 'Vision quality degraded by lighting; presence inferred from recent posture history.';
-    } else if (secondsSinceConfirmed >= 8 && !bodyEvidence && !deskEvidence) {
-      // True absence confirmed
-      state = 'PERSON_ABSENT';
-      confidence = 0.96;
-      explanation = `No subject detected at workstation for ${secondsSinceConfirmed}s.`;
+      confidence = 0.65;
+      explanation = `Transient posture transition: verifying presence (${secondsSinceConfirmed.toFixed(1)}s elapsed).`;
     } else {
-      // Ambiguous transition window
-      state = 'PERSON_PROBABLY_PRESENT';
-      confidence = 0.70;
-      explanation = 'Subject present within desk boundary; validating continuous posture.';
+      // Confirmed absence: empty desk or person walked away
+      state = 'PERSON_ABSENT';
+      confidence = 0.98;
+      explanation = `No subject detected at workstation (${secondsSinceConfirmed.toFixed(1)}s since last verified presence).`;
     }
 
-    const isPersonPresent = state === 'PERSON_PRESENT' || state === 'PERSON_PROBABLY_PRESENT';
+    // Single definitive presence boolean
+    const isPersonPresent = state === 'PERSON_PRESENT' || (state === 'PERSON_PROBABLY_PRESENT' && secondsSinceConfirmed < 2.5);
 
     return {
       state,

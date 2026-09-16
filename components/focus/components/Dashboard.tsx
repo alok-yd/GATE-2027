@@ -194,17 +194,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
       case 'UNCERTAIN':
       case 'WARNING':
         return {
-          title: 'UNCERTAIN',
-          subtitle: tickData.stateExplanation || 'Insufficient evidence to determine whether you are studying',
-          tooltip: 'Focus confidence temporarily ambiguous. Verified focus continues while confirming posture.',
+          title: 'VERIFYING FOCUS (PAUSED)',
+          subtitle: tickData.verificationReason || tickData.stateExplanation || 'Observing posture — verified timer paused until study confirmed',
+          tooltip: 'Focus confidence is being verified. Timer does not accumulate unverified time.',
           color: 'text-amber-400',
           bg: 'bg-amber-500/10 border-amber-500/30',
           dot: 'bg-amber-400 animate-ping'
         };
       case 'PHONE_USE':
         return {
-          title: 'SMARTPHONE DISTRACTION',
-          subtitle: engineOutput.distractionReason || 'Persistent smartphone interaction detected',
+          title: 'PHONE USE DETECTED (PAUSED)',
+          subtitle: tickData.verificationReason || engineOutput.distractionReason || 'Smartphone interaction detected — verified focus paused',
           tooltip: 'Smartphone usage confirmed. Put phone away to automatically resume.',
           color: 'text-rose-400',
           bg: 'bg-rose-500/15 border-rose-500/40',
@@ -212,8 +212,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         };
       case 'CONVERSATION':
         return {
-          title: 'CONVERSATION',
-          subtitle: engineOutput.distractionReason || 'Verbal interaction with second person detected',
+          title: 'CONVERSATION (PAUSED)',
+          subtitle: engineOutput.distractionReason || 'Verbal interaction with second person detected — verified focus paused',
           tooltip: 'Active conversation detected. Return to study to resume timer.',
           color: 'text-amber-400',
           bg: 'bg-amber-500/15 border-amber-500/40',
@@ -221,8 +221,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         };
       case 'POSSIBLE_SLEEP':
         return {
-          title: 'REST / SLEEP',
-          subtitle: engineOutput.distractionReason || 'Stationary posture with closed eyes detected',
+          title: 'REST / SLEEP (PAUSED)',
+          subtitle: engineOutput.distractionReason || 'Stationary posture with closed eyes detected — verified focus paused',
           tooltip: 'Extended rest or sleep posture observed. Stretch or take a break.',
           color: 'text-violet-400',
           bg: 'bg-violet-500/15 border-violet-500/40',
@@ -240,8 +240,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         };
       case 'AWAY':
         return {
-          title: 'AWAY',
-          subtitle: 'No person detected at the workstation — verified focus paused',
+          title: 'AWAY (PAUSED)',
+          subtitle: 'No person detected at workstation — verified focus paused',
           tooltip: 'Workstation empty. Timer will resume after you return.',
           color: 'text-zinc-400',
           bg: 'bg-zinc-800/40 border-zinc-700/40',
@@ -249,9 +249,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
         };
       case 'UNVERIFIED':
         return {
-          title: 'UNVERIFIED',
-          subtitle: 'Focus verification unavailable — timer running without verified focus credit',
-          tooltip: 'Camera is disconnected or blocked. Time tracked separately.',
+          title: 'CAMERA UNVERIFIED (PAUSED)',
+          subtitle: 'Focus verification unavailable — verified countdown held',
+          tooltip: 'Camera is disconnected or unverified. Verified credit held.',
           color: 'text-zinc-400',
           bg: 'bg-zinc-800/40 border-zinc-700/40',
           dot: 'bg-zinc-400'
@@ -826,6 +826,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="font-mono text-5xl sm:text-7xl font-extrabold tracking-tight text-zinc-100 select-all">
               {formatDigitalClock(tickData.remainingTargetSeconds)}
             </div>
+
+            {isSessionActive && (
+              <div className="mt-3 flex items-center justify-center">
+                {tickData.isVerifiedFocus ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    <span>Verified Study Active — Countdown Running</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    <span>Verified Countdown Paused &bull; {tickData.verificationReason || 'Waiting for study evidence'}</span>
+                  </span>
+                )}
+              </div>
+            )}
 
             {/* Total Verified Focus with Screen & Paper Breakdown */}
             <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-xs font-mono">

@@ -99,7 +99,9 @@ export const FocusTracker: React.FC = () => {
     activeGoal: 'Solve 30 PYQs with no distractions',
     activeMode: 'Deep Focus',
     activeMedium: 'Screen Study',
-    isCompleted: false
+    isCompleted: false,
+    isVerifiedFocus: false,
+    verificationReason: 'Session not started'
   });
 
   // Calculate Today's Summary

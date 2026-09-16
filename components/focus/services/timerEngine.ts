@@ -33,6 +33,8 @@ export interface TimerTickData {
   activeMode: FocusMode;
   activeMedium: StudyMedium;
   isCompleted: boolean;
+  isVerifiedFocus: boolean;
+  verificationReason?: string;
   stateExplanation?: string;
   telemetry?: FocusEngineOutput['telemetry'];
 }
@@ -147,6 +149,7 @@ export class TimerEngine {
     this.peakScore = 0;
     this.distractionCount = 0;
 
+    const verification = this.focusEngine.getVerificationStatus();
     let initialFocusedState: FocusState = 'FOCUSED_SCREEN';
     if (this.medium === 'Paper / PYQ Study') {
       initialFocusedState = 'FOCUSED_PAPER';
@@ -154,13 +157,22 @@ export class TimerEngine {
       initialFocusedState = 'FOCUSED_MIXED';
     }
 
-    this.previousState = initialFocusedState;
-    this.focusEngine.setState(initialFocusedState, 'Session initiated');
+    if (verification.verified) {
+      this.previousState = initialFocusedState;
+      this.focusEngine.setState(initialFocusedState, 'Session initiated with verified study');
+    } else {
+      this.previousState = 'UNCERTAIN';
+      this.focusEngine.setState('UNCERTAIN', 'Session started; waiting for camera verification');
+    }
 
     if (this.intervalId !== null) {
-      clearInterval(this.intervalId);
+      if (typeof window !== 'undefined') {
+        window.clearInterval(this.intervalId);
+      } else {
+        clearInterval(this.intervalId);
+      }
     }
-    this.intervalId = window.setInterval(this.tick, 500);
+    this.intervalId = (typeof window !== 'undefined' ? window.setInterval(this.tick, 500) : (setInterval(this.tick, 500) as any));
 
     soundFx.playFocusRestored();
     this.emitCurrentTick();
@@ -174,13 +186,18 @@ export class TimerEngine {
 
   resumeSession(): void {
     this.lastTickTimestamp = Date.now();
+    const verification = this.focusEngine.getVerificationStatus();
     let resumeState: FocusState = 'FOCUSED_SCREEN';
     if (this.medium === 'Paper / PYQ Study') {
       resumeState = 'FOCUSED_PAPER';
     } else if (this.medium === 'Mixed Study') {
       resumeState = 'FOCUSED_MIXED';
     }
-    this.focusEngine.setState(resumeState, 'User resumed session');
+    if (verification.verified) {
+      this.focusEngine.setState(resumeState, 'User resumed session');
+    } else {
+      this.focusEngine.setState('UNCERTAIN', 'Session resumed; verifying study presence');
+    }
     soundFx.playFocusRestored();
     this.emitCurrentTick();
   }
@@ -320,24 +337,24 @@ export class TimerEngine {
     this.lastTickTimestamp = now;
 
     const state = this.focusEngine.getState();
+    const verification = this.focusEngine.getVerificationStatus();
+    const isAccumulatingVerified = verification.verified && 
+      state !== 'PAUSED' && 
+      state !== 'BREAK' && 
+      state !== 'IDLE' && 
+      state !== 'UNVERIFIED' &&
+      state !== 'AWAY' &&
+      state !== 'PHONE_USE';
 
-    switch (state) {
-      case 'FOCUSED':
-      case 'FOCUSED_SCREEN':
-        this.accumulatedFocusedMs += deltaMs;
-        this.accumulatedScreenFocusedMs += deltaMs;
-        break;
-      case 'FOCUSED_PAPER':
-        this.accumulatedFocusedMs += deltaMs;
+    if (isAccumulatingVerified) {
+      this.accumulatedFocusedMs += deltaMs;
+      if (state === 'FOCUSED_PAPER') {
         this.accumulatedPaperFocusedMs += deltaMs;
-        break;
-      case 'FOCUSED_MIXED':
-        this.accumulatedFocusedMs += deltaMs;
+      } else if (state === 'FOCUSED_SCREEN') {
+        this.accumulatedScreenFocusedMs += deltaMs;
+      } else if (state === 'FOCUSED_MIXED') {
         this.accumulatedMixedFocusedMs += deltaMs;
-        break;
-      case 'THINKING':
-        // Thinking counts 100% towards verified focus time!
-        this.accumulatedFocusedMs += deltaMs;
+      } else if (state === 'THINKING') {
         this.accumulatedThinkingMs += deltaMs;
         if (this.medium === 'Paper / PYQ Study') {
           this.accumulatedPaperFocusedMs += deltaMs;
@@ -346,50 +363,45 @@ export class TimerEngine {
         } else {
           this.accumulatedScreenFocusedMs += deltaMs;
         }
-        break;
-      case 'UNCERTAIN':
-      case 'WARNING':
-        // UNCERTAIN means the system lacks definitive evidence: verified focus continues!
-        this.accumulatedFocusedMs += deltaMs;
-        this.accumulatedUncertainMs += deltaMs;
-        if (this.medium === 'Paper / PYQ Study') {
-          this.accumulatedPaperFocusedMs += deltaMs;
-        } else if (this.medium === 'Mixed Study') {
-          this.accumulatedMixedFocusedMs += deltaMs;
-        } else {
-          this.accumulatedScreenFocusedMs += deltaMs;
-        }
-        break;
-      case 'UNVERIFIED':
-        // Unverified time recorded truthfully without adding to verified focus
-        this.accumulatedUnverifiedMs += deltaMs;
-        break;
-      case 'PHONE_USE':
-        this.accumulatedDistractedMs += deltaMs;
-        this.accumulatedPhoneMs += deltaMs;
-        break;
-      case 'CONVERSATION':
-        this.accumulatedDistractedMs += deltaMs;
-        this.accumulatedConversationMs += deltaMs;
-        break;
-      case 'POSSIBLE_SLEEP':
-        this.accumulatedDistractedMs += deltaMs;
-        this.accumulatedSleepMs += deltaMs;
-        break;
-      case 'PAUSED':
-        this.accumulatedPausedMs += deltaMs;
-        break;
-      case 'DISTRACTED':
-        this.accumulatedDistractedMs += deltaMs;
-        break;
-      case 'AWAY':
-        this.accumulatedAwayMs += deltaMs;
-        break;
-      case 'BREAK':
-        this.accumulatedBreakMs += deltaMs;
-        break;
-      default:
-        break;
+      } else {
+        this.accumulatedScreenFocusedMs += deltaMs;
+      }
+    } else {
+      // Non-verified, distracted, or paused intervals accumulate strictly to appropriate non-focus buckets
+      switch (state) {
+        case 'UNCERTAIN':
+        case 'WARNING':
+          this.accumulatedUncertainMs += deltaMs;
+          break;
+        case 'PHONE_USE':
+          this.accumulatedDistractedMs += deltaMs;
+          this.accumulatedPhoneMs += deltaMs;
+          break;
+        case 'CONVERSATION':
+          this.accumulatedDistractedMs += deltaMs;
+          this.accumulatedConversationMs += deltaMs;
+          break;
+        case 'POSSIBLE_SLEEP':
+          this.accumulatedDistractedMs += deltaMs;
+          this.accumulatedSleepMs += deltaMs;
+          break;
+        case 'PAUSED':
+          this.accumulatedPausedMs += deltaMs;
+          break;
+        case 'DISTRACTED':
+          this.accumulatedDistractedMs += deltaMs;
+          break;
+        case 'AWAY':
+          this.accumulatedAwayMs += deltaMs;
+          break;
+        case 'BREAK':
+          this.accumulatedBreakMs += deltaMs;
+          break;
+        case 'UNVERIFIED':
+        default:
+          this.accumulatedUnverifiedMs += deltaMs;
+          break;
+      }
     }
 
     // Check target reached
@@ -483,6 +495,8 @@ export class TimerEngine {
       activeMode: this.mode,
       activeMedium: this.medium,
       isCompleted: focusedSec >= this.targetSeconds && this.targetSeconds > 0,
+      isVerifiedFocus: this.focusEngine.getVerificationStatus().verified,
+      verificationReason: this.focusEngine.getVerificationStatus().reason,
       stateExplanation: this.currentStateExplanation || engineOut.stateExplanation,
       telemetry: engineOut.telemetry
     };

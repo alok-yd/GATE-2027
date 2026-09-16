@@ -42,13 +42,48 @@ export class EvidenceFusionEngine {
     presence?: PersonPresenceResult,
     validation?: SignalValidationReport
   ): EvidenceFusionResult {
-    const isPersonPresent = presence ? presence.isPersonPresent : (face.facePresent || pose.bodyPresence);
+    const isPersonPresent = presence ? presence.isPersonPresent : (face.facePresent && pose.bodyPresence);
+
+    // Hard Presence Gate: When absent, focus score is strictly 0 and all study confidences are 0.
+    if (!isPersonPresent) {
+      return {
+        confidenceVector: {
+          screenStudyConfidence: 0.0,
+          paperStudyConfidence: 0.0,
+          thinkingConfidence: 0.0,
+          phoneConfidence: 0.0,
+          conversationConfidence: 0.0,
+          sleepConfidence: 0.0,
+          awayConfidence: 1.0,
+          overallFocusConfidence: 0.0,
+          pScreen: 0.0,
+          pPaper: 0.0,
+          pThinking: 0.0,
+          pPhone: 0.0,
+          pConversation: 0.0,
+          pSleep: 0.0,
+          pAway: 1.0
+        },
+        totalFocusScore: 0,
+        signalScores: {
+          faceScore: 0,
+          headPoseScore: 0,
+          eyeGazeScore: 0,
+          activityScore: comp.activityScore,
+          appContextScore: comp.appScore,
+          deskActivityScore: 0,
+          postureStableScore: 0,
+          lightingScore: Math.round(face.lightingScore * 100)
+        },
+        primaryStudyEvidence: 'No subject detected at desk (User Away)'
+      };
+    }
 
     // 1. Calculate Individual Confidence Vector Components (0.0 to 1.0)
     
     // Screen study confidence:
     let screenConf = 0.0;
-    if (isPersonPresent && pose.isYawWithinStudyTolerance && !pose.isLookingDown) {
+    if (pose.isYawWithinStudyTolerance && !pose.isLookingDown) {
       screenConf = (face.gazeScore * 0.5) + (comp.isStudyApp ? 0.35 : 0.2) + (comp.keyboardActive ? 0.15 : 0.1);
       if (comp.isDistractionApp) screenConf *= 0.2;
     }
@@ -56,9 +91,9 @@ export class EvidenceFusionEngine {
 
     // Paper study confidence (SPECIFICITY: suppressed if phone is detected):
     let paperConf = 0.0;
-    if (isPersonPresent && (pose.isLookingDown || pose.isPitchCompatibleWithPaper)) {
-      if (phone.phoneConfidence >= 0.55) {
-        paperConf = 0.10; // Phone interaction suppresses paper confidence
+    if (pose.isLookingDown || pose.isPitchCompatibleWithPaper) {
+      if (phone.phoneConfidence >= 0.45) {
+        paperConf = 0.05; // Phone interaction strongly suppresses paper confidence
       } else {
         paperConf = 0.60;
         if (hand.isWritingBurst) paperConf += 0.35;
@@ -71,7 +106,7 @@ export class EvidenceFusionEngine {
 
     // Thinking confidence:
     let thinkConf = 0.0;
-    if (isPersonPresent && pose.isSeatedPostureStable && phone.phoneConfidence < 0.50) {
+    if (pose.isSeatedPostureStable && phone.phoneConfidence < 0.40) {
       if (hand.isThinkingPause) thinkConf = 0.92;
       else if (pose.isLookingDown && !comp.keyboardActive && !hand.isWritingBurst) thinkConf = 0.78;
       else if (pose.isYawWithinStudyTolerance && !comp.isDistractionApp) thinkConf = 0.65;
