@@ -1,4 +1,4 @@
-import { FocusEngine, FocusEngineOutput } from './focusEngine';
+import { focusEngine, FocusEngine, FocusEngineOutput } from './focusEngine';
 import { FocusMode, FocusSegment, FocusSession, FocusState, FocusTimelineEvent, isFocusedState, StudyMedium } from '../types';
 import { StorageService } from './storage';
 import { soundFx } from './audio';

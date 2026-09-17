@@ -20,7 +20,15 @@ export const firebaseConfig = {
 
 // Initialize Firebase
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
+export const analytics = (() => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return getAnalytics(app);
+  } catch (err) {
+    console.warn('Firebase Analytics initialization warning:', err);
+    return null;
+  }
+})();
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 

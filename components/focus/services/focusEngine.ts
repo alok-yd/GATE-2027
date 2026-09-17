@@ -474,7 +474,7 @@ export class FocusEngine {
       deviceInUse,
       deviceInteractionEvidence: phone.evidence,
       cameraHealthy,
-      inferenceFps: visionData.inferenceFps || 15
+      inferenceFps: this.lastVision.inferenceFps || 15
     });
 
     const currentGate = focusSessionController.getState().gate;
