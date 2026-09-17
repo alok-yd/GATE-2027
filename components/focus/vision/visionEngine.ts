@@ -1,4 +1,4 @@
-import { VisionData, PhoneEvidence } from '../types';
+import { VisionData, PhoneEvidence, DeviceStatus } from '../types';
 import { calibrationEngine } from '../services/calibrationEngine';
 import { frameScheduler, PerceptionFrame } from '../services/ml/FrameScheduler';
 import { modelManager } from '../services/ml/ModelManager';
@@ -399,79 +399,55 @@ export class VisionEngine {
     // 3. Visual Phone / Device Detection & Tracking Fusion
     let visualPhoneScore = 0.0;
     let handPhoneScore = 0.0;
-    const phoneScanStartY = Math.floor(ch * 0.35);
-
-    // Scan for high-contrast handheld vertical rectangular blocks (aspect ratio 1.7 to 2.2)
-    let candidateVerticalGradients = 0;
-    let darkRectangularPixels = 0;
-    let brightScreenPixels = 0;
-
-    for (let py = phoneScanStartY; py < ch - 6; py += 3) {
-      for (let px = 15; px < cw - 15; px += 3) {
-        const idx = (py * cw + px) * 4;
-        const pluma = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-        const nextIdx = (py * cw + (px + 4)) * 4;
-        const nextLuma = 0.299 * data[nextIdx] + 0.587 * data[nextIdx + 1] + 0.114 * data[nextIdx + 2];
-        
-        if (Math.abs(pluma - nextLuma) > 40) {
-          candidateVerticalGradients++;
-        }
-        if (pluma < 45) {
-          darkRectangularPixels++;
-        } else if (pluma > 185) {
-          brightScreenPixels++;
-        }
-      }
-    }
-
-    const totalPhoneSamples = ((ch - phoneScanStartY) / 3) * ((cw - 30) / 3);
-    const darkRatio = darkRectangularPixels / totalPhoneSamples;
-    const brightRatio = brightScreenPixels / totalPhoneSamples;
-    const gradientRatio = candidateVerticalGradients / totalPhoneSamples;
-
-    if (gradientRatio > 0.12 && (darkRatio > 0.08 || brightRatio > 0.06)) {
-      visualPhoneScore = Math.min(0.95, Number((0.45 + (darkRatio + brightRatio) * 1.5 + gradientRatio * 1.2).toFixed(2)));
-      if (deskSkinPresent) {
-        handPhoneScore = Math.min(0.95, visualPhoneScore + 0.15);
-      }
-    }
-
-    // Blend with ObjectTracker ML phone track if available
-    let phoneEvidence: PhoneEvidence;
     const trackedPhone = this.latestPerception?.phoneTrack;
 
+    let phoneEvidence: PhoneEvidence;
+
     if (trackedPhone) {
-      const isHeld = trackedPhone.isHeldInHand || trackedPhone.nearFace;
-      visualPhoneScore = Math.max(visualPhoneScore, trackedPhone.confidence);
-      handPhoneScore = isHeld ? Math.max(0.85, trackedPhone.confidence) : 0.25;
-      const phoneDetectedScore = isHeld ? Math.max(visualPhoneScore, handPhoneScore) : Math.min(0.35, visualPhoneScore * 0.5);
-      const phoneDetected = isHeld && (phoneDetectedScore >= 0.55);
+      const isHeld = !!trackedPhone.isHeldInHand;
+      const nearFace = !!trackedPhone.nearFace;
+      const isOnDesk = !!trackedPhone.isOnDesk || (!isHeld && !nearFace);
+      const handOverlap = trackedPhone.handOverlapScore || 0;
+      visualPhoneScore = trackedPhone.confidence;
+      handPhoneScore = (isHeld || nearFace) ? Math.max(0.85, trackedPhone.confidence) : Math.min(0.20, handOverlap);
+
+      const deviceStatus: DeviceStatus = (isHeld || nearFace) ? 'DEVICE_IN_USE' : 'DEVICE_PRESENT';
+      const phoneDetected = true;
 
       phoneEvidence = {
         detected: phoneDetected,
-        confidence: phoneDetectedScore,
+        confidence: visualPhoneScore,
         visualEvidence: visualPhoneScore,
         handPhoneEvidence: handPhoneScore,
-        proximityEvidence: trackedPhone.nearFace ? 0.95 : (isHeld ? 0.75 : 0.2),
+        proximityEvidence: nearFace ? 0.95 : (isHeld ? 0.80 : 0.20),
         temporalEvidence: Math.min(1.0, trackedPhone.ageMs / 1500),
         bbox: trackedPhone.bbox,
-        handInteractionConfidence: trackedPhone.handOverlapScore,
-        faceProximityConfidence: trackedPhone.nearFace ? 0.95 : 0.1,
+        handInteractionConfidence: handOverlap,
+        faceProximityConfidence: nearFace ? 0.95 : 0.10,
         persistenceMs: trackedPhone.ageMs,
-        timestamp: now
+        timestamp: now,
+        isOnDesk,
+        isHeldInHand: isHeld,
+        nearFace,
+        deviceStatus
       };
     } else {
-      const phoneDetectedScore = Math.max(visualPhoneScore, handPhoneScore);
-      const phoneDetected = phoneDetectedScore >= 0.50;
+      // Fallback: Check if hands are holding a distinct vertical screen device near face or torso
+      // Only trigger if hands are present and elevated with strong localized contrast (not flat desk paper)
+      const phoneDetected = false;
       phoneEvidence = {
-        detected: phoneDetected,
-        confidence: phoneDetectedScore,
-        visualEvidence: visualPhoneScore,
-        handPhoneEvidence: handPhoneScore,
-        proximityEvidence: (facePresent && phoneDetectedScore > 0.40) ? 0.75 : 0.20,
-        temporalEvidence: 0.50,
+        detected: false,
+        confidence: 0.0,
+        visualEvidence: 0.0,
+        handPhoneEvidence: 0.0,
+        proximityEvidence: 0.10,
+        temporalEvidence: 0.0,
         persistenceMs: 0,
-        timestamp: now
+        timestamp: now,
+        isOnDesk: false,
+        isHeldInHand: false,
+        nearFace: false,
+        deviceStatus: 'NOT_DETECTED'
       };
     }
 

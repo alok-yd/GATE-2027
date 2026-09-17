@@ -2,6 +2,7 @@ import { FocusEngine, FocusEngineOutput } from './focusEngine';
 import { FocusMode, FocusSegment, FocusSession, FocusState, FocusTimelineEvent, isFocusedState, StudyMedium } from '../types';
 import { StorageService } from './storage';
 import { soundFx } from './audio';
+import { focusSessionController } from './FocusSessionController';
 
 export interface TimerTickData {
   state: FocusState;
@@ -138,6 +139,7 @@ export class TimerEngine {
   setStudyMedium(medium: StudyMedium): void {
     this.medium = medium;
     this.focusEngine.setStudyMedium(medium);
+    focusSessionController.setStudyMedium(medium);
     this.emitCurrentTick();
   }
 
@@ -188,6 +190,15 @@ export class TimerEngine {
     this.peakScore = 0;
     this.distractionCount = 0;
 
+    focusSessionController.startSession(
+      subject,
+      topic,
+      targetSeconds,
+      mode,
+      goal,
+      this.medium
+    );
+
     const verification = this.focusEngine.getVerificationStatus();
     let initialFocusedState: FocusState = 'FOCUSED_SCREEN';
     if (this.medium === 'Paper / PYQ Study') {
@@ -223,12 +234,14 @@ export class TimerEngine {
 
   pauseSession(): void {
     this.focusEngine.setState('PAUSED', 'User paused session');
+    focusSessionController.pauseSession('User paused session');
     soundFx.playAutoPaused();
     this.emitCurrentTick();
   }
 
   resumeSession(): void {
     this.lastTickTimestamp = Date.now();
+    focusSessionController.resumeSession();
     const verification = this.focusEngine.getVerificationStatus();
     let resumeState: FocusState = 'FOCUSED_SCREEN';
     if (this.medium === 'Paper / PYQ Study') {
@@ -262,12 +275,14 @@ export class TimerEngine {
   }
 
   stopSession(): FocusSession | null {
+    focusSessionController.stopSession();
     if (!this.activeSessionId) return null;
 
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+
 
     const endTime = Date.now();
     const focusedSec = Math.round(this.accumulatedFocusedMs / 1000);
@@ -562,3 +577,5 @@ export class TimerEngine {
     this.callbacks.forEach(cb => cb(tickPayload));
   }
 }
+
+export const timerEngine = new TimerEngine(focusEngine);

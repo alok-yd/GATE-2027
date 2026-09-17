@@ -1,4 +1,4 @@
-import { CalibrationProfile, VisionData, ActivityData } from '../../../types';
+import { CalibrationProfile, VisionData, ActivityData, DeviceStatus, DeviceInteractionEvidence } from '../../../types';
 import { PoseAnalysisResult } from './PoseAnalyzer';
 import { HandAnalysisResult } from './HandAnalyzer';
 import { PhoneDisambiguation } from '../PhoneDisambiguation';
@@ -9,6 +9,9 @@ export interface PhoneAnalysisResult {
   isPhoneWarning: boolean;
   isPersistentPhoneUse: boolean;
   phoneDurationSeconds: number;
+  deviceInUse: boolean;
+  deviceStatus: DeviceStatus;
+  deviceInteractionEvidence?: DeviceInteractionEvidence;
   reason?: string;
 }
 
@@ -29,56 +32,47 @@ export class PhoneAnalyzer {
     // 1. Explicit Phone vs. Paper Disambiguation Layer
     const disambiguation = this.disambiguator.disambiguate(vision, pose, hand, activity, now);
 
-    let instantaneousScore = disambiguation.phoneConfidence;
-    if (disambiguation.isPhone) {
-      instantaneousScore = Math.max(instantaneousScore, 0.90);
-    } else if (disambiguation.dominantObject === 'PAPER') {
-      instantaneousScore = Math.min(instantaneousScore, 0.15);
-    }
+    const deviceInUse = !!disambiguation.deviceInUse;
+    const deviceStatus = disambiguation.deviceStatus || (deviceInUse ? 'DEVICE_IN_USE' : 'NOT_DETECTED');
 
-    // 2. Temporal rolling window smoothing (last 8 samples)
+    // 2. Temporal rolling window smoothing
+    const instantaneousScore = deviceInUse ? 0.95 : (deviceStatus === 'DEVICE_PRESENT' ? 0.35 : 0.0);
     this.phoneHistory.push(instantaneousScore);
     if (this.phoneHistory.length > 8) this.phoneHistory.shift();
 
     const smoothedPhoneConfidence =
       this.phoneHistory.reduce((a, b) => a + b, 0) / this.phoneHistory.length;
 
-    const isPossiblePhoneUse = smoothedPhoneConfidence >= 0.45 || disambiguation.isPhone;
-
     let phoneDurationSeconds = 0;
     let isPhoneWarning = false;
     let isPersistentPhoneUse = false;
-    let reason: string | undefined;
+    let reason = disambiguation.reason;
 
-    if (isPossiblePhoneUse) {
+    if (deviceInUse) {
       if (this.phoneStartTime === null) {
         this.phoneStartTime = now;
       }
       phoneDurationSeconds = Math.max(0, Number(((now - this.phoneStartTime) / 1000).toFixed(1)));
-
-      // Fast, reliable 1.5s confirmation
-      if (phoneDurationSeconds >= 1.5 || (disambiguation.isPhone && phoneDurationSeconds >= 1.0)) {
-        isPersistentPhoneUse = true;
-        reason = `Smartphone interaction confirmed (${phoneDurationSeconds}s)`;
-      } else if (phoneDurationSeconds >= 0.8) {
-        isPhoneWarning = true;
-        reason = `Potential phone interaction detected (${phoneDurationSeconds}s)`;
-      } else {
-        reason = 'Verifying handheld device';
-      }
+      isPersistentPhoneUse = true;
+      reason = `Smartphone interaction confirmed in use (${phoneDurationSeconds}s)`;
     } else {
-      // Cooldown: only reset start time after low confidence has stabilized
-      if (smoothedPhoneConfidence < 0.25) {
+      if (this.phoneStartTime !== null && now - this.phoneStartTime > 1500) {
         this.phoneStartTime = null;
+      }
+      if (deviceStatus === 'DEVICE_PRESENT') {
+        reason = 'Device visible on desk (not in use). Focus timer continues.';
       }
     }
 
     return {
       phoneConfidence: Number(smoothedPhoneConfidence.toFixed(2)),
-      isPossiblePhoneUse,
-      isPhoneWarning,
+      isPossiblePhoneUse: deviceInUse,
+      isPhoneWarning: false,
       isPersistentPhoneUse,
       phoneDurationSeconds,
+      deviceInUse,
+      deviceStatus,
+      deviceInteractionEvidence: disambiguation.deviceInteractionEvidence,
       reason
     };
   }

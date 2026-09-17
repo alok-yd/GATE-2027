@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { focusSessionController } from './focus/services/FocusSessionController';
 
 const iitBombayLogo = new URL('../iit-bombay-logo-circle.png', import.meta.url).href;
 
@@ -11,6 +12,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const location = useLocation();
   const [daysTo2027, setDaysTo2027] = useState<number>(0);
+  const [focusSession, setFocusSession] = useState(() => focusSessionController.getState());
+
+  useEffect(() => {
+    return focusSessionController.subscribe(setFocusSession);
+  }, []);
+
+  const formatFocusDuration = (ms: number) => {
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
 
   useEffect(() => {
     const calculateDays = () => {
@@ -98,7 +111,29 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               }
             >
               {item.icon}
-              {item.name}
+              <span className="truncate">{item.name}</span>
+              {item.path === '/focus' && focusSession.isActive && (
+                <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full font-bold flex items-center gap-1.5 shadow-xs ${
+                  focusSession.gate.highLevelState === 'ACTIVE'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                    : focusSession.gate.highLevelState === 'AWAY'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                    : focusSession.gate.highLevelState === 'DEVICE_IN_USE'
+                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                    : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    focusSession.gate.highLevelState === 'ACTIVE'
+                      ? 'bg-emerald-400 animate-pulse'
+                      : focusSession.gate.highLevelState === 'AWAY'
+                      ? 'bg-amber-400'
+                      : focusSession.gate.highLevelState === 'DEVICE_IN_USE'
+                      ? 'bg-rose-400'
+                      : 'bg-zinc-400'
+                  }`} />
+                  <span>{formatFocusDuration(focusSession.accumulatedFocusedMs)}</span>
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -171,7 +206,29 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   }
                 >
                   {item.icon}
-                  {item.name}
+                  <span className="truncate">{item.name}</span>
+                  {item.path === '/focus' && focusSession.isActive && (
+                    <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full font-bold flex items-center gap-1.5 shadow-xs ${
+                      focusSession.gate.highLevelState === 'ACTIVE'
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                        : focusSession.gate.highLevelState === 'AWAY'
+                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                        : focusSession.gate.highLevelState === 'DEVICE_IN_USE'
+                        ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                        : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        focusSession.gate.highLevelState === 'ACTIVE'
+                          ? 'bg-emerald-400 animate-pulse'
+                          : focusSession.gate.highLevelState === 'AWAY'
+                          ? 'bg-amber-400'
+                          : focusSession.gate.highLevelState === 'DEVICE_IN_USE'
+                          ? 'bg-rose-400'
+                          : 'bg-zinc-400'
+                      }`} />
+                      <span>{formatFocusDuration(focusSession.accumulatedFocusedMs)}</span>
+                    </span>
+                  )}
                 </NavLink>
               ))}
               <div className="px-4 py-3 border-t border-slate-700 mt-2 space-y-3">

@@ -78,7 +78,14 @@ export class StorageService {
       const raw = getItemWithLegacy(storage, STORAGE_KEYS.SETTINGS);
       if (!raw) return DEFAULT_USER_SETTINGS;
       const parsed = JSON.parse(raw);
-      return { ...DEFAULT_USER_SETTINGS, ...parsed };
+      return {
+        ...DEFAULT_USER_SETTINGS,
+        ...parsed,
+        motivationalMessagesEnabled: parsed.motivationalMessagesEnabled ?? DEFAULT_USER_SETTINGS.motivationalMessagesEnabled,
+        eventMessagesEnabled: parsed.eventMessagesEnabled ?? DEFAULT_USER_SETTINGS.eventMessagesEnabled,
+        messageFrequency: parsed.messageFrequency ?? DEFAULT_USER_SETTINGS.messageFrequency,
+        messageStyle: parsed.messageStyle ?? DEFAULT_USER_SETTINGS.messageStyle,
+      };
     } catch {
       return DEFAULT_USER_SETTINGS;
     }
@@ -228,8 +235,10 @@ export class StorageService {
       } else {
         sessions.unshift(enhancedSession);
       }
-      localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
-      localStorage.setItem(LEGACY_KEYS[STORAGE_KEYS.SESSIONS], JSON.stringify(sessions));
+      if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
+        localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+        localStorage.setItem(LEGACY_KEYS[STORAGE_KEYS.SESSIONS], JSON.stringify(sessions));
+      }
 
       // 1. Synchronize hours with GATE Daily Target
       try {
@@ -286,7 +295,9 @@ export class StorageService {
       }
 
       // 4. Dispatch storage event for live UI updates
-      window.dispatchEvent(new Event('storage'));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('storage'));
+      }
 
     } catch (e) {
       console.error('Failed to save session', e);

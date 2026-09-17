@@ -22,7 +22,8 @@ import {
 } from './focus/types';
 import { StorageService } from './focus/services/storage';
 import { focusEngine, FocusEngineOutput } from './focus/services/focusEngine';
-import { TimerEngine, TimerTickData } from './focus/services/timerEngine';
+import { TimerEngine, TimerTickData, timerEngine as sharedTimerEngine } from './focus/services/timerEngine';
+import { focusSessionController } from './focus/services/FocusSessionController';
 import { activityMonitor } from './focus/services/activityMonitor';
 import { visionEngine } from './focus/vision/visionEngine';
 import {
@@ -41,12 +42,7 @@ import {
 } from 'lucide-react';
 
 export const FocusTracker: React.FC = () => {
-  // Initialize timer engine instance once
-  const timerEngineRef = useRef<TimerEngine | null>(null);
-  if (!timerEngineRef.current) {
-    timerEngineRef.current = new TimerEngine(focusEngine);
-  }
-  const timerEngine = timerEngineRef.current;
+  const timerEngine = sharedTimerEngine;
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'coach' | 'calendar' | 'settings'>('dashboard');
@@ -149,7 +145,9 @@ export const FocusTracker: React.FC = () => {
     });
 
     return () => {
-      activityMonitor.stop();
+      if (!focusSessionController.getState().isActive) {
+        activityMonitor.stop();
+      }
       unsubActivity();
       unsubVision();
       unsubFailure();
@@ -405,6 +403,7 @@ export const FocusTracker: React.FC = () => {
             onSelectMedium={handleSelectMedium}
             onOpenCalibration={() => setShowCalibrationModal(true)}
             onOpenEvaluation={() => setShowEvaluationModal(true)}
+            settings={settings}
           />
         )}
 

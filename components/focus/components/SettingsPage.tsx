@@ -33,7 +33,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onOpenCalibration,
   onOpenEvaluation
 }) => {
-  const [activeTab, setActiveTab] = useState<'camera' | 'calibration' | 'sensitivity' | 'activity' | 'apps' | 'evaluation' | 'privacy'>('camera');
+  const [activeTab, setActiveTab] = useState<'camera' | 'calibration' | 'sensitivity' | 'coach' | 'activity' | 'apps' | 'evaluation' | 'privacy'>('camera');
   const [newStudyApp, setNewStudyApp] = useState('');
   const [newDistractApp, setNewDistractApp] = useState('');
   const [savedStatus, setSavedStatus] = useState(false);
@@ -156,6 +156,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           }`}
         >
           Focus Sensitivity & Tolerances
+        </button>
+        <button
+          onClick={() => setActiveTab('coach')}
+          className={`pb-3 px-4 border-b-2 whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'coach' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Execution Coach</span>
         </button>
         <button
           onClick={() => setActiveTab('activity')}
@@ -446,6 +455,120 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <p className="text-[11px] text-zinc-500">
                 Seconds without face presence before pausing for user absence
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Execution Coach Tab (Prompt Section 22) */}
+      {activeTab === 'coach' && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-6 shadow-xl">
+          <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-400" />
+                <span>Execution Coach & Motivation Settings</span>
+              </h3>
+              <p className="text-xs text-zinc-400 mt-1">
+                Configure rotating reinforcement and event-driven cues inside the AI Focus Timer
+              </p>
+            </div>
+            <div className="px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-[11px] font-semibold text-indigo-400">
+              100% Offline & Non-Distracting
+            </div>
+          </div>
+
+          {/* Primary Principle Box */}
+          <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
+            <div className="text-xs uppercase tracking-wider text-zinc-500 font-bold">Primary Execution Anchor</div>
+            <div className="text-sm font-bold tracking-wide text-zinc-200 uppercase">
+              "FOCUS ON TODAY'S EXECUTION."
+            </div>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              The AI Focus Timer reinforces present-moment discipline, PYQ solving, and consistent execution rather than rank obsession or quote clutter.
+            </p>
+          </div>
+
+          <div className="space-y-5 max-w-xl text-xs">
+            {/* Toggle 1: Motivational Messages */}
+            <div className="flex items-start justify-between gap-4 p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80">
+              <div className="space-y-1">
+                <label className="text-zinc-200 font-semibold cursor-pointer" htmlFor="toggle-motivational-messages">
+                  Motivational & Execution Messages
+                </label>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Display subtle, rotating cues (e.g., "ONE TASK. FULL FOCUS.", "TRY BEFORE YOU SEE THE SOLUTION.") below the countdown timer.
+                </p>
+              </div>
+              <input
+                id="toggle-motivational-messages"
+                type="checkbox"
+                checked={settings.motivationalMessagesEnabled !== false}
+                onChange={(e) => handleChange({ motivationalMessagesEnabled: e.target.checked })}
+                className="mt-1 w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+              />
+            </div>
+
+            {/* Toggle 2: Event Messages */}
+            <div className="flex items-start justify-between gap-4 p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80">
+              <div className="space-y-1">
+                <label className="text-zinc-200 font-semibold cursor-pointer" htmlFor="toggle-event-messages">
+                  Contextual Event Alerts
+                </label>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Show targeted alerts on confirmed phone use ("PUT THE PHONE DOWN. PROTECT THIS SESSION."), absence, or workstation returns.
+                </p>
+              </div>
+              <input
+                id="toggle-event-messages"
+                type="checkbox"
+                checked={settings.eventMessagesEnabled !== false}
+                onChange={(e) => handleChange({ eventMessagesEnabled: e.target.checked })}
+                className="mt-1 w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+              />
+            </div>
+
+            {/* Selector: Message Frequency */}
+            <div className="space-y-2 p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80">
+              <label className="text-zinc-200 font-semibold block">Rotation Frequency</label>
+              <p className="text-[11px] text-zinc-400">
+                Controls background rotation interval and event cooldown duration.
+              </p>
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                {(['LOW', 'NORMAL', 'HIGH'] as const).map((freq) => {
+                  const isSelected = (settings.messageFrequency || 'NORMAL') === freq;
+                  return (
+                    <button
+                      key={freq}
+                      type="button"
+                      onClick={() => handleChange({ messageFrequency: freq })}
+                      className={`p-2.5 rounded-lg border text-left cursor-pointer transition-all ${
+                        isSelected
+                          ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 font-bold'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      <div className="text-xs font-semibold">{freq}</div>
+                      <div className="text-[10px] opacity-80 mt-0.5">
+                        {freq === 'LOW' && '15m / 60s cd'}
+                        {freq === 'NORMAL' && '7m / 30s cd'}
+                        {freq === 'HIGH' && '3m / 15s cd'}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Message Style (Concise) */}
+            <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 flex items-center justify-between">
+              <div>
+                <span className="text-zinc-200 font-semibold block">Message Presentation Style</span>
+                <span className="text-[11px] text-zinc-400">Concise, direct execution cues (no essay quotes)</span>
+              </div>
+              <span className="px-2.5 py-1 rounded bg-zinc-800 text-zinc-300 font-mono text-[11px]">
+                CONCISE
+              </span>
             </div>
           </div>
         </div>

@@ -4,6 +4,10 @@ import { TimerTickData } from '../services/timerEngine';
 import { StudyMedium, VisionData } from '../types';
 import { visionEngine } from '../vision/visionEngine';
 import { AIDiagnosticsHUD } from './AIDiagnosticsHUD';
+import { ExecutionCoachBanner } from './ExecutionCoachBanner';
+import { focusSessionController } from '../services/FocusSessionController';
+import { StorageService } from '../services/storage';
+import { UserSettings } from '../types';
 import {
   Play,
   Pause,
@@ -50,6 +54,7 @@ interface DashboardProps {
   onSelectMedium?: (medium: StudyMedium) => void;
   onOpenCalibration?: () => void;
   onOpenEvaluation?: () => void;
+  settings?: UserSettings;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
@@ -68,15 +73,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onResetTimer,
   onSelectMedium,
   onOpenCalibration,
-  onOpenEvaluation
+  onOpenEvaluation,
+  settings
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [userSettings, setUserSettings] = useState<UserSettings>(() => settings || StorageService.getSettings());
+
+  useEffect(() => {
+    if (settings) {
+      setUserSettings(settings);
+    }
+  }, [settings]);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [visionLive, setVisionLive] = useState<VisionData | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
   const [showSignalBreakdown, setShowSignalBreakdown] = useState(false);
   const [showDiagnosticHUD, setShowDiagnosticHUD] = useState(false);
+  const [sessionCtrlState, setSessionCtrlState] = useState(() => focusSessionController.getState());
+
+  useEffect(() => {
+    return focusSessionController.subscribe(setSessionCtrlState);
+  }, []);
 
   // Target calculations
   const totalTargetSec = todayTargetHours * 3600;
@@ -152,128 +170,103 @@ export const Dashboard: React.FC<DashboardProps> = ({
     };
   }, []);
 
-  // Visual state styling with SCREEN, PAPER, MIXED, THINKING, and threat distinctions
+  // Visual state styling with Section 42 Authoritative Statuses
   const getStateVisuals = () => {
-    switch (tickData.state) {
-      case 'FOCUSED_SCREEN':
-      case 'FOCUSED':
+    if (tickData.state === 'IDLE') {
+      return {
+        title: 'READY',
+        subtitle: 'Set your subject and start verified focus session',
+        tooltip: 'Click Start Session to begin.',
+        color: 'text-zinc-400',
+        bg: 'bg-zinc-900 border-zinc-800',
+        dot: 'bg-zinc-500'
+      };
+    }
+
+    if (tickData.state === 'BREAK') {
+      return {
+        title: 'BREAK',
+        subtitle: 'Intentional cognitive rest in progress',
+        tooltip: 'Take a restorative break to reset mental clarity.',
+        color: 'text-sky-400',
+        bg: 'bg-sky-500/10 border-sky-500/30',
+        dot: 'bg-sky-400'
+      };
+    }
+
+    const gate = sessionCtrlState.gate || engineOutput.timerGate;
+    const highLevel = gate?.highLevelState || (tickData.isVerifiedFocus ? 'ACTIVE' : 'AWAY');
+    const deviceStatus = sessionCtrlState.deviceStatus || engineOutput.deviceStatus;
+
+    switch (highLevel) {
+      case 'ACTIVE':
+        if (deviceStatus === 'DEVICE_PRESENT') {
+          return {
+            title: '● DEVICE PRESENT — VERIFIED TIMER RUNNING',
+            subtitle: 'Device is resting on desk (inactive) — Verified study active',
+            tooltip: 'Smartphone detected on desk without hand interaction. Verified study timer continues running.',
+            color: 'text-teal-400',
+            bg: 'bg-teal-500/15 border-teal-500/40',
+            dot: 'bg-teal-400 animate-pulse'
+          };
+        }
         return {
-          title: 'SCREEN FOCUS',
-          subtitle: tickData.stateExplanation || 'Verified focus looking at monitor & screen workspace',
-          tooltip: 'Screen Focus active: Normal monitor and keyboard study posture verified.',
+          title: '● STUDENT PRESENT ● DEVICE NOT IN USE — VERIFIED FOCUS TIMER RUNNING',
+          subtitle: tickData.stateExplanation || `Verified focus timer active (${activeMedium})`,
+          tooltip: 'Student is present at workstation with no device in use. Verified timer running.',
           color: 'text-emerald-400',
-          bg: 'bg-emerald-500/10 border-emerald-500/30',
+          bg: 'bg-emerald-500/15 border-emerald-500/40',
           dot: 'bg-emerald-400 animate-pulse'
         };
-      case 'FOCUSED_PAPER':
+
+      case 'AWAY':
         return {
-          title: 'PAPER FOCUS',
-          subtitle: tickData.stateExplanation || 'Notebook-oriented posture detected with continued desk presence',
-          tooltip: 'Paper Focus detected. Head position and gaze are recognized as solving calculations/PYQs on paper.',
-          color: 'text-teal-400',
-          bg: 'bg-teal-500/15 border-teal-500/40',
-          dot: 'bg-teal-400 animate-pulse'
-        };
-      case 'FOCUSED_MIXED':
-        return {
-          title: 'MIXED FOCUS',
-          subtitle: tickData.stateExplanation || 'Verified focus alternating between monitor and notebook',
-          tooltip: 'Mixed Study active: Switching between screen and paper counts 100% as verified study time.',
-          color: 'text-indigo-400',
-          bg: 'bg-indigo-500/15 border-indigo-500/40',
-          dot: 'bg-indigo-400 animate-pulse'
-        };
-      case 'THINKING':
-        return {
-          title: 'THINKING / CONTEMPLATION',
-          subtitle: tickData.stateExplanation || 'Mental calculation or quiet reflection at desk (100% verified focus)',
-          tooltip: 'Thinking pause verified: Natural contemplation period while solving complex problems.',
-          color: 'text-cyan-400',
-          bg: 'bg-cyan-500/15 border-cyan-500/40',
-          dot: 'bg-cyan-400 animate-pulse'
-        };
-      case 'UNCERTAIN':
-      case 'WARNING':
-        return {
-          title: 'VERIFYING FOCUS (PAUSED)',
-          subtitle: tickData.verificationReason || tickData.stateExplanation || 'Observing posture — verified timer paused until study confirmed',
-          tooltip: 'Focus confidence is being verified. Timer does not accumulate unverified time.',
-          color: 'text-amber-400',
-          bg: 'bg-amber-500/10 border-amber-500/30',
-          dot: 'bg-amber-400 animate-ping'
-        };
-      case 'PHONE_USE':
-        return {
-          title: 'PHONE USE DETECTED (PAUSED)',
-          subtitle: tickData.verificationReason || engineOutput.distractionReason || 'Smartphone interaction detected — verified focus paused',
-          tooltip: 'Smartphone usage confirmed. Put phone away to automatically resume.',
-          color: 'text-rose-400',
-          bg: 'bg-rose-500/15 border-rose-500/40',
-          dot: 'bg-rose-400'
-        };
-      case 'CONVERSATION':
-        return {
-          title: 'CONVERSATION (PAUSED)',
-          subtitle: engineOutput.distractionReason || 'Verbal interaction with second person detected — verified focus paused',
-          tooltip: 'Active conversation detected. Return to study to resume timer.',
+          title: '● STUDENT AWAY — VERIFIED TIMER PAUSED',
+          subtitle: 'No student detected at workstation — verified focus paused',
+          tooltip: 'Workstation empty. The timer will automatically resume as soon as you return.',
           color: 'text-amber-400',
           bg: 'bg-amber-500/15 border-amber-500/40',
           dot: 'bg-amber-400'
         };
-      case 'POSSIBLE_SLEEP':
+
+      case 'DEVICE_IN_USE':
         return {
-          title: 'REST / SLEEP (PAUSED)',
-          subtitle: engineOutput.distractionReason || 'Stationary posture with closed eyes detected — verified focus paused',
-          tooltip: 'Extended rest or sleep posture observed. Stretch or take a break.',
-          color: 'text-violet-400',
-          bg: 'bg-violet-500/15 border-violet-500/40',
-          dot: 'bg-violet-400'
+          title: '● DEVICE IN USE — VERIFIED TIMER PAUSED',
+          subtitle: tickData.verificationReason || 'Smartphone actively in hand or near face — verified focus paused',
+          tooltip: 'Active smartphone interaction detected. Put the device away to automatically resume.',
+          color: 'text-rose-400',
+          bg: 'bg-rose-500/15 border-rose-500/40',
+          dot: 'bg-rose-400'
         };
-      case 'PAUSED':
-      case 'DISTRACTED':
+
+      case 'MONITORING_ERROR':
         return {
-          title: 'PAUSED',
-          subtitle: engineOutput.distractionReason || 'Timer paused — persistent distraction detected',
-          tooltip: 'Timer paused. Re-enter your study posture to automatically resume.',
+          title: '● MONITORING ERROR — VERIFIED TIMER PAUSED',
+          subtitle: 'AI vision or camera feed unavailable — countdown paused safely',
+          tooltip: 'Camera stream disconnected or AI perception stalled. Reconnect camera to resume.',
+          color: 'text-zinc-400',
+          bg: 'bg-zinc-800/60 border-zinc-700/60',
+          dot: 'bg-zinc-400'
+        };
+
+      case 'MANUAL_PAUSE':
+        return {
+          title: '● MANUAL PAUSE — VERIFIED TIMER PAUSED',
+          subtitle: 'Session paused manually by student',
+          tooltip: 'Click Resume Session when you are ready to study.',
           color: 'text-rose-400',
           bg: 'bg-rose-500/10 border-rose-500/30',
           dot: 'bg-rose-400'
         };
-      case 'AWAY':
-        return {
-          title: 'AWAY (PAUSED)',
-          subtitle: 'No person detected at workstation — verified focus paused',
-          tooltip: 'Workstation empty. Timer will resume after you return.',
-          color: 'text-zinc-400',
-          bg: 'bg-zinc-800/40 border-zinc-700/40',
-          dot: 'bg-zinc-400'
-        };
-      case 'UNVERIFIED':
-        return {
-          title: 'CAMERA UNVERIFIED (PAUSED)',
-          subtitle: 'Focus verification unavailable — verified countdown held',
-          tooltip: 'Camera is disconnected or unverified. Verified credit held.',
-          color: 'text-zinc-400',
-          bg: 'bg-zinc-800/40 border-zinc-700/40',
-          dot: 'bg-zinc-400'
-        };
-      case 'BREAK':
-        return {
-          title: 'BREAK',
-          subtitle: 'Intentional cognitive rest in progress',
-          tooltip: 'Take a restorative break to reset mental clarity.',
-          color: 'text-sky-400',
-          bg: 'bg-sky-500/10 border-sky-500/30',
-          dot: 'bg-sky-400'
-        };
+
       default:
         return {
-          title: 'READY',
-          subtitle: 'Set your subject and start verified focus session',
-          tooltip: 'Click Start Session to begin.',
-          color: 'text-zinc-400',
-          bg: 'bg-zinc-900 border-zinc-800',
-          dot: 'bg-zinc-500'
+          title: '● STUDENT PRESENT ● DEVICE NOT IN USE — VERIFIED FOCUS TIMER RUNNING',
+          subtitle: tickData.stateExplanation || 'Verified study active',
+          tooltip: 'Verified study active.',
+          color: 'text-emerald-400',
+          bg: 'bg-emerald-500/10 border-emerald-500/30',
+          dot: 'bg-emerald-400 animate-pulse'
         };
     }
   };
@@ -829,6 +822,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="font-mono text-5xl sm:text-7xl font-extrabold tracking-tight text-zinc-100 select-all">
               {formatDigitalClock(tickData.remainingTargetSeconds)}
+            </div>
+
+            {/* Execution Coach Banner: Permanent line "FOCUS ON TODAY'S EXECUTION." + Contextual coach pill */}
+            <div className="my-3">
+              <ExecutionCoachBanner
+                motivationalMessagesEnabled={userSettings.motivationalMessagesEnabled}
+                eventMessagesEnabled={userSettings.eventMessagesEnabled}
+              />
             </div>
 
             {isSessionActive && (

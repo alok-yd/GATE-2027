@@ -118,7 +118,13 @@ export const DEFAULT_SETTINGS: UserSettings = {
   examName: 'GATE 2027 CSE',
   examDate: '2027-02-06',
   hasCompletedOnboarding: false,
-  autoSyncGoogleCalendar: false
+  autoSyncGoogleCalendar: false,
+
+  // Execution Coach defaults (Prompt Section 22)
+  motivationalMessagesEnabled: true,
+  eventMessagesEnabled: true,
+  messageFrequency: 'NORMAL',
+  messageStyle: 'CONCISE'
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = DEFAULT_SETTINGS;

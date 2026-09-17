@@ -42,6 +42,65 @@ export type FocusVerificationState =
   | 'PAUSED_SLEEP'
   | 'PAUSED_MANUAL';
 
+export type HighLevelVerificationState = 
+  | 'ACTIVE' 
+  | 'AWAY' 
+  | 'DEVICE_IN_USE' 
+  | 'MANUAL_PAUSE' 
+  | 'MONITORING_ERROR';
+
+export type DeviceStatus = 'NOT_DETECTED' | 'DEVICE_PRESENT' | 'DEVICE_IN_USE';
+
+export interface DeviceInteractionEvidence {
+  deviceDetected: boolean;
+  deviceConfidence: number;
+  handInteractionConfidence: number;
+  proximityConfidence: number;
+  persistenceMs: number;
+  bbox?: BoundingBox;
+  timestamp: number;
+  isOnDesk?: boolean;
+  isHeldInHand?: boolean;
+  nearFace?: boolean;
+}
+
+export type MessageCategory =
+  | 'CORE'
+  | 'DISTRACTION'
+  | 'PHONE'
+  | 'AWAY'
+  | 'RETURN'
+  | 'PYQ'
+  | 'REVISION'
+  | 'TEST'
+  | 'THINKING'
+  | 'SESSION_START'
+  | 'SESSION_END'
+  | 'RECOVERY'
+  | 'FIRST_OF_DAY';
+
+export type MessagePriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export type MessageFrequency = 'LOW' | 'NORMAL' | 'HIGH';
+
+export interface FocusMessage {
+  id: string;
+  text: string;
+  category: MessageCategory;
+  priority: MessagePriority;
+  minIntervalMs?: number;
+}
+
+export interface TimerGateState {
+  studentPresent: boolean;
+  deviceInUse: boolean;
+  manualPause: boolean;
+  monitoringHealthy: boolean;
+  verifiedTimerAllowed: boolean;
+  highLevelState: HighLevelVerificationState;
+  blockReason: 'NONE' | 'AWAY' | 'DEVICE_IN_USE' | 'MANUAL_PAUSE' | 'MONITORING_ERROR';
+}
+
 export interface FocusVerificationGateResult {
   verified: boolean;
   state: FocusVerificationState;
@@ -82,6 +141,10 @@ export interface PhoneEvidence {
   faceProximityConfidence?: number;
   persistenceMs?: number;
   timestamp?: number;
+  isOnDesk?: boolean;
+  isHeldInHand?: boolean;
+  nearFace?: boolean;
+  deviceStatus?: DeviceStatus;
 }
 
 export type ActivityType =
@@ -132,6 +195,9 @@ export interface PhoneDisambiguationResult {
   aspectRatioMatch: boolean;
   reason: string;
   phoneEvidence?: PhoneEvidence;
+  deviceInUse?: boolean;
+  deviceStatus?: DeviceStatus;
+  deviceInteractionEvidence?: DeviceInteractionEvidence;
 }
 
 export interface FocusConfidenceVector {
@@ -364,6 +430,12 @@ export interface UserSettings {
   examDate: string; // ISO date
   hasCompletedOnboarding: boolean;
   autoSyncGoogleCalendar: boolean;
+
+  // Focus Motivation & Execution Coach Settings (Prompt Section 22)
+  motivationalMessagesEnabled: boolean;
+  eventMessagesEnabled: boolean;
+  messageFrequency: MessageFrequency;
+  messageStyle: 'CONCISE';
 }
 
 export interface FocusSession {

@@ -108,10 +108,11 @@ export class FocusStateMachine {
       };
     }
 
-    // 3. Specific Threat Check: Smartphone Use (Highest Priority Disruption)
-    if (phone.isPersistentPhoneUse || phone.phoneConfidence >= 0.55) {
+    // 3. Specific Threat Check: Smartphone In Active Use (Section 10-13)
+    // Only pause when device is confirmed in active use (held in hand or near face)
+    if (phone.deviceInUse || phone.isPersistentPhoneUse) {
       nextState = 'PHONE_USE';
-      distractionReason = phone.reason || 'Smartphone distraction confirmed.';
+      distractionReason = phone.reason || 'Smartphone in active use.';
       stateExplanation = 'Smartphone interaction active; study session paused.';
       return {
         nextState,
@@ -122,10 +123,6 @@ export class FocusStateMachine {
         returnConfirmationRemaining: 0,
         hasStateChanged: nextState !== currentState
       };
-    } else if (phone.isPhoneWarning) {
-      nextState = 'WARNING';
-      distractionReason = phone.reason;
-      stateExplanation = 'Smartphone activity observed. Please return focus to study.';
     }
 
     // 4. Specific Threat Check: Conversation
@@ -142,10 +139,6 @@ export class FocusStateMachine {
         returnConfirmationRemaining: 0,
         hasStateChanged: nextState !== currentState
       };
-    } else if (conv.isConversationWarning && nextState !== 'WARNING') {
-      nextState = 'WARNING';
-      distractionReason = conv.reason;
-      stateExplanation = 'Discussion or second person observed in study area.';
     }
 
     // 5. Specific Threat Check: Sleep / Prolonged Rest
@@ -162,22 +155,19 @@ export class FocusStateMachine {
         returnConfirmationRemaining: 0,
         hasStateChanged: nextState !== currentState
       };
-    } else if (sleep.isPossibleSleepWarning && nextState !== 'WARNING') {
-      nextState = 'WARNING';
-      distractionReason = sleep.reason;
-      stateExplanation = 'Prolonged stationary posture observed. Take a stretch or sip water.';
     }
 
-    // 6. Normal Study Activity Assignment
+    // 6. Normal Study Activity Assignment (Prompt Section 16 & 59)
     let targetFocusedState: FocusState = 'FOCUSED_SCREEN';
 
     if (activity.primaryActivity === 'THINKING') {
-      // Thinking state counts 100% towards verified focus
       targetFocusedState = 'THINKING';
       stateExplanation = 'Quiet contemplation or mental calculation at study desk.';
-    } else if (medium === 'Paper / PYQ Study') {
+    } else if (medium === 'Paper / PYQ Study' || pose.isLookingDown || pose.isPitchCompatibleWithPaper) {
       targetFocusedState = 'FOCUSED_PAPER';
-      stateExplanation = 'Notebook-oriented posture with verified desk presence.';
+      stateExplanation = phone.deviceStatus === 'DEVICE_PRESENT' 
+        ? 'Notebook-oriented study (device on desk, not in use). Verified timer running.'
+        : 'Notebook-oriented posture with verified desk presence.';
     } else if (medium === 'Mixed Study') {
       const isPaperOrientation = pose.isLookingDown || pose.isPitchCompatibleWithPaper || context.wasRecentlyInPaperFocus(60, now);
       targetFocusedState = isPaperOrientation ? 'FOCUSED_PAPER' : 'FOCUSED_SCREEN';
@@ -186,86 +176,29 @@ export class FocusStateMachine {
         : 'Monitor-oriented focus during mixed study session.';
     } else {
       targetFocusedState = 'FOCUSED_SCREEN';
-      stateExplanation = 'Direct screen study concentration detected.';
+      stateExplanation = phone.deviceStatus === 'DEVICE_PRESENT'
+        ? 'Direct screen study (device on desk, not in use). Verified timer running.'
+        : 'Direct screen study concentration detected.';
     }
 
-    // 7. Focus Score State Transition Evaluation
-    if (smoothedScore >= focusThreshold) {
-      // Is resuming from a paused, distracted, away, or threat state?
-      const wasInterrupted =
-        currentState === 'PAUSED' ||
-        currentState === 'AWAY' ||
-        currentState === 'DISTRACTED' ||
-        currentState === 'PHONE_USE' ||
-        currentState === 'CONVERSATION' ||
-        currentState === 'POSSIBLE_SLEEP';
+    // 7. Stable Study State Transition (Prompt Section 5: Focus score does NOT block timer)
+    // As long as student is present and not using device, timer is allowed to run.
+    const wasInterrupted =
+      currentState === 'PAUSED' ||
+      currentState === 'AWAY' ||
+      currentState === 'PHONE_USE';
 
-      if (wasInterrupted) {
-        const requiredConfirmSeconds = currentState === 'PHONE_USE' ? 2.5 : returnConfirmationSeconds;
-        const returnConfirm = temporal.handleReturnConfirmation(true, now, requiredConfirmSeconds);
-        if (returnConfirm.isFocusConfirmed) {
-          nextState = targetFocusedState;
-          stateExplanation = 'Focus re-established and confirmed.';
-        } else {
-          returnSecondsRemaining = returnConfirm.returnSecondsRemaining;
-          stateExplanation = `Confirming steady return to study posture (${returnSecondsRemaining}s)...`;
-        }
+    if (wasInterrupted) {
+      // Automatic Return Stabilization (Section 8)
+      if (presence?.isReturnStabilizing) {
+        returnSecondsRemaining = presence.returnStabilizationRemainingSeconds || 1.0;
+        stateExplanation = `Confirming return to workstation (${returnSecondsRemaining}s)...`;
       } else {
-        // Continuous smooth transition between study states (e.g. FOCUSED_SCREEN <-> FOCUSED_PAPER <-> THINKING)
-        temporal.handleReturnConfirmation(false, now);
-        this.uncertaintyStartTimestamp = null;
         nextState = targetFocusedState;
-      }
-    } else if (smoothedScore >= warningThreshold) {
-      temporal.handleReturnConfirmation(false, now);
-      // Soft uncertainty buffer with Previous Verified State Memory (Section 44)
-      if (nextState !== 'WARNING') {
-        const isPreviouslyFocused =
-          currentState === 'FOCUSED_PAPER' ||
-          currentState === 'FOCUSED_SCREEN' ||
-          currentState === 'FOCUSED_MIXED' ||
-          currentState === 'THINKING';
-
-        const hasNoContradictoryThreats =
-          !phone.isPossiblePhoneUse &&
-          !conv.isConfirmedConversation &&
-          !sleep.isPossibleSleepWarning;
-
-        if (isPreviouslyFocused && isPersonPresent && hasNoContradictoryThreats) {
-          if (this.uncertaintyStartTimestamp === null) {
-            this.uncertaintyStartTimestamp = now;
-          }
-          const uncertaintyDuration = Math.floor((now - this.uncertaintyStartTimestamp) / 1000);
-          if (uncertaintyDuration < 8) {
-            // Preserve previous verified state to prevent timer flutter during note reading/lighting dips
-            nextState = currentState;
-            stateExplanation = `Momentary sensory ambiguity (${uncertaintyDuration}s); verified study state preserved.`;
-          } else {
-            nextState = 'UNCERTAIN';
-            distractionReason = 'Prolonged signal ambiguity (brief glance away, posture shift, or low lighting)';
-            stateExplanation = 'Slight ambiguity in study signals; observing without pausing.';
-          }
-        } else {
-          nextState = 'UNCERTAIN';
-          distractionReason = 'Mild evidence ambiguity (brief glance away, posture shift, or low lighting)';
-          stateExplanation = 'Slight ambiguity in study signals; observing without pausing.';
-        }
+        stateExplanation = 'Focus re-established and confirmed.';
       }
     } else {
-      temporal.handleReturnConfirmation(false, now);
-      // Low confidence (< warningThreshold) -> requires persistent distraction before pausing
-      const distractionTiming = temporal.handleDistractionTiming(true, now, distractionGraceSeconds);
-      if (distractionTiming.isConfirmedDistracted) {
-        nextState = 'PAUSED';
-        distractionReason = distractionReason || `Persistent non-study activity detected for ${distractionGraceSeconds}s`;
-        stateExplanation = 'Verified focus paused due to persistent non-study behavior.';
-      } else {
-        nextState = 'DISTRACTED';
-        isGraceActive = true;
-        graceSecondsRemaining = distractionTiming.graceSecondsRemaining;
-        distractionReason = distractionReason || `Non-study indicators observed (${graceSecondsRemaining}s grace remaining)`;
-        stateExplanation = 'Distraction observed; waiting for return before pausing timer.';
-      }
+      nextState = targetFocusedState;
     }
 
     return {

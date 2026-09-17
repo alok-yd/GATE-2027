@@ -12,7 +12,10 @@ import {
   StateTransitionLog,
   StudyMedium,
   UserSettings,
-  VisionData
+  VisionData,
+  DeviceStatus,
+  DeviceInteractionEvidence,
+  TimerGateState
 } from '../types';
 import { calibrationEngine } from './calibrationEngine';
 import { FaceAnalyzer } from './focus/analyzers/FaceAnalyzer';
@@ -31,6 +34,7 @@ import { signalValidator } from './focus/SignalValidator';
 import { personPresenceEngine } from './focus/PersonPresenceEngine';
 import { conflictResolver } from './focus/ConflictResolver';
 import { PersonPresenceState, SignalConflictLog } from '../types';
+import { focusSessionController, shouldTimerRun } from './FocusSessionController';
 
 export interface FocusEngineOutput {
   state: FocusState;
@@ -38,6 +42,9 @@ export interface FocusEngineOutput {
   rawScore: number;
   facePresent: boolean;
   personPresenceState?: PersonPresenceState;
+  deviceStatus?: DeviceStatus;
+  deviceEvidence?: DeviceInteractionEvidence;
+  timerGate?: TimerGateState;
   visionQualityScore?: number;
   activity?: ActivityType;
   confidenceVector?: FocusConfidenceVector;
@@ -455,13 +462,33 @@ export class FocusEngine {
       this.contextMemory.recordState(this.currentState, now);
     }
 
-    // 6. Build Output
+    // 6. Feed Authoritative Session Controller
+    const deviceStatus: DeviceStatus = phone.deviceStatus || (phone.isPersistentPhoneUse ? 'DEVICE_IN_USE' : (phone.phoneConfidence > 0.4 ? 'DEVICE_PRESENT' : 'NOT_DETECTED'));
+    const deviceInUse: boolean = phone.deviceInUse ?? (deviceStatus === 'DEVICE_IN_USE');
+    const cameraHealthy = validation.visionQuality.isAcceptable;
+
+    focusSessionController.updatePerceptionState({
+      studentPresent: presence.isPersonPresent,
+      presenceConfidence: presence.confidence,
+      deviceStatus,
+      deviceInUse,
+      deviceInteractionEvidence: phone.evidence,
+      cameraHealthy,
+      inferenceFps: visionData.inferenceFps || 15
+    });
+
+    const currentGate = focusSessionController.getState().gate;
+
+    // 7. Build Output
     this.lastEvaluationOutput = {
       state: this.currentState,
       score: smoothedScore,
       rawScore: evidence.totalFocusScore,
       facePresent: presence.isPersonPresent,
       personPresenceState: presence.state,
+      deviceStatus,
+      deviceEvidence: phone.evidence,
+      timerGate: currentGate,
       visionQualityScore: validation.visionQuality.value,
       activity: activity.primaryActivity,
       confidenceVector: evidence.confidenceVector,
@@ -499,26 +526,42 @@ export class FocusEngine {
       activityEvents: this.contextMemory.getActivityEvents().slice(-10)
     };
 
-    // 7. Dispatch to listeners
+    // 8. Dispatch to listeners
     this.callbacks.forEach(cb => cb(this.lastEvaluationOutput!));
   }
 }
 
 export const focusEngine = new FocusEngine();
 
+/**
+ * Authoritative Focus Verification Check (Rules 1-5, Section 17 & 58)
+ * Timer pauses ONLY when:
+ * 1. Student is absent / away.
+ * 2. Device is actively IN USE (in hand / near face).
+ * 3. Manual pause.
+ * 4. Camera / monitoring error.
+ * 
+ * Phone on desk, looking down at paper PYQs, thinking, no keyboard, low focus score
+ * NEVER independently pause the timer.
+ */
 export function isVerifiedFocus(
   state: FocusState,
   output?: FocusEngineOutput | null,
   cameraHealthy?: boolean,
   isPersonPresent?: boolean
 ): FocusVerificationGateResult {
-  const isFocusState = isVerifiedFocusState(state);
-  const camOk = cameraHealthy ?? (output?.visionQualityScore !== undefined && output.visionQualityScore >= 0.25);
-  const present = isPersonPresent ?? (output?.facePresent ?? false);
-  const phone = (output?.confidenceVector?.phoneConfidence ?? 0) >= 0.45 || state === 'PHONE_USE';
-  const studyEv = (output?.confidenceVector?.paperStudyConfidence ?? 0) > 0.35 || 
-                  (output?.confidenceVector?.screenStudyConfidence ?? 0) > 0.35 || 
-                  (output?.confidenceVector?.thinkingConfidence ?? 0) > 0.40;
+  const camOk = cameraHealthy ?? (output?.visionQualityScore !== undefined ? output.visionQualityScore >= 0.25 : true);
+  const present = isPersonPresent ?? (output?.facePresent ?? (output?.personPresenceState !== 'ABSENT'));
+  const isDeviceInUse = output?.timerGate?.deviceInUse ?? (output?.deviceStatus === 'DEVICE_IN_USE' || state === 'PHONE_USE');
+  const isDeviceOnDesk = output?.deviceStatus === 'DEVICE_PRESENT';
+  const manualPause = state === 'PAUSED';
+
+  const allowed = shouldTimerRun({
+    manualPause,
+    monitoringHealthy: camOk,
+    studentPresent: present,
+    deviceInUse: isDeviceInUse
+  });
 
   if (!camOk || state === 'UNVERIFIED') {
     return {
@@ -528,7 +571,7 @@ export function isVerifiedFocus(
       confidence: 0.0,
       personPresent: present,
       cameraHealthy: false,
-      phoneDetected: phone,
+      phoneDetected: isDeviceInUse || isDeviceOnDesk,
       studyEvidence: false,
       studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
     };
@@ -538,21 +581,21 @@ export function isVerifiedFocus(
     return {
       verified: false,
       state: 'PAUSED_ABSENT',
-      reason: 'User is away from desk',
+      reason: 'Student is away from desk',
       confidence: 0.0,
       personPresent: false,
       cameraHealthy: camOk,
-      phoneDetected: phone,
+      phoneDetected: isDeviceInUse || isDeviceOnDesk,
       studyEvidence: false,
       studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
     };
   }
 
-  if (phone) {
+  if (isDeviceInUse) {
     return {
       verified: false,
       state: 'PAUSED_PHONE',
-      reason: 'Smartphone distraction active',
+      reason: 'Smartphone actively in use (in hand or near face)',
       confidence: 0.0,
       personPresent: present,
       cameraHealthy: true,
@@ -562,86 +605,35 @@ export function isVerifiedFocus(
     };
   }
 
-  if (state === 'DISTRACTED') {
+  if (manualPause) {
     return {
       verified: false,
-      state: 'PAUSED_DISTRACTED',
-      reason: output?.distractionReason || 'Looking away from study material',
+      state: 'PAUSED_MANUAL',
+      reason: 'Session paused manually',
       confidence: 0.0,
       personPresent: present,
       cameraHealthy: true,
-      phoneDetected: false,
+      phoneDetected: isDeviceOnDesk,
       studyEvidence: false,
       studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
     };
   }
 
-  if (state === 'CONVERSATION') {
-    return {
-      verified: false,
-      state: 'PAUSED_CONVERSATION',
-      reason: 'Conversation with second person detected',
-      confidence: 0.0,
-      personPresent: present,
-      cameraHealthy: true,
-      phoneDetected: false,
-      studyEvidence: false,
-      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
-    };
-  }
-
-  if (state === 'POSSIBLE_SLEEP') {
-    return {
-      verified: false,
-      state: 'PAUSED_SLEEP',
-      reason: 'Prolonged sleep or eyes-closed rest posture',
-      confidence: 0.0,
-      personPresent: present,
-      cameraHealthy: true,
-      phoneDetected: false,
-      studyEvidence: false,
-      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
-    };
-  }
-
-  if (state === 'UNCERTAIN' || state === 'WARNING') {
-    return {
-      verified: false,
-      state: 'PAUSED_UNCERTAIN',
-      reason: output?.distractionReason || 'Verifying study posture & evidence',
-      confidence: (output?.score ?? 0) / 100,
-      personPresent: present,
-      cameraHealthy: true,
-      phoneDetected: false,
-      studyEvidence: studyEv,
-      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
-    };
-  }
-
-  if (isFocusState && present && camOk && (output?.score ?? 0) >= 40) {
-    return {
-      verified: true,
-      state: 'VERIFIED',
-      reason: output?.stateExplanation || 'Verified study active',
-      confidence: (output?.score ?? 85) / 100,
-      personPresent: true,
-      cameraHealthy: true,
-      phoneDetected: false,
-      studyEvidence: true,
-      studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
-    };
-  }
-
+  // If student is present, device is not in use, and camera is healthy:
+  // Timer runs with verified focus! Phone on desk, paper notes, thinking, or low score will NOT pause.
   return {
-    verified: false,
-    state: 'PAUSED_UNCERTAIN',
-    reason: 'Waiting for verified study evidence',
-    confidence: 0.0,
-    personPresent: present,
-    cameraHealthy: camOk,
-    phoneDetected: phone,
-    studyEvidence: false,
+    verified: allowed,
+    state: allowed ? 'VERIFIED' : 'PAUSED_UNCERTAIN',
+    reason: isDeviceOnDesk 
+      ? 'Device present on desk (inactive) — Verified study active' 
+      : (output?.stateExplanation || 'Verified study active'),
+    confidence: Math.max(0.75, (output?.score ?? 85) / 100),
+    personPresent: true,
+    cameraHealthy: true,
+    phoneDetected: isDeviceOnDesk,
+    studyEvidence: true,
     studyMedium: output?.telemetry?.studyMedium || 'Screen Study'
   };
 }
+
 
