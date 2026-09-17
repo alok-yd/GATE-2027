@@ -87,7 +87,8 @@ export class AIServiceHub {
     const mockAverage = this.getMockAverage(studentData);
     const mockComponent = mockAverage || subjectAverage - 6;
     const consistency = studentData.studyMetrics.consistencyScore;
-    const weekly = studentData.studyMetrics.weeklyTargetCompletion;
+    const allLecturesComplete = studentData.subjects.length > 0 && studentData.subjects.every((s) => s.completionRate >= 100);
+    const weekly = allLecturesComplete ? 100 : studentData.studyMetrics.weeklyTargetCompletion;
     return Math.round(
       clamp(subjectAverage * 0.4 + mockComponent * 0.35 + consistency * 0.15 + weekly * 0.1, 0, 100)
     );
@@ -616,11 +617,14 @@ Use weak-area ROI, PYQs, revision, and one measurable mock or sectional test.
 
   async generateAlert(studentData: StudentProfile): Promise<Alert[]> {
     const fallback = this.localAlerts(studentData);
+    const allLecturesComplete = studentData.subjects.length > 0 && studentData.subjects.every((s) => s.completionRate >= 100);
     const prompt = `
 Return only a JSON array of 3-5 alerts.
 Each alert must have type, severity, message, actionRequired, estimatedImpact.
 Allowed types: WEAK_AREA, TIME_MANAGEMENT, STREAK_AT_RISK, PERFORMANCE_BOOST, OPPORTUNITY.
 Allowed severity: CRITICAL, HIGH, MEDIUM, LOW.
+Rules:
+${allLecturesComplete ? '- ALL video lectures are 100% completed. Preparation is in POST_LECTURE_MASTERY. Do NOT generate lecture-watching or lecture-goal warnings. Focus exclusively on PYQ practice, revision depth, mock exams, and error repair.' : ''}
 Profile:
 ${JSON.stringify(studentData, null, 2)}
 `;

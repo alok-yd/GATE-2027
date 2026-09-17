@@ -1,3 +1,30 @@
+export enum PreparationPhase {
+  LECTURE_COMPLETION = 'LECTURE_COMPLETION',
+  POST_LECTURE_MASTERY = 'POST_LECTURE_MASTERY',
+  REVISION = 'REVISION',
+  PYQ = 'PYQ',
+  MOCK_PHASE = 'MOCK_PHASE',
+  FINAL_REVISION = 'FINAL_REVISION',
+}
+
+export interface SubjectLectureStatus {
+  totalLectures: number;
+  completedLectures: number;
+  remainingLectures: number;
+  completionPercentage: number;
+  isComplete: boolean;
+}
+
+export interface LecturePhaseStatus {
+  allComplete: boolean;
+  phase: PreparationPhase;
+  completedSubjectsCount: number;
+  totalSubjectsCount: number;
+  totalLectures: number;
+  completedLectures: number;
+  overallCompletionPercentage: number;
+}
+
 export interface LectureSubject {
   id: string;
   name: string;

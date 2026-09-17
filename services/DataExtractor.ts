@@ -1,13 +1,16 @@
 import { INITIAL_SUBJECTS, ROADMAP_PHASE_1, ROADMAP_PHASE_2_WEEKLY, ROADMAP_PHASE_3_MASTERY } from '../data';
 import {
   DailyStudyLog,
+  LecturePhaseStatus,
   LectureSubject,
   MockResult,
+  PreparationPhase,
   PYQPracticeEntry,
   RevisionProgress,
   RoadmapProgress,
   StudentProfile,
   StudentSubjectPerformance,
+  SubjectLectureStatus,
   SubjectPYQPerformance,
   TestSeriesItem,
   WeeklyStudyTarget,
@@ -177,6 +180,52 @@ export const getCurrentPhaseSummary = () => {
   };
 };
 
+export const getSubjectLectureStatus = (subject: LectureSubject): SubjectLectureStatus => {
+  const total = Math.max(0, Number(subject.totalLectures || 0));
+  const completed = Math.max(0, Math.min(total, Number(subject.completedLectures ?? total)));
+  const remainingLectures = Math.max(0, total - completed);
+  const completionPercentage = total > 0 ? Math.round((completed / total) * 100) : 100;
+  return {
+    totalLectures: total,
+    completedLectures: completed,
+    remainingLectures,
+    completionPercentage,
+    isComplete: remainingLectures === 0,
+  };
+};
+
+export const areAllSubjectsLecturesComplete = (subjects: LectureSubject[]): boolean => {
+  if (!subjects || subjects.length === 0) return true;
+  return subjects.every((s) => getSubjectLectureStatus(s).isComplete);
+};
+
+export const getLecturePhaseStatus = (subjects: LectureSubject[]): LecturePhaseStatus => {
+  const allComplete = areAllSubjectsLecturesComplete(subjects);
+  let totalLectures = 0;
+  let completedLectures = 0;
+  let completedSubjectsCount = 0;
+
+  subjects.forEach((s) => {
+    const status = getSubjectLectureStatus(s);
+    totalLectures += status.totalLectures;
+    completedLectures += status.completedLectures;
+    if (status.isComplete) completedSubjectsCount++;
+  });
+
+  const overallCompletionPercentage =
+    totalLectures > 0 ? Math.round((completedLectures / totalLectures) * 100) : 100;
+
+  return {
+    allComplete,
+    phase: allComplete ? PreparationPhase.POST_LECTURE_MASTERY : PreparationPhase.LECTURE_COMPLETION,
+    completedSubjectsCount,
+    totalSubjectsCount: subjects.length,
+    totalLectures,
+    completedLectures,
+    overallCompletionPercentage,
+  };
+};
+
 export const getStoredSubjects = (): LectureSubject[] => {
   const storedSubjects = safeParse<LectureSubject[]>(
     localStorage.getItem('gate_subjects'),
@@ -191,17 +240,27 @@ export const getStoredSubjects = (): LectureSubject[] => {
       }
     });
 
-    return merged.map((subject) => ({
-      ...subject,
-      completedLectures: subject.totalLectures,
-    }));
+    return merged.map((subject) => {
+      const savedCount = localStorage.getItem(`lectures_${subject.id}`);
+      const effectiveCompleted =
+        typeof subject.completedLectures === 'number'
+          ? subject.completedLectures
+          : savedCount != null
+          ? Number(savedCount)
+          : subject.totalLectures;
+      return {
+        ...subject,
+        completedLectures: Math.max(0, Math.min(subject.totalLectures, effectiveCompleted)),
+      };
+    });
   }
 
   return INITIAL_SUBJECTS.map((subject) => {
     const savedCount = localStorage.getItem(`lectures_${subject.id}`);
     return {
       ...subject,
-      completedLectures: Math.max(subject.totalLectures, Number(savedCount) || subject.completedLectures),
+      completedLectures:
+        savedCount != null ? Number(savedCount) : subject.completedLectures ?? subject.totalLectures,
     };
   });
 };
@@ -398,9 +457,16 @@ const calculateConsistencyScore = (logs: DailyStudyLog[], streakDays: number) =>
   return Math.round(clamp(activeDayScore + streakScore, 0, 100));
 };
 
-const calculateWeeklyTargetCompletion = (targets: WeeklyStudyTarget[]) => {
+export const calculateWeeklyTargetCompletion = (
+  targets: WeeklyStudyTarget[],
+  allLecturesComplete: boolean = false
+) => {
+  if (allLecturesComplete) {
+    return 100;
+  }
   if (targets.length === 0) return 0;
   const latest = targets[targets.length - 1];
+  if (latest.targetLectures <= 0) return 100;
   return Math.round(
     clamp((latest.completedLectures / Math.max(latest.targetLectures, 1)) * 100, 0, 100)
   );
@@ -464,6 +530,7 @@ const buildSubjectPerformance = (
 
 export const getStudentProfile = (): StudentProfile => {
   const subjects = getStoredSubjects();
+  const allLecturesComplete = areAllSubjectsLecturesComplete(subjects);
   const logs = getDailyLogs();
   const weeklyTargets = getWeeklyTargets();
   const mocks = getMockResults();
@@ -491,7 +558,7 @@ export const getStudentProfile = (): StudentProfile => {
       consistencyScore: calculateConsistencyScore(logs, streakDays),
       learningStyle: 'visual',
       streakDays,
-      weeklyTargetCompletion: calculateWeeklyTargetCompletion(weeklyTargets),
+      weeklyTargetCompletion: calculateWeeklyTargetCompletion(weeklyTargets, allLecturesComplete),
     },
     recentLogs: getRecentLogs(logs, 14),
     weeklyTargets,

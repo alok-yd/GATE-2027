@@ -63,11 +63,14 @@ const AIAnalyticsDashboard: React.FC = () => {
             0
           ) / profile.mocks.length;
 
+    const allLecturesComplete = profile.subjects.length > 0 && profile.subjects.every((s) => s.completionRate >= 100);
+    const weeklyTargetScore = allLecturesComplete ? 100 : profile.studyMetrics.weeklyTargetCompletion;
+
     return Math.round(
       subjectAverage * 0.4 +
         mockAverage * 0.35 +
         profile.studyMetrics.consistencyScore * 0.15 +
-        profile.studyMetrics.weeklyTargetCompletion * 0.1
+        weeklyTargetScore * 0.1
     );
   }, [profile]);
 

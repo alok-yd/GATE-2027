@@ -1,6 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { LectureSubject } from '../types';
-import { getStoredSubjects } from '../services/DataExtractor';
+import React, { useState, useEffect, useMemo } from 'react';
+import { LectureSubject, PreparationPhase } from '../types';
+import {
+  areAllSubjectsLecturesComplete,
+  getLecturePhaseStatus,
+  getStoredSubjects,
+  getSubjectLectureStatus,
+} from '../services/DataExtractor';
 
 interface DailyProgress {
   date: string;
@@ -26,6 +31,10 @@ interface WeeklyTarget {
 const Tracker: React.FC = () => {
   const [subjects, setSubjects] = useState<LectureSubject[]>([]);
   const [activeTab, setActiveTab] = useState<'daily' | 'weekly'>('daily');
+
+  // Dynamic Lecture Phase Status
+  const phaseStatus = useMemo(() => getLecturePhaseStatus(subjects), [subjects]);
+  const allSubjectsComplete = phaseStatus.allComplete;
   
   // Date State for Daily View
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -299,6 +308,7 @@ const Tracker: React.FC = () => {
     // 1. Overall Stats
     const streakData = JSON.parse(localStorage.getItem('gate_streak_data') || '{"currentStreak": 0}');
     reportContent += `CURRENT STREAK: ${streakData.currentStreak} Days\n`;
+    reportContent += `PREPARATION PHASE: ${allSubjectsComplete ? 'POST-LECTURE MASTERY' : 'LECTURE COMPLETION'}\n`;
 
     const totalLectures = subjects.reduce((acc, s) => acc + s.totalLectures, 0);
     const completedLectures = subjects.reduce((acc, s) => acc + s.completedLectures, 0);
@@ -309,7 +319,8 @@ const Tracker: React.FC = () => {
     reportContent += `--- SUBJECT BREAKDOWN ---\n`;
     subjects.forEach(s => {
       const p = Math.round((s.completedLectures / s.totalLectures) * 100);
-      reportContent += `[${s.phase === 1 ? 'Phase 1' : 'Phase 2'}] ${s.name}: ${s.completedLectures}/${s.totalLectures} (${p}%)\n`;
+      const isDone = s.completedLectures >= s.totalLectures;
+      reportContent += `[${s.phase === 1 ? 'Phase 1' : 'Phase 2'}] ${s.name}: ${s.completedLectures}/${s.totalLectures} (${p}%) ${isDone ? '✓ COMPLETED' : 'IN PROGRESS'}\n`;
     });
     reportContent += '\n';
 
@@ -324,9 +335,14 @@ const Tracker: React.FC = () => {
             const w = JSON.parse(localStorage.getItem(key) || '{}');
             reportContent += `Week of ${w.weekId}:\n`;
             reportContent += `  Focus: ${w.focus ? w.focus.replace(/\n/g, ', ') : 'No focus set'}\n`;
-            reportContent += `  Target: ${w.targetLectures} Lectures | Completed: ${w.completedLectures}\n`;
-            const rate = w.targetLectures > 0 ? Math.round((w.completedLectures / w.targetLectures) * 100) : 0;
-            reportContent += `  Status: ${rate}%\n\n`;
+            if (allSubjectsComplete && (!w.targetLectures || w.targetLectures <= 0)) {
+              reportContent += `  Target: No mandatory lectures (Completed Syllabus) | Optional Review: ${w.completedLectures || 0}\n`;
+              reportContent += `  Status: 100% (Post-Lecture Phase)\n\n`;
+            } else {
+              reportContent += `  Target: ${w.targetLectures} Lectures | Completed: ${w.completedLectures}\n`;
+              const rate = w.targetLectures > 0 ? Math.round((w.completedLectures / w.targetLectures) * 100) : 100;
+              reportContent += `  Status: ${rate}%\n\n`;
+            }
         } catch (e) {}
     });
 
@@ -475,7 +491,7 @@ const Tracker: React.FC = () => {
                   <textarea 
                     value={dailyTarget.goalDescription}
                     onChange={(e) => handleTargetChange('goalDescription', e.target.value)}
-                    placeholder="e.g. Revise Unit 3, Solve 20 PYQs, Complete 2 lectures..."
+                    placeholder={allSubjectsComplete ? "e.g. Revise Memory Management, Solve 30 CN PYQs, Sectional Mock..." : "e.g. Revise Unit 3, Solve 20 PYQs, Complete 2 lectures..."}
                     rows={4}
                     className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none resize-none transition shadow-sm"
                   />
@@ -523,33 +539,45 @@ const Tracker: React.FC = () => {
             </div>
           </div>
 
-          {/* Daily Lecture Goal Counter */}
-          <div className="bg-gradient-to-r from-amber-50 to-orange-50 p-6 rounded-xl border border-amber-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
+          {/* Daily Lecture / Review Goal Counter */}
+          <div className={`p-6 rounded-xl border shadow-sm flex flex-col md:flex-row items-center justify-between gap-6 ${allSubjectsComplete ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-100' : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-100'}`}>
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-2">
-                <h2 className="text-lg font-bold text-amber-900">Today's Lecture Count</h2>
-                <span className="text-xs font-medium text-amber-700 bg-amber-200 px-2 py-0.5 rounded-full">Automated</span>
+                <h2 className={`text-lg font-bold ${allSubjectsComplete ? 'text-emerald-950' : 'text-amber-900'}`}>
+                  {allSubjectsComplete ? "Today's Concept Review" : "Today's Lecture Count"}
+                </h2>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${allSubjectsComplete ? 'text-emerald-700 bg-emerald-200' : 'text-amber-700 bg-amber-200'}`}>
+                  {allSubjectsComplete ? "Optional • Self-Paced" : "Automated"}
+                </span>
               </div>
               <div className="flex items-center gap-4">
-                <div className="flex-1 h-4 bg-amber-200 rounded-full overflow-hidden">
+                <div className={`flex-1 h-4 rounded-full overflow-hidden ${allSubjectsComplete ? 'bg-emerald-200' : 'bg-amber-200'}`}>
                     <div 
-                      className="h-full bg-amber-500 transition-all duration-500 ease-out"
-                      style={{ width: `${Math.min(100, (dailyProgress.count / dailyProgress.goal) * 100)}%` }}
+                      className={`h-full transition-all duration-500 ease-out ${allSubjectsComplete ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                      style={{ width: `${allSubjectsComplete ? (dailyProgress.count > 0 ? 100 : 0) : Math.min(100, (dailyProgress.count / (dailyProgress.goal || 1)) * 100)}%` }}
                     ></div>
                 </div>
-                <span className="text-amber-900 font-bold whitespace-nowrap">{dailyProgress.count} / {dailyProgress.goal} Lectures</span>
+                <span className={`font-bold whitespace-nowrap ${allSubjectsComplete ? 'text-emerald-900' : 'text-amber-900'}`}>
+                  {allSubjectsComplete 
+                    ? `${dailyProgress.count} Review Session${dailyProgress.count === 1 ? '' : 's'}` 
+                    : `${dailyProgress.count} / ${dailyProgress.goal} Lectures`}
+                </span>
               </div>
-              <p className="text-xs text-amber-700 mt-2">
-                Updates automatically when you click '+' on subjects below.
+              <p className={`text-xs mt-2 ${allSubjectsComplete ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {allSubjectsComplete 
+                  ? "Optional review sessions logged. No mandatory daily lecture quota." 
+                  : "Updates automatically when you click '+' on subjects below."}
               </p>
             </div>
             
-            <div className="flex items-center gap-3 bg-white/50 p-3 rounded-lg border border-amber-100">
-              <label className="text-sm font-medium text-amber-900">Target:</label>
+            <div className={`flex items-center gap-3 bg-white/60 p-3 rounded-lg border ${allSubjectsComplete ? 'border-emerald-100' : 'border-amber-100'}`}>
+              <label className={`text-sm font-medium ${allSubjectsComplete ? 'text-emerald-900' : 'text-amber-900'}`}>
+                {allSubjectsComplete ? "Sessions:" : "Target:"}
+              </label>
               <div className="flex items-center">
-                <button onClick={() => handleGoalChange(dailyProgress.goal - 1)} className="w-8 h-8 flex items-center justify-center bg-white border border-amber-200 rounded-l hover:bg-amber-100 text-amber-700 font-bold">-</button>
-                <span className="w-10 text-center font-bold text-amber-900 bg-white border-y border-amber-200 h-8 flex items-center justify-center">{dailyProgress.goal}</span>
-                <button onClick={() => handleGoalChange(dailyProgress.goal + 1)} className="w-8 h-8 flex items-center justify-center bg-white border border-amber-200 rounded-r hover:bg-amber-100 text-amber-700 font-bold">+</button>
+                <button onClick={() => handleGoalChange(Math.max(0, dailyProgress.goal - 1))} className={`w-8 h-8 flex items-center justify-center bg-white border rounded-l font-bold ${allSubjectsComplete ? 'border-emerald-200 hover:bg-emerald-50 text-emerald-700' : 'border-amber-200 hover:bg-amber-100 text-amber-700'}`}>-</button>
+                <span className={`w-10 text-center font-bold bg-white border-y h-8 flex items-center justify-center ${allSubjectsComplete ? 'border-emerald-200 text-emerald-900' : 'border-amber-200 text-amber-900'}`}>{dailyProgress.goal}</span>
+                <button onClick={() => handleGoalChange(dailyProgress.goal + 1)} className={`w-8 h-8 flex items-center justify-center bg-white border rounded-r font-bold ${allSubjectsComplete ? 'border-emerald-200 hover:bg-emerald-50 text-emerald-700' : 'border-amber-200 hover:bg-amber-100 text-amber-700'}`}>+</button>
               </div>
             </div>
           </div>
@@ -580,74 +608,159 @@ const Tracker: React.FC = () => {
                    value={weeklyTarget.focus}
                    onChange={(e) => handleWeeklyChange('focus', e.target.value)}
                    className="w-full h-64 p-4 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none bg-slate-50 text-slate-800 placeholder-slate-400"
-                   placeholder="1. Finish COA Module 2&#10;2. Revise OS PYQs&#10;3. Attempt 1 Full Mock"
+                   placeholder={allSubjectsComplete ? "1. Solve 100+ OS & CN PYQs&#10;2. Revise Engineering Math Short Notes&#10;3. Attempt 1 Full Mock + 2hr Error Analysis" : "1. Finish COA Module 2&#10;2. Revise OS PYQs&#10;3. Attempt 1 Full Mock"}
                  />
               </div>
               
               <div className="space-y-6">
-                 <div className="bg-white p-6 rounded-xl border border-indigo-100 shadow-sm relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-4 opacity-5">
-                       <svg className="w-32 h-32 text-indigo-600" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" /><path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" /></svg>
-                    </div>
+                 {allSubjectsComplete ? (
+                   /* STATE B: ALL LECTURES COMPLETE (POST-LECTURE MASTERY) */
+                   <div className="bg-white p-6 rounded-xl border border-emerald-100 shadow-sm relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-4 opacity-5">
+                         <svg className="w-32 h-32 text-emerald-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                      </div>
 
-                    <h3 className="text-indigo-900 font-bold mb-6 text-lg">Lecture Goals</h3>
-                    
-                    {/* Target Input */}
-                    <div className="flex items-center justify-between mb-8">
-                       <span className="text-slate-600 font-medium">Weekly Target</span>
-                       <div className="flex items-center gap-2 bg-indigo-50 px-4 py-2 rounded-lg border border-indigo-100">
-                          <input 
-                            type="number" 
-                            value={weeklyTarget.targetLectures}
-                            onChange={(e) => handleWeeklyChange('targetLectures', parseInt(e.target.value) || 0)}
-                            className="w-16 text-right font-bold bg-transparent focus:outline-none text-indigo-700 text-lg" 
-                          />
-                          <span className="text-xs font-bold text-indigo-400 uppercase tracking-wide">Lectures</span>
-                       </div>
-                    </div>
-                    
-                    {/* Progress Display */}
-                    <div className="mb-2 flex justify-between items-end">
-                       <div className="flex items-baseline gap-2">
-                           <span className="text-5xl font-bold text-indigo-600">{weeklyTarget.completedLectures}</span>
-                           <span className="text-sm text-slate-400 font-medium">/ {weeklyTarget.targetLectures} Completed</span>
-                       </div>
-                       <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded">
-                            {Math.round((weeklyTarget.completedLectures / (weeklyTarget.targetLectures || 1)) * 100)}%
-                       </span>
-                    </div>
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <span className="p-1.5 bg-emerald-100 text-emerald-700 rounded-lg">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
+                          </span>
+                          <div>
+                            <h3 className="text-emerald-950 font-bold text-lg leading-tight">LECTURE PHASE COMPLETE</h3>
+                            <p className="text-xs font-semibold text-emerald-600">✓ All planned lectures completed (100% Syllabus)</p>
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full">
+                          POST-LECTURE MASTERY
+                        </span>
+                      </div>
 
-                    {/* Progress Bar */}
-                    <div className="w-full bg-slate-100 rounded-full h-4 mb-8 overflow-hidden">
-                       <div 
-                         className="h-4 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500 shadow-sm"
-                         style={{ width: `${Math.min(100, (weeklyTarget.completedLectures / (weeklyTarget.targetLectures || 1)) * 100)}%` }}
-                       ></div>
-                    </div>
-
-                    {/* Manual Adjust Controls */}
-                    <div className="flex justify-between items-center pt-6 border-t border-slate-100">
-                         <span className="text-xs text-slate-400 font-medium uppercase tracking-wide">Manual Adjustment</span>
-                         <div className="flex gap-3">
-                            <button 
-                                onClick={() => handleWeeklyChange('completedLectures', Math.max(0, weeklyTarget.completedLectures - 1))} 
-                                className="w-10 h-10 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-slate-50 transition"
-                            >-</button>
-                            <button 
-                                onClick={() => handleWeeklyChange('completedLectures', weeklyTarget.completedLectures + 1)} 
-                                className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white hover:bg-indigo-700 shadow-md transition"
-                            >+</button>
+                      {/* Weekly Lecture Goal Banner */}
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Weekly Lecture Goal</span>
+                            <div className="text-base font-bold text-slate-800 mt-0.5">NO MANDATORY LECTURES</div>
+                          </div>
+                          <span className="text-xs font-semibold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-md">
+                            Completed Syllabus
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-2">
+                          Weekly lecture quota relaxed. Focus this week: <span className="font-semibold text-slate-700">PYQs • Revision • Tests • Error Analysis</span>.
+                        </p>
+                      </div>
+                      
+                      {/* Progress Display */}
+                      <div className="mb-2 flex justify-between items-end">
+                         <div className="flex items-baseline gap-2">
+                             <span className="text-3xl font-bold text-emerald-600">{weeklyTarget.completedLectures}</span>
+                             <span className="text-sm text-slate-500 font-medium">Review Sessions (Optional)</span>
                          </div>
-                    </div>
-                 </div>
+                         <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded">
+                              100% Coverage
+                         </span>
+                      </div>
 
+                      {/* Progress Bar */}
+                      <div className="w-full bg-slate-100 rounded-full h-4 mb-6 overflow-hidden">
+                         <div 
+                           className="h-4 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500 shadow-sm"
+                           style={{ width: '100%' }}
+                         ></div>
+                      </div>
+
+                      {/* Optional Review Controls */}
+                      <div className="flex justify-between items-center pt-4 border-t border-slate-100">
+                           <div>
+                              <span className="text-xs text-slate-600 font-bold uppercase tracking-wide block">Optional Review Sessions</span>
+                              <span className="text-[11px] text-slate-400">Rewatch difficult concepts only when needed</span>
+                           </div>
+                           <div className="flex gap-3">
+                              <button 
+                                  onClick={() => handleWeeklyChange('completedLectures', Math.max(0, weeklyTarget.completedLectures - 1))} 
+                                  className="w-10 h-10 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-slate-50 transition"
+                                  title="Decrease review sessions"
+                              >-</button>
+                              <button 
+                                  onClick={() => handleWeeklyChange('completedLectures', weeklyTarget.completedLectures + 1)} 
+                                  className="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center text-white hover:bg-emerald-700 shadow-md transition"
+                                  title="Log optional review session"
+                              >+</button>
+                           </div>
+                      </div>
+                   </div>
+                 ) : (
+                   /* STATE A: LECTURES INCOMPLETE */
+                   <div className="bg-white p-6 rounded-xl border border-indigo-100 shadow-sm relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-4 opacity-5">
+                         <svg className="w-32 h-32 text-indigo-600" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" /><path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" /></svg>
+                      </div>
+
+                      <h3 className="text-indigo-900 font-bold mb-6 text-lg">Lecture Goals</h3>
+                      
+                      {/* Target Input */}
+                      <div className="flex items-center justify-between mb-8">
+                         <span className="text-slate-600 font-medium">Weekly Target</span>
+                         <div className="flex items-center gap-2 bg-indigo-50 px-4 py-2 rounded-lg border border-indigo-100">
+                            <input 
+                              type="number" 
+                              value={weeklyTarget.targetLectures}
+                              onChange={(e) => handleWeeklyChange('targetLectures', parseInt(e.target.value) || 0)}
+                              className="w-16 text-right font-bold bg-transparent focus:outline-none text-indigo-700 text-lg" 
+                            />
+                            <span className="text-xs font-bold text-indigo-400 uppercase tracking-wide">Lectures</span>
+                         </div>
+                      </div>
+                      
+                      {/* Progress Display */}
+                      <div className="mb-2 flex justify-between items-end">
+                         <div className="flex items-baseline gap-2">
+                             <span className="text-5xl font-bold text-indigo-600">{weeklyTarget.completedLectures}</span>
+                             <span className="text-sm text-slate-400 font-medium">/ {weeklyTarget.targetLectures} Completed</span>
+                         </div>
+                         <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded">
+                              {Math.round((weeklyTarget.completedLectures / (weeklyTarget.targetLectures || 1)) * 100)}%
+                         </span>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full bg-slate-100 rounded-full h-4 mb-8 overflow-hidden">
+                         <div 
+                           className="h-4 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500 shadow-sm"
+                           style={{ width: `${Math.min(100, (weeklyTarget.completedLectures / (weeklyTarget.targetLectures || 1)) * 100)}%` }}
+                         ></div>
+                      </div>
+
+                      {/* Manual Adjust Controls */}
+                      <div className="flex justify-between items-center pt-6 border-t border-slate-100">
+                           <span className="text-xs text-slate-400 font-medium uppercase tracking-wide">Manual Adjustment</span>
+                           <div className="flex gap-3">
+                              <button 
+                                  onClick={() => handleWeeklyChange('completedLectures', Math.max(0, weeklyTarget.completedLectures - 1))} 
+                                  className="w-10 h-10 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-slate-50 transition"
+                              >-</button>
+                              <button 
+                                  onClick={() => handleWeeklyChange('completedLectures', weeklyTarget.completedLectures + 1)} 
+                                  className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white hover:bg-indigo-700 shadow-md transition"
+                              >+</button>
+                           </div>
+                      </div>
+                   </div>
+                 )}
+
+                 {/* Review Tip */}
                  <div className="bg-green-50 p-4 rounded-xl border border-green-100 flex items-start gap-3">
                     <div className="p-2 bg-green-200 rounded-full text-green-700 mt-1">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     </div>
                     <div>
                         <h4 className="text-sm font-bold text-green-800">Review Tip</h4>
-                        <p className="text-xs text-green-700 mt-1">"Consistency beats intensity." Ensure you meet at least 80% of your weekly lecture goal to stay on track for Jan 2027.</p>
+                        <p className="text-xs text-green-700 mt-1">
+                          {allSubjectsComplete
+                            ? "Your lecture syllabus is complete. Protect your preparation time for revision, PYQs, tests, and error correction."
+                            : '"Consistency beats intensity." Ensure you meet at least 80% of your weekly lecture goal to stay on track for Jan 2027.'}
+                        </p>
                     </div>
                  </div>
               </div>
@@ -809,12 +922,13 @@ const SubjectCard: React.FC<{
   onUpdate: (id: string, delta: number) => void;
   onEdit: () => void;
 }> = ({ subject, onUpdate, onEdit }) => {
-  const percentage = Math.round((subject.completedLectures / subject.totalLectures) * 100);
-  const isCompleted = subject.completedLectures >= subject.totalLectures;
+  const status = getSubjectLectureStatus(subject);
+  const percentage = status.completionPercentage;
+  const isCompleted = status.isComplete;
   
   return (
-    <div className={`bg-white rounded-xl shadow-sm border ${isCompleted ? 'border-green-400 ring-1 ring-green-400' : 'border-slate-200'} overflow-hidden flex flex-col transition-all duration-300 group relative`}>
-      <div className={`h-2 w-full ${subject.color}`}></div>
+    <div className={`bg-white rounded-xl shadow-sm border ${isCompleted ? 'border-emerald-300 ring-1 ring-emerald-200' : 'border-slate-200'} overflow-hidden flex flex-col transition-all duration-300 group relative`}>
+      <div className={`h-2 w-full ${isCompleted ? 'bg-emerald-500' : subject.color}`}></div>
       
       {/* Edit Button */}
       <button 
@@ -826,55 +940,73 @@ const SubjectCard: React.FC<{
       </button>
 
       <div className="p-5 flex-1 flex flex-col">
-        <div className="flex justify-between items-start mb-4 pr-6">
+        <div className="flex justify-between items-start mb-3 pr-6">
             <h4 className="font-bold text-slate-800 text-lg flex flex-col">
               {subject.name}
-              {isCompleted && (
-                <span className="text-xs font-medium text-green-600 flex items-center gap-1 mt-1">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
-                  Completed
+              {isCompleted ? (
+                <span className="text-xs font-bold text-emerald-600 flex items-center gap-1 mt-1 uppercase tracking-wide">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                  Lectures Complete
+                </span>
+              ) : (
+                <span className="text-xs font-medium text-amber-600 flex items-center gap-1 mt-1">
+                  In Progress ({status.remainingLectures} remaining)
                 </span>
               )}
             </h4>
         </div>
         
-        <div className="flex justify-between text-xs text-slate-500 mb-1 font-medium">
+        {isCompleted ? (
+          <div className="bg-emerald-50/70 border border-emerald-100 rounded-lg p-2.5 mb-4">
+            <div className="flex justify-between text-xs font-semibold text-emerald-800 mb-1">
+              <span>100% Lecture Coverage</span>
+              <span className="font-mono">{subject.completedLectures}/{subject.totalLectures}</span>
+            </div>
+            <div className="text-[11px] font-medium text-emerald-700 flex items-center gap-1">
+              <span className="text-emerald-500 font-bold">Next Focus:</span> PYQs + Spaced Revision
+            </div>
+          </div>
+        ) : (
+          <div className="flex justify-between text-xs text-slate-500 mb-1 font-medium">
              <span>Progress</span>
              <span>{subject.completedLectures} / {subject.totalLectures}</span>
-        </div>
+          </div>
+        )}
 
         {/* Progress Bar */}
-        <div className="w-full bg-slate-100 rounded-full h-3 mb-6 relative overflow-hidden">
+        <div className="w-full bg-slate-100 rounded-full h-3 mb-5 relative overflow-hidden">
             <div 
-                className={`h-3 rounded-full transition-all duration-500 ${isCompleted ? 'bg-green-500' : subject.color}`} 
-                style={{ width: `${percentage}%` }}
+                className={`h-3 rounded-full transition-all duration-500 ${isCompleted ? 'bg-emerald-500' : subject.color}`} 
+                style={{ width: `${Math.min(100, percentage)}%` }}
             ></div>
         </div>
 
-        <div className="mt-auto flex items-center justify-between">
+        <div className="mt-auto flex items-center justify-between pt-2 border-t border-slate-50">
             <button 
                 onClick={() => onUpdate(subject.id, -1)}
-                className="w-10 h-10 rounded-full border border-slate-200 flex items-center justify-center text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition"
+                className="w-9 h-9 rounded-full border border-slate-200 flex items-center justify-center text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition"
                 disabled={subject.completedLectures <= 0}
                 aria-label="Decrease completed lectures"
             >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 12H4"></path></svg>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 12H4"></path></svg>
             </button>
-            <span className={`font-mono font-bold text-lg ${isCompleted ? 'text-green-600' : 'text-slate-700'}`}>{percentage}%</span>
+            <span className={`font-mono font-bold text-sm ${isCompleted ? 'text-emerald-600' : 'text-slate-700'}`}>
+              {isCompleted ? '✓ 100%' : `${percentage}%`}
+            </span>
             <button 
                 onClick={() => onUpdate(subject.id, 1)}
-                className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md transition transform active:scale-95 ${
+                className={`w-9 h-9 rounded-full flex items-center justify-center shadow-sm transition transform active:scale-95 ${
                     isCompleted 
-                    ? 'bg-green-500 text-white cursor-default' 
+                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' 
                     : 'bg-slate-900 text-white hover:bg-slate-800'
                 }`}
-                disabled={isCompleted}
-                aria-label="Increase completed lectures"
+                aria-label={isCompleted ? "Optional Review / Rewatch Session" : "Increase completed lectures"}
+                title={isCompleted ? "Log optional review / rewatch" : "Mark lecture completed"}
             >
                 {isCompleted ? (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                 ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                 )}
             </button>
         </div>

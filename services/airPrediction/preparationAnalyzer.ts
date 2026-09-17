@@ -57,16 +57,21 @@ export const analyzePreparationState = (profile: StudentProfile): PreparationAna
   const rawKnowledgeScore = weightedCompletionSum / totalExamWeight;
   const knowledgeScore = Math.round(clamp(rawKnowledgeScore, 0, 100));
 
+  const allSubjectsComplete = subjects.length > 0 && subjects.every((s) => s.completionRate >= 100);
   const knowledgeDimension: PreparationDimension = {
     id: 'knowledge-coverage',
     name: 'Knowledge & Syllabus Coverage',
     weight: 15,
     score: knowledgeScore,
     level: getLevelFromScore(knowledgeScore),
-    primaryMetric: `${knowledgeScore}% Weighted Syllabus Covered`,
-    supportingDetail: `${subjects.filter((s) => s.completionRate >= 90).length}/${subjects.length} subjects completed.`,
+    primaryMetric: allSubjectsComplete ? '100% Syllabus Exposure Complete' : `${knowledgeScore}% Weighted Syllabus Covered`,
+    supportingDetail: allSubjectsComplete
+      ? 'All GATE CSE video lectures completed (100% syllabus exposure). Ready for mastery.'
+      : `${subjects.filter((s) => s.completionRate >= 90).length}/${subjects.length} subjects completed.`,
     actionableTip:
-      knowledgeScore >= 90
+      allSubjectsComplete
+        ? 'Lecture syllabus complete. Focus entirely on revision cycles, PYQs, and mocks.'
+        : knowledgeScore >= 90
         ? 'Syllabus coverage is stellar. Keep all subjects fresh via spaced revision.'
         : 'Prioritize high-weight pending subjects (Engineering Math, Aptitude, OS, Algorithms).',
   };
@@ -230,8 +235,9 @@ export const analyzePreparationState = (profile: StudentProfile): PreparationAna
   // 5. Consistency & Habit (Weight 10%)
   // Streak continuity, daily hours, target completion
   // -------------------------------------------------------------
+  const effectiveTargetCompletion = allSubjectsComplete ? 100 : metrics.weeklyTargetCompletion;
   const streakScore = clamp(currentStreak / 60, 0, 1) * 50;
-  const targetScore = clamp(metrics.weeklyTargetCompletion / 80, 0, 1) * 25;
+  const targetScore = clamp(effectiveTargetCompletion / 80, 0, 1) * 25;
   const dailyHoursScore = clamp(metrics.dailyHours / 8.0, 0, 1) * 25;
   const consistencyScore = Math.round(clamp(streakScore + targetScore + dailyHoursScore, 10, 100));
 
@@ -242,7 +248,9 @@ export const analyzePreparationState = (profile: StudentProfile): PreparationAna
     score: consistencyScore,
     level: getLevelFromScore(consistencyScore),
     primaryMetric: `${currentStreak} Day Streak | ${metrics.dailyHours}h Daily Avg`,
-    supportingDetail: `Weekly target completion: ${metrics.weeklyTargetCompletion}%. Consistent habit index: ${consistencyScore}/100.`,
+    supportingDetail: allSubjectsComplete
+      ? `Lecture phase complete (100% syllabus coverage). Consistent habit index: ${consistencyScore}/100.`
+      : `Weekly target completion: ${metrics.weeklyTargetCompletion}%. Consistent habit index: ${consistencyScore}/100.`,
     actionableTip:
       currentStreak < 14
         ? 'Protect your daily 90-minute minimum study block to build an unbreakable streak.'

@@ -124,6 +124,11 @@ const Dashboard: React.FC = () => {
               <span className="text-4xl font-bold text-slate-800">{completionRate}%</span>
               <span className="text-slate-400 text-sm mb-1 ml-2">syllabus locked</span>
             </div>
+            {completionRate >= 100 && (
+              <p className="text-xs font-semibold text-emerald-600 flex items-center gap-1 mt-1">
+                ✓ Lectures Complete • Mastery Phase
+              </p>
+            )}
           </div>
           <div className="h-32 mt-4 relative">
              <ResponsiveContainer width="100%" height="100%">
