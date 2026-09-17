@@ -49,7 +49,7 @@ function aiGatewayDevPlugin(apiKey: string): Plugin {
                 return;
               }
 
-              const key = (apiKey || process.env.GEMINI_API_KEY || 'AIzaSyD1GBiSgUFlsv05w5PZeZBwTI1oe7-NodY').trim();
+              const key = (apiKey || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
               const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
               
               const payload: Record<string, unknown> = {
@@ -116,7 +116,7 @@ function aiGatewayDevPlugin(apiKey: string): Plugin {
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
-    const geminiKey = env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEY || 'AIzaSyD1GBiSgUFlsv05w5PZeZBwTI1oe7-NodY';
+    const geminiKey = env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEY || '';
     const aiGatewayPort = env.ACHIEVER_AI_GATEWAY_PORT || '8787';
 
     return {

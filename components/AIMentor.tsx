@@ -515,20 +515,20 @@ ${prompt}`;
                   type="password"
                   value={customKeyInput}
                   onChange={(e) => setCustomKeyInput(e.target.value)}
-                  placeholder="AIzaSy..."
+                  placeholder="Enter Gemini API key..."
                   className="w-full font-mono text-sm px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
-                  Pre-configured Key: <code className="text-slate-600 font-mono">{getMaskedGeminiKey(DEFAULT_GEMINI_API_KEY)}</code>
+                  Active Environment Key: <code className="text-slate-600 font-mono">{getMaskedGeminiKey()}</code>
                 </p>
               </div>
 
               <div className="flex gap-2">
                 <button
-                  onClick={() => setCustomKeyInput(DEFAULT_GEMINI_API_KEY)}
+                  onClick={() => setCustomKeyInput('')}
                   className="px-3 py-1.5 text-xs font-semibold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition"
                 >
-                  Restore Provided Key
+                  Use Environment Key
                 </button>
               </div>
 

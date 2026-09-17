@@ -1,4 +1,4 @@
-﻿services:
+services:
   - type: web
     name: gate-2027-prep-tracker
     runtime: static
@@ -10,4 +10,4 @@
         destination: /index.html
     envVars:
       - key: VITE_GEMINI_API_KEY
-        value: AIzaSyD1GBiSgUFlsv05w5PZeZBwTI1oe7-NodY
+        sync: false

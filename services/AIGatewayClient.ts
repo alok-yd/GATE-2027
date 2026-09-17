@@ -20,7 +20,7 @@ export interface AIGatewayStatus {
   };
 }
 
-export const DEFAULT_GEMINI_API_KEY = 'AIzaSyD1GBiSgUFlsv05w5PZeZBwTI1oe7-NodY';
+export const DEFAULT_GEMINI_API_KEY = '';
 export const GEMINI_STORAGE_KEY = 'gate_gemini_api_key';
 
 export const getGeminiApiKey = (): string => {
