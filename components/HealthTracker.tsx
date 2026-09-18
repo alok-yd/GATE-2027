@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { describeAIGatewayError, generateGatewayText } from '../services/AIGatewayClient';
+import { safeParseJson } from '../services/ai/jsonRepair';
 
 type Mood = 'great' | 'good' | 'neutral' | 'low' | 'bad';
 type StudyMode = 'Deep Work' | 'Normal Study' | 'Light Revision' | 'Recovery Mode';
@@ -408,13 +409,6 @@ const buildLocalAnalysis = (
   };
 };
 
-const cleanJson = (text: string) => {
-  const withoutFence = text.replace(/```json/gi, '```').replace(/```/g, '').trim();
-  const start = withoutFence.indexOf('{');
-  const end = withoutFence.lastIndexOf('}');
-  return start >= 0 && end > start ? withoutFence.slice(start, end + 1) : withoutFence;
-};
-
 const analyzeWithGateway = async (
   entry: HealthEntry,
   history: HealthEntry[],
@@ -459,10 +453,7 @@ ${JSON.stringify(appContext, null, 2)}
     system:
       'You are Achiever Kusha, a safe wellness and study-readiness coach. Provide educational wellness support only; do not diagnose or prescribe medicine.',
   });
-  const parsed = JSON.parse(cleanJson(result.content)) as Omit<
-    HealthAnalysis,
-    'source' | 'generatedAt' | 'failureNote'
-  >;
+  const parsed = safeParseJson<Omit<HealthAnalysis, 'source' | 'generatedAt' | 'failureNote'>>(result.content);
   return {
     ...parsed,
     healthScore: clamp(Math.round(Number(parsed.healthScore) || 0), 0, 100),
@@ -594,6 +585,7 @@ const HealthTracker: React.FC = () => {
 
   const handleSync = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (loading) return;
     setLoading(true);
     const entry = buildEntryFromForm(form);
     const nextEntries = [...entries.filter((item) => item.date !== entry.date), entry].sort((a, b) =>
@@ -611,6 +603,20 @@ const HealthTracker: React.FC = () => {
     } finally {
       setLoading(false);
       setShowSyncForm(false);
+    }
+  };
+
+  const handleRetryAI = async () => {
+    if (loading || !latestEntry) return;
+    setLoading(true);
+    const context = getExistingAppContext();
+    try {
+      const gatewayAnalysis = await analyzeWithGateway(latestEntry, entries, context);
+      persistAnalysis(gatewayAnalysis);
+    } catch (error) {
+      persistAnalysis(buildLocalAnalysis(latestEntry, entries, context, describeAIGatewayError(error)));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -801,8 +807,19 @@ const HealthTracker: React.FC = () => {
             </div>
 
             {analysis?.failureNote && (
-              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                AI fallback note: {analysis.failureNote}
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-amber-900">AI Notice:</span>
+                  <span>{analysis.failureNote}</span>
+                </div>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={handleRetryAI}
+                  className="self-start sm:self-auto rounded bg-amber-600 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                >
+                  {loading ? 'Retrying...' : 'Retry AI'}
+                </button>
               </div>
             )}
 

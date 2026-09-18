@@ -7,6 +7,7 @@ import {
   setGeminiApiKey,
   testGeminiKeyConnection,
 } from '../services/AIGatewayClient';
+import { AI_MODEL_CONFIG } from '../services/ai/modelConfig';
 import { aiHub } from '../services/AIServiceHub';
 import { getStudentProfile } from '../services/DataExtractor';
 import { StudentProfile } from '../types';
@@ -82,12 +83,13 @@ const AIMentor: React.FC = () => {
   const [searchParams] = useSearchParams();
   const initialAsk = searchParams.get('ask') || '';
   const [profile, setProfile] = useState<StudentProfile>(() => getStudentProfile());
+  const [activeModel, setActiveModel] = useState<string>(AI_MODEL_CONFIG.primaryModel);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       role: 'assistant',
       content:
-        "Hello! I'm your GATE 2027 AI Mentor, powered by Google Gemini 2.5 Flash.\n\nAsk me any concept explanation, paste a GATE problem for step-by-step solution, or ask for your personalized study plan!",
+        `Hello! I'm your GATE 2027 AI Mentor, powered by Google Gemini (${AI_MODEL_CONFIG.primaryModel}).\n\nAsk me any concept explanation, paste a GATE problem for step-by-step solution, or ask for your personalized study plan!`,
       timestamp: new Date(),
     },
   ]);
@@ -118,6 +120,7 @@ const AIMentor: React.FC = () => {
       if (res.ok) {
         setKeyStatus('connected');
         setGeminiLatency(res.latencyMs);
+        if (res.model) setActiveModel(res.model);
       } else {
         setKeyStatus('error');
       }
@@ -132,7 +135,9 @@ const AIMentor: React.FC = () => {
     if (res.ok) {
       setKeyStatus('connected');
       setGeminiLatency(res.latencyMs);
-      setKeyTestFeedback(`Connected to Google Gemini 2.5 Flash (${res.latencyMs} ms)`);
+      const modelUsed = res.model || activeModel;
+      if (res.model) setActiveModel(res.model);
+      setKeyTestFeedback(`Connected to Google Gemini (${modelUsed} - ${res.latencyMs} ms)`);
     } else {
       setKeyStatus('error');
       setKeyTestFeedback(res.message);
@@ -151,7 +156,9 @@ const AIMentor: React.FC = () => {
       if (res.ok) {
         setKeyStatus('connected');
         setGeminiLatency(res.latencyMs);
-        addMessage('assistant', `Gemini API key updated and verified successfully! Google Gemini 2.5 Flash is active.`);
+        const modelUsed = res.model || activeModel;
+        if (res.model) setActiveModel(res.model);
+        addMessage('assistant', `Gemini API key updated and verified successfully! Google Gemini (${modelUsed}) is active.`);
       } else {
         setKeyStatus('error');
         addMessage('assistant', `Key updated, but connection test failed: ${res.message}`);
@@ -300,7 +307,7 @@ ${prompt}`;
           </div>
 
           <h2 className="text-xl font-bold text-slate-800 mt-2">
-            Google Gemini 2.5 Flash
+            Google Gemini ({activeModel})
           </h2>
           <p className="text-xs text-slate-500 mt-1">
             Active LLM for GATE 2027 CSE Preparation
@@ -504,7 +511,7 @@ ${prompt}`;
             </div>
             <div className="p-6 space-y-4">
               <p className="text-xs text-slate-600 leading-relaxed">
-                The AI Mentor is powered by <strong>Google Gemini 2.5 Flash</strong> for real-time concept explanations, step-by-step problem solving, and adaptive GATE preparation guidance.
+                The AI Mentor is powered by <strong>Google Gemini ({activeModel})</strong> for real-time concept explanations, step-by-step problem solving, and adaptive GATE preparation guidance.
               </p>
               
               <div>

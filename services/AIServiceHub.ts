@@ -8,6 +8,8 @@ import {
   WeakArea,
 } from '../types';
 import { cleanGatewayJson, describeAIGatewayError, generateGatewayText } from './AIGatewayClient';
+import { AI_MODEL_CONFIG } from './ai/modelConfig';
+import { safeParseJson } from './ai/jsonRepair';
 import { achieverAIOrchestrator } from './AIOrchestrator';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -24,7 +26,7 @@ export class AIServiceHub {
   private lastGenerationError: string | null = null;
 
   getRuntimeLabel() {
-    return 'Google Gemini 2.5 Flash';
+    return `Google Gemini (${AI_MODEL_CONFIG.primaryModel})`;
   }
 
   getLastGenerationError() {
@@ -56,7 +58,7 @@ export class AIServiceHub {
     if (!text) return fallback;
 
     try {
-      return JSON.parse(cleanGatewayJson(text)) as T;
+      return safeParseJson<T>(text, fallback);
     } catch (error) {
       console.warn('AI JSON parse failed, using local fallback.', error);
       return fallback;

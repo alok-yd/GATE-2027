@@ -80,7 +80,12 @@ class GeminiProvider extends AIProvider {
   constructor() {
     super();
     this.apiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
-    this.model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    this.primaryModel = process.env.GEMINI_MODEL || process.env.VITE_GEMINI_MODEL || 'gemini-3.6-flash';
+    this.fallbackModels = [
+      process.env.GEMINI_FALLBACK_MODEL || process.env.VITE_GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
+      'gemini-3.8-flash',
+    ];
+    this.model = this.primaryModel;
   }
 
   isConfigured() {
@@ -92,53 +97,81 @@ class GeminiProvider extends AIProvider {
       throw new Error('GEMINI_API_KEY is not configured in environment.');
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
-      const payload = {
-        contents: [
-          { role: 'user', parts: [{ text: prompt }] },
-        ],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 2048,
-        },
-      };
+    const modelChain = [this.primaryModel, ...this.fallbackModels.filter((m) => m !== this.primaryModel)];
+    const wantsJson = prompt.toLowerCase().includes('json') || Boolean(system && system.toLowerCase().includes('json'));
 
-      if (system) {
-        payload.system_instruction = {
-          parts: [{ text: system }],
+    let lastError = null;
+
+    for (const currentModel of modelChain) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${this.apiKey}`;
+        const generationConfig = {
+          temperature: 0.4,
+          maxOutputTokens: 4096,
         };
+
+        if (wantsJson) {
+          generationConfig.responseMimeType = 'application/json';
+        }
+
+        const payload = {
+          contents: [
+            { role: 'user', parts: [{ text: prompt }] },
+          ],
+          generationConfig,
+        };
+
+        if (system) {
+          payload.system_instruction = {
+            parts: [{ text: system }],
+          };
+        }
+
+        const response = await fetch(url, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+          const providerMessage = data?.error?.message || response.statusText;
+          lastError = new Error(`Google Gemini returned HTTP ${response.status}: ${providerMessage}`);
+          if (
+            response.status === 404 ||
+            response.status === 503 ||
+            providerMessage.includes('no longer available') ||
+            providerMessage.includes('high demand')
+          ) {
+            continue;
+          }
+          throw lastError;
+        }
+
+        const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (typeof content !== 'string' || !content.trim()) {
+          lastError = new Error('Google Gemini returned an empty response.');
+          continue;
+        }
+
+        this.model = currentModel;
+        return {
+          content: content.trim(),
+          model: currentModel,
+          provider: 'gemini',
+          usage: data.usageMetadata || null,
+        };
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+      } finally {
+        clearTimeout(timeout);
       }
-
-      const response = await fetch(url, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        const providerMessage = data?.error?.message || response.statusText;
-        throw new Error(`Google Gemini returned HTTP ${response.status}: ${providerMessage}`);
-      }
-
-      const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (typeof content !== 'string' || !content.trim()) {
-        throw new Error('Google Gemini returned an empty response.');
-      }
-
-      return {
-        content: content.trim(),
-        model: this.model,
-        provider: 'gemini',
-        usage: data.usageMetadata || null,
-      };
-    } finally {
-      clearTimeout(timeout);
     }
+
+    throw lastError || new Error('All configured Gemini models failed in ai-gateway.');
   }
 }
 
