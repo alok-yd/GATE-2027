@@ -20,6 +20,12 @@ export const DEFAULT_CALIBRATION_PROFILE: CalibrationProfile = {
     maxY: 90,
     baselineCentroid: { x: 50, y: 50 }
   },
+  studentBaseline: {
+    faceAspectRatio: 1.35,
+    boxSpanRatio: 0.35,
+    baselineLuma: 128,
+    calibrated: false
+  },
   tolerances: {
     yawTolerance: 30,
     pitchTolerance: 22,
@@ -195,6 +201,12 @@ export class CalibrationEngine {
         maxY: 90,
         baselineCentroid: { x: 50, y: 50 }
       },
+      studentBaseline: {
+        faceAspectRatio: sample.faceBox ? Number((sample.faceBox.height / Math.max(1, sample.faceBox.width)).toFixed(2)) : 1.35,
+        boxSpanRatio: sample.faceBox ? Number((sample.faceBox.width / 100).toFixed(2)) : 0.35,
+        baselineLuma: sample.lightingScore ? Math.round(sample.lightingScore * 255) : 128,
+        calibrated: true
+      },
       tolerances: {
         yawTolerance: 30,
         pitchTolerance: 22,
@@ -281,6 +293,16 @@ export class CalibrationEngine {
         minY,
         maxY,
         baselineCentroid: { x: Math.round((minX + maxX) / 2), y: Math.round((minY + maxY) / 2) }
+      },
+      studentBaseline: {
+        faceAspectRatio: validBoxes.length > 0
+          ? Number((validBoxes.reduce((acc, b) => acc + (b.height / Math.max(1, b.width)), 0) / validBoxes.length).toFixed(2))
+          : 1.35,
+        boxSpanRatio: validBoxes.length > 0
+          ? Number((validBoxes.reduce((acc, b) => acc + (b.width / 100), 0) / validBoxes.length).toFixed(2))
+          : 0.35,
+        baselineLuma: lightingBaseline,
+        calibrated: true
       },
       tolerances: {
         yawTolerance,

@@ -1,5 +1,6 @@
 import {
   FocusMode,
+  FocusPresenceState,
   FocusSegment,
   FocusSession,
   FocusState,
@@ -9,6 +10,7 @@ import {
   TimerGateState,
   StudyMedium
 } from '../types';
+import { FocusConfig } from '../constants/FocusConfig';
 import { StorageService } from './storage';
 import { soundFx } from './audio';
 import { visionEngine } from '../vision/visionEngine';
@@ -74,7 +76,7 @@ export function shouldTimerRun(gate: {
 }): boolean {
   if (gate.manualPause) return false;
   if (!gate.monitoringHealthy) return false;
-  if (!gate.studentPresent) return false;
+  if (gate.studentPresent !== true) return false;
   if (gate.deviceInUse) return false;
   return true;
 }
@@ -107,16 +109,20 @@ export class FocusSessionController {
     accumulatedErrorMs: 0,
     totalSessionMs: 0,
     gate: {
-      studentPresent: true,
+      studentPresent: false,
       deviceInUse: false,
       manualPause: false,
       monitoringHealthy: true,
-      verifiedTimerAllowed: true,
-      highLevelState: 'ACTIVE',
-      blockReason: 'NONE'
+      verifiedTimerAllowed: false,
+      highLevelState: 'AWAY',
+      blockReason: 'AWAY',
+      presenceState: 'STUDENT_AWAY',
+      studentFaceVerified: false,
+      genericPersonDetected: false,
+      presenceEvidenceAgeMs: 0
     },
-    lastVisionUpdateAt: Date.now(),
-    presenceConfidence: 0.95,
+    lastVisionUpdateAt: 0,
+    presenceConfidence: 0.0,
     deviceStatus: 'NOT_DETECTED',
     inferenceFps: 12,
     segments: [],
@@ -232,13 +238,27 @@ export class FocusSessionController {
       accumulatedErrorMs: 0,
       totalSessionMs: 0,
       lastVisionUpdateAt: now,
+      presenceConfidence: 0.0,
+      gate: {
+        studentPresent: false,
+        deviceInUse: false,
+        manualPause: false,
+        monitoringHealthy: true,
+        verifiedTimerAllowed: false,
+        highLevelState: 'AWAY',
+        blockReason: 'AWAY',
+        presenceState: 'STUDENT_AWAY',
+        studentFaceVerified: false,
+        genericPersonDetected: false,
+        presenceEvidenceAgeMs: 0
+      },
       segments: [],
       currentSegment: null,
       stateTransitions: []
     };
 
     this.lastTickTimestamp = now;
-    this.transitionHighLevelState('ACTIVE', 'Session started');
+    this.transitionHighLevelState('AWAY', 'Session started; awaiting student face verification');
 
     // Start ticker (Web Worker + window interval fallback)
     if (this.timerWorker) {
@@ -344,12 +364,16 @@ export class FocusSessionController {
     params: {
       studentPresent?: boolean;
       presenceConfidence?: number;
+      presenceState?: FocusPresenceState;
+      studentFaceVerified?: boolean;
+      genericPersonDetected?: boolean;
       deviceStatus?: DeviceStatus;
       deviceInUse?: boolean;
       deviceInteractionEvidence?: DeviceInteractionEvidence;
       cameraHealthy?: boolean;
       manualPause?: boolean;
       inferenceFps?: number;
+      evidenceTimestamp?: number;
     },
     transitionReason?: string
   ): void {
@@ -370,10 +394,16 @@ export class FocusSessionController {
     }
 
     const currentGate = this.state.gate;
-    const studentPresent = params.studentPresent !== undefined ? params.studentPresent : currentGate.studentPresent;
+    let studentPresent = params.studentPresent !== undefined ? params.studentPresent : currentGate.studentPresent;
     const deviceInUse = params.deviceInUse !== undefined ? params.deviceInUse : (params.deviceStatus === 'DEVICE_IN_USE');
     const manualPause = params.manualPause !== undefined ? params.manualPause : currentGate.manualPause;
     const cameraHealthy = params.cameraHealthy !== undefined ? params.cameraHealthy : currentGate.monitoringHealthy;
+
+    // Check evidence age freshness
+    const evidenceAgeMs = params.evidenceTimestamp !== undefined ? (now - params.evidenceTimestamp) : (currentGate.presenceEvidenceAgeMs ?? 0);
+    if (params.evidenceTimestamp !== undefined && evidenceAgeMs > FocusConfig.maxPresenceEvidenceAgeMs) {
+      studentPresent = false;
+    }
 
     // Evaluate single timer gate (Section 4 & 58)
     const allowed = shouldTimerRun({
@@ -411,7 +441,11 @@ export class FocusSessionController {
       monitoringHealthy: cameraHealthy,
       verifiedTimerAllowed: allowed,
       highLevelState,
-      blockReason
+      blockReason,
+      presenceState: params.presenceState || (studentPresent ? 'STUDENT_PRESENT' : 'STUDENT_AWAY'),
+      studentFaceVerified: params.studentFaceVerified ?? studentPresent,
+      genericPersonDetected: params.genericPersonDetected ?? studentPresent,
+      presenceEvidenceAgeMs: evidenceAgeMs
     };
 
     if (oldState !== highLevelState) {
@@ -451,9 +485,12 @@ export class FocusSessionController {
       state: segmentFocusState,
       verified: newState === 'ACTIVE',
       medium: this.state.medium,
-      reason
+      reason: newState === 'DEVICE_IN_USE' ? 'Cell phone detected in use' :
+              newState === 'AWAY' ? 'Student absent from workstation' :
+              newState === 'MANUAL_PAUSE' ? 'Paused by student' : undefined
     };
 
+    // Keep ring buffer of state transitions
     this.state.stateTransitions.unshift({
       id: `tr_${now}`,
       timestamp: now,
@@ -474,7 +511,7 @@ export class FocusSessionController {
     // Sound cues on transitions
     if (newState === 'ACTIVE' && (oldState === 'AWAY' || oldState === 'DEVICE_IN_USE' || oldState === 'MANUAL_PAUSE')) {
       soundFx.playFocusRestored();
-    } else if (newState === 'AWAY' || newState === 'DEVICE_IN_USE') {
+    } else if ((newState === 'AWAY' || newState === 'DEVICE_IN_USE') && oldState !== newState && oldState !== 'AWAY') {
       soundFx.playAutoPaused();
     }
 
@@ -492,9 +529,17 @@ export class FocusSessionController {
     const deltaMs = Math.max(0, now - this.lastTickTimestamp);
     this.lastTickTimestamp = now;
 
-    // Watchdog check: If camera / vision stopped updating for > 4000ms, pause for safety (Section 35)
+    // Watchdog check: If camera / vision stopped updating for > 2500ms, pause for presence loss
     const visionLagMs = now - this.state.lastVisionUpdateAt;
-    if (visionLagMs > 4000 && this.state.gate.monitoringHealthy && !this.state.gate.manualPause) {
+    if (visionLagMs > FocusConfig.maxPresenceEvidenceAgeMs && this.state.gate.studentPresent) {
+      this.updatePerceptionState({
+        studentPresent: false,
+        presenceConfidence: 0.0,
+        presenceState: 'STUDENT_AWAY'
+      }, 'Stale presence evidence (> 2500ms) — student presence lost.');
+      return;
+    }
+    if (visionLagMs > FocusConfig.visionWatchdogTimeoutMs && this.state.gate.monitoringHealthy && !this.state.gate.manualPause) {
       this.updatePerceptionState({ cameraHealthy: false }, 'Monitoring paused — AI detection unavailable.');
       return;
     }

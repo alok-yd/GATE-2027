@@ -1,4 +1,11 @@
-import { PersonPresenceState, VisionData } from '../../types';
+import {
+  FocusPresenceState,
+  PersonPresenceState,
+  StudentPresenceDecision,
+  StudentPresenceEvidence,
+  VisionData
+} from '../../types';
+import { FocusConfig } from '../../constants/FocusConfig';
 import { SignalValidationReport } from './SignalValidator';
 
 export interface PersonPresenceResult {
@@ -24,134 +31,208 @@ export class PersonPresenceEngine {
   private returnStartTimestamp: number | null = null;
   private isCurrentlyAbsent: boolean = false;
 
+  // Student-specific verification state
+  private studentPresenceHistory: boolean[] = [];
+  private lastConfirmedStudentTimestamp: number = 0;
+  private studentAbsentSinceTimestamp: number | null = null;
+  private studentReturnStartTimestamp: number | null = null;
+  private isStudentAway: boolean = true; // Always start in AWAY until confirmed!
+
+  evaluateStudentPresence(
+    vision: VisionData,
+    validation?: SignalValidationReport,
+    now: number = Date.now()
+  ): StudentPresenceDecision {
+    const evidenceAgeMs = now - vision.timestamp;
+    const isStale = evidenceAgeMs > FocusConfig.maxPresenceEvidenceAgeMs || vision.isStale === true;
+    const isCameraHealthy = vision.cameraHealthy !== false && !isStale && (validation?.visionQuality?.isTrustworthy ?? true);
+
+    const genericPerson = Boolean(vision.genericPersonDetected || vision.facePresent);
+    const isLookingDown = Boolean(vision.isLookingDown);
+    const faceMatchConf = vision.faceMatchConfidence ?? (vision.studentFaceVerified ? 0.88 : 0.0);
+    const faceConfidence = vision.confidence ?? 0.0;
+
+    // Student Face Detection Condition:
+    // Requires verified student face matching calibrated baseline, OR
+    // Looking down / PYQ solving posture with torso in study zone
+    const studentFaceDetected = isCameraHealthy && Boolean(
+      (vision.studentFaceVerified && faceMatchConf >= FocusConfig.studentFaceMatchThreshold) ||
+      (genericPerson && isLookingDown && vision.bodyPostureStable !== false && (vision.inStudyZone !== false))
+    );
+
+    const evidence: StudentPresenceEvidence = {
+      studentFaceDetected,
+      faceMatchConfidence: faceMatchConf,
+      faceDetectionConfidence: faceConfidence,
+      poseConfidence: vision.bodyPostureStable ? 0.85 : 0.40,
+      genericPersonDetected: genericPerson,
+      temporalConfidence: 0.0,
+      confidence: faceConfidence,
+      timestamp: vision.timestamp,
+      faceBbox: vision.faceBox,
+      isLookingDown
+    };
+
+    if (!isCameraHealthy) {
+      this.isStudentAway = true;
+      this.studentReturnStartTimestamp = null;
+      return {
+        present: false,
+        presenceState: isStale ? 'STUDENT_AWAY' : 'CAMERA_ERROR',
+        confidence: 0.0,
+        reason: isStale 
+          ? `Presence evidence expired (${evidenceAgeMs}ms > ${FocusConfig.maxPresenceEvidenceAgeMs}ms limit).`
+          : 'Camera stream blocked, frozen, or unavailable.',
+        timestamp: now,
+        evidence
+      };
+    }
+
+    this.studentPresenceHistory.push(studentFaceDetected);
+    if (this.studentPresenceHistory.length > 20) this.studentPresenceHistory.shift();
+
+    const recentStudentCount = this.studentPresenceHistory.filter(Boolean).length;
+    const temporalConfidence = Number((recentStudentCount / Math.max(1, this.studentPresenceHistory.length)).toFixed(2));
+    evidence.temporalConfidence = temporalConfidence;
+
+    if (studentFaceDetected) {
+      this.lastConfirmedStudentTimestamp = now;
+      this.studentAbsentSinceTimestamp = null;
+    } else {
+      if (this.studentAbsentSinceTimestamp === null) {
+        this.studentAbsentSinceTimestamp = now;
+      }
+    }
+
+    const absenceDurationMs = this.studentAbsentSinceTimestamp ? (now - this.studentAbsentSinceTimestamp) : 0;
+
+    let presenceState: FocusPresenceState;
+    let present = false;
+    let confidence = 0.0;
+    let reason = '';
+    let isReturnStabilizing = false;
+    let returnRemainingSec = 0;
+
+    if (this.isStudentAway) {
+      // Currently away: Must continuously verify student for returnConfirmMs (1500ms)
+      if (studentFaceDetected) {
+        if (this.studentReturnStartTimestamp === null) {
+          this.studentReturnStartTimestamp = now;
+        }
+        const returnDurationMs = now - this.studentReturnStartTimestamp;
+        if (returnDurationMs >= FocusConfig.returnConfirmMs) {
+          // Return confirmed!
+          this.isStudentAway = false;
+          this.studentReturnStartTimestamp = null;
+          presenceState = 'STUDENT_PRESENT';
+          present = true;
+          confidence = Math.max(0.92, faceMatchConf);
+          reason = `Student presence verified and stabilized (${(returnDurationMs / 1000).toFixed(1)}s).`;
+        } else {
+          // Return stabilizing
+          presenceState = 'PRESENCE_UNCERTAIN';
+          present = false;
+          isReturnStabilizing = true;
+          returnRemainingSec = Math.max(0, Number(((FocusConfig.returnConfirmMs - returnDurationMs) / 1000).toFixed(1)));
+          confidence = 0.65;
+          reason = `Student detected; confirming identity and stability (${returnRemainingSec}s remaining)...`;
+        }
+      } else {
+        // Still away
+        this.studentReturnStartTimestamp = null;
+        presenceState = 'STUDENT_AWAY';
+        present = false;
+        confidence = 0.98;
+        reason = genericPerson
+          ? 'Unverified person in frame (configured student is absent).'
+          : `Student absent from study desk (${(absenceDurationMs / 1000).toFixed(1)}s elapsed).`;
+      }
+    } else {
+      // Currently PRESENT
+      if (studentFaceDetected) {
+        presenceState = 'STUDENT_PRESENT';
+        present = true;
+        confidence = Math.max(0.90, faceMatchConf);
+        reason = isLookingDown
+          ? 'Student verified focusing on paper / PYQ problem solving.'
+          : 'Student verified present at workstation.';
+      } else if (absenceDurationMs <= FocusConfig.presenceLossGraceMs) {
+        // Brief grace period (1200ms)
+        presenceState = 'STUDENT_PRESENT';
+        present = true;
+        confidence = 0.70;
+        reason = `Brief posture transition / blink (${(absenceDurationMs / 1000).toFixed(1)}s / ${(FocusConfig.presenceLossGraceMs / 1000).toFixed(1)}s).`;
+      } else if (absenceDurationMs < FocusConfig.absenceConfirmMs) {
+        // Absence confirming
+        presenceState = 'PRESENCE_UNCERTAIN';
+        present = false;
+        confidence = 0.50;
+        reason = `Student presence lost; confirming absence (${(absenceDurationMs / 1000).toFixed(1)}s elapsed)...`;
+      } else {
+        // Absence confirmed (> 2500ms)
+        this.isStudentAway = true;
+        this.studentReturnStartTimestamp = null;
+        presenceState = 'STUDENT_AWAY';
+        present = false;
+        confidence = 0.98;
+        reason = genericPerson
+          ? 'Unverified person detected (configured student absent).'
+          : `Student absent from study desk (${(absenceDurationMs / 1000).toFixed(1)}s elapsed).`;
+      }
+    }
+
+    return {
+      present,
+      presenceState,
+      confidence,
+      reason,
+      timestamp: now,
+      evidence,
+      isReturnStabilizing,
+      returnStabilizationRemainingSeconds: returnRemainingSec
+    };
+  }
+
   evaluate(
     vision: VisionData,
     validation: SignalValidationReport,
     now: number = Date.now()
   ): PersonPresenceResult {
-    const isStale = (now - vision.timestamp > 3000) || (vision.isStale === true);
+    const studentDecision = this.evaluateStudentPresence(vision, validation, now);
+
+    const isStale = (now - vision.timestamp > FocusConfig.maxPresenceEvidenceAgeMs) || (vision.isStale === true);
     const cameraHealthy = vision.cameraHealthy !== false && !isStale && (validation?.visionQuality?.isTrustworthy ?? true);
-    
-    // 1. Evaluate instant sensory evidence (face + pose + body presence)
-    const rawFacePresent = !isStale && !!vision.facePresent;
-    const faceConfidence = rawFacePresent ? Math.max(0.70, vision.confidence || 0.85) : 0.0;
-    const faceEvidence = cameraHealthy && rawFacePresent && faceConfidence >= 0.45;
-    
-    // Desk evidence: physical hand motion on notebook / keyboard
-    const deskMotion = !isStale && ((vision.deskActivityScore ?? 0) > 0.35 || !!vision.handActivity);
-    const bodyEvidence = cameraHealthy && (rawFacePresent || deskMotion) && (vision.bodyPostureStable !== false);
-    const deskEvidence = deskMotion;
 
-    // Instant presence detected this frame
-    const instantPresence = faceEvidence || (rawFacePresent && deskEvidence);
-    
-    this.presenceHistory.push(instantPresence);
-    if (this.presenceHistory.length > 20) this.presenceHistory.shift();
-
-    const recentPresenceCount = this.presenceHistory.filter(Boolean).length;
-    const temporalConfidence = Number((recentPresenceCount / Math.max(1, this.presenceHistory.length)).toFixed(2));
-    const recentFramesEvidence = recentPresenceCount >= Math.min(3, this.presenceHistory.length);
-
-    if (instantPresence) {
-      this.lastConfirmedPresenceTimestamp = now;
-      this.absentSinceTimestamp = null;
-    } else {
-      if (this.absentSinceTimestamp === null) {
-        this.absentSinceTimestamp = now;
-      }
-    }
-
-    const secondsSinceConfirmed = (now - this.lastConfirmedPresenceTimestamp) / 1000;
-    const absenceDuration = this.absentSinceTimestamp ? (now - this.absentSinceTimestamp) / 1000 : 0;
+    const faceEvidence = studentDecision.evidence.studentFaceDetected;
+    const bodyEvidence = studentDecision.evidence.genericPersonDetected;
+    const deskEvidence = !isStale && ((vision.deskActivityScore ?? 0) > 0.35 || !!vision.handActivity);
+    const recentFramesEvidence = studentDecision.evidence.temporalConfidence >= 0.3;
 
     let state: PersonPresenceState;
-    let confidence = 0.0;
-    let explanation = '';
-    let isPersonPresent = false;
-    let isReturnStabilizing = false;
-    let returnRemainingSec = 0;
-
     if (!cameraHealthy) {
       state = 'VISION_UNCERTAIN';
-      confidence = 0.20;
-      explanation = 'Camera stream unverified, blocked, or unavailable.';
-      isPersonPresent = false;
-    } else if (this.isCurrentlyAbsent) {
-      // 2. Return from AWAY: Require 1.5s of continuous stable presence (Section 8)
-      if (instantPresence) {
-        if (this.returnStartTimestamp === null) {
-          this.returnStartTimestamp = now;
-        }
-        const returnDuration = (now - this.returnStartTimestamp) / 1000;
-        const requiredReturnSec = 1.5;
-
-        if (returnDuration >= requiredReturnSec) {
-          // Return confirmed!
-          this.isCurrentlyAbsent = false;
-          this.returnStartTimestamp = null;
-          state = 'PERSON_PRESENT';
-          confidence = 0.95;
-          isPersonPresent = true;
-          explanation = `Student returned to workstation (presence stabilized over ${returnDuration.toFixed(1)}s).`;
-        } else {
-          // Still stabilizing return
-          state = 'PERSON_PROBABLY_PRESENT';
-          isReturnStabilizing = true;
-          returnRemainingSec = Math.max(0, Number((requiredReturnSec - returnDuration).toFixed(1)));
-          confidence = 0.70;
-          isPersonPresent = false; // Do not resume timer on first frame; wait for stabilization
-          explanation = `Student return detected; confirming stable presence (${returnRemainingSec}s remaining)...`;
-        }
-      } else {
-        // Still away
-        this.returnStartTimestamp = null;
-        state = 'PERSON_ABSENT';
-        confidence = 0.98;
-        isPersonPresent = false;
-        explanation = `Student absent from workstation (${secondsSinceConfirmed.toFixed(1)}s elapsed).`;
-      }
+    } else if (studentDecision.presenceState === 'STUDENT_PRESENT') {
+      state = 'PERSON_PRESENT';
+    } else if (studentDecision.presenceState === 'PRESENCE_UNCERTAIN') {
+      state = 'PERSON_PROBABLY_PRESENT';
     } else {
-      // 3. Normal Active Presence Monitoring & Absence Grace Period (Section 6 & 7)
-      if (instantPresence) {
-        state = 'PERSON_PRESENT';
-        confidence = Math.max(faceConfidence, 0.90);
-        isPersonPresent = true;
-        explanation = 'Student verified present at workstation.';
-      } else if (absenceDuration < 2.5) {
-        // Transient head dip / posture transition grace period (< 2.5s) (Section 6)
-        state = 'PERSON_PROBABLY_PRESENT';
-        confidence = 0.65;
-        isPersonPresent = true; // Grace period keeps timer running for brief 1-2 frame drops
-        explanation = `Transient posture transition (grace period ${absenceDuration.toFixed(1)}s/2.5s).`;
-      } else {
-        // Confirmed absence: empty desk or student walked away
-        this.isCurrentlyAbsent = true;
-        this.returnStartTimestamp = null;
-        state = 'PERSON_ABSENT';
-        confidence = 0.98;
-        isPersonPresent = false;
-        explanation = `Student absent from workstation (${secondsSinceConfirmed.toFixed(1)}s since last verified presence).`;
-      }
+      state = 'PERSON_ABSENT';
     }
-
-    const presenceConfidence = Number(
-      (confidence * 0.5 + temporalConfidence * 0.3 + (bodyEvidence ? 0.2 : 0)).toFixed(2)
-    );
 
     return {
       state,
-      confidence,
-      presenceConfidence,
-      isPersonPresent,
-      isReturnStabilizing,
-      returnStabilizationRemainingSeconds: returnRemainingSec,
+      confidence: studentDecision.confidence,
+      presenceConfidence: studentDecision.confidence,
+      isPersonPresent: studentDecision.present,
+      isReturnStabilizing: studentDecision.isReturnStabilizing,
+      returnStabilizationRemainingSeconds: studentDecision.returnStabilizationRemainingSeconds,
       evidence: {
         faceEvidence,
         bodyEvidence,
         recentFramesEvidence,
         deskEvidence
       },
-      explanation
+      explanation: studentDecision.reason
     };
   }
 
@@ -161,6 +242,12 @@ export class PersonPresenceEngine {
     this.absentSinceTimestamp = null;
     this.returnStartTimestamp = null;
     this.isCurrentlyAbsent = false;
+
+    this.studentPresenceHistory = [];
+    this.lastConfirmedStudentTimestamp = 0;
+    this.studentAbsentSinceTimestamp = null;
+    this.studentReturnStartTimestamp = null;
+    this.isStudentAway = true;
   }
 }
 

@@ -13,6 +13,12 @@ export interface FaceLandmarkResult {
   eyeOpen: boolean;
   mouthOpen: boolean;
   gazeScore: number;
+  aspectRatio?: number;
+  boxSpanRatio?: number;
+  features?: {
+    eyeDistanceRatio?: number;
+    noseToJawRatio?: number;
+  };
 }
 
 export interface PoseLandmarkResult {
@@ -202,6 +208,15 @@ export class ModelManager {
             if (pt.y > maxY) maxY = pt.y;
           }
 
+          const boxWidth = Math.max(0.001, maxX - minX);
+          const boxHeight = Math.max(0.001, maxY - minY);
+          const aspectRatio = Number((boxHeight / boxWidth).toFixed(2));
+          const boxSpanRatio = Number(boxWidth.toFixed(2));
+          const eyeDist = Math.hypot(dx, dy);
+          const noseToJawDist = (chin && nose) ? Math.hypot(chin.x - nose.x, chin.y - nose.y) : 0;
+          const eyeDistanceRatio = boxWidth > 0 ? Number((eyeDist / boxWidth).toFixed(3)) : 0;
+          const noseToJawRatio = boxHeight > 0 ? Number((noseToJawDist / boxHeight).toFixed(3)) : 0;
+
           const gazeScore = Math.max(0.4, 1.0 - (Math.abs(yaw) / 60) * 0.5 - (Math.max(0, pitch - 15) / 40) * 0.5);
 
           this.recordInferenceSuccess(performance.now() - t0);
@@ -219,7 +234,13 @@ export class ModelManager {
             roll: Math.round(roll),
             eyeOpen: true,
             mouthOpen: false,
-            gazeScore: Number(gazeScore.toFixed(2))
+            gazeScore: Number(gazeScore.toFixed(2)),
+            aspectRatio,
+            boxSpanRatio,
+            features: {
+              eyeDistanceRatio,
+              noseToJawRatio
+            }
           };
         }
       }
@@ -258,10 +279,10 @@ export class ModelManager {
     }
 
     return {
-      detected: true,
-      confidence: 0.80,
-      isPostureStable: true,
-      inStudyZone: true
+      detected: false,
+      confidence: 0.0,
+      isPostureStable: false,
+      inStudyZone: false
     };
   }
 
@@ -388,16 +409,16 @@ export class ModelManager {
   }
 
   private fallbackFaceDetection(source: HTMLVideoElement | HTMLCanvasElement): FaceLandmarkResult {
-    // High-speed fallback: sample face coordinates
+    // Model unavailable or no face detected — never fabricate a positive detection
     return {
-      detected: true,
-      confidence: 0.85,
+      detected: false,
+      confidence: 0.0,
       yaw: 0,
-      pitch: -5,
+      pitch: 0,
       roll: 0,
-      eyeOpen: true,
+      eyeOpen: false,
       mouthOpen: false,
-      gazeScore: 0.90
+      gazeScore: 0.0
     };
   }
 

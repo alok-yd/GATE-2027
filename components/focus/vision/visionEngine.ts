@@ -1,4 +1,5 @@
 import { VisionData, PhoneEvidence, DeviceStatus } from '../types';
+import { FocusConfig } from '../constants/FocusConfig';
 import { calibrationEngine } from '../services/calibrationEngine';
 import { frameScheduler, PerceptionFrame } from '../services/ml/FrameScheduler';
 import { modelManager } from '../services/ml/ModelManager';
@@ -24,14 +25,14 @@ export class VisionEngine {
   private yawHistory: number[] = [];
   private pitchHistory: number[] = [];
   private presenceHistory: boolean[] = [];
-
-  // Desk & posture tracking
   private previousDeskLuminance: Uint8Array | null = null;
   private lastHandActivityTimestamp: number = Date.now();
   private centroidHistory: Array<{ x: number; y: number; t: number }> = [];
 
-  // Health monitoring
+  // Health & freeze monitoring
   private consecutiveBlankFrames: number = 0;
+  private previousFrameLuma: number | null = null;
+  private consecutiveFrozenFrames: number = 0;
 
   constructor() {
     this.canvasElement = document.createElement('canvas');
@@ -145,6 +146,9 @@ export class VisionEngine {
     const payload: VisionData = {
       facePresent: false,
       confidence: 0.0,
+      studentFaceVerified: false,
+      faceMatchConfidence: 0.0,
+      genericPersonDetected: false,
       headYaw: 0,
       headPitch: 0,
       headRoll: 0,
@@ -159,6 +163,7 @@ export class VisionEngine {
       faceCount: 0,
       cameraHealthy: false,
       cameraHealthConfidence: 0.0,
+      phoneDetectedScore: 0.0,
       isSimulated: true,
       timestamp: Date.now()
     };
@@ -314,7 +319,22 @@ export class VisionEngine {
       avgLuma < 25 ? 'dark' : avgLuma < 65 ? 'low' : avgLuma > 220 ? 'bright' : 'normal';
 
     // Whole-frame freeze detection & blank frame monitoring
-    const totalLumaDiff = Math.abs(totalLuma - (this.previousDeskLuminance ? this.lastAnalysisTime : totalLuma));
+    let isFrameFrozen = false;
+    if (this.previousFrameLuma !== null) {
+      const frameDelta = Math.abs(totalLuma - this.previousFrameLuma);
+      if (frameDelta === 0 && avgLuma > 0) {
+        this.consecutiveFrozenFrames++;
+        if (this.consecutiveFrozenFrames > 30) {
+          isFrameFrozen = true;
+          this.handleCameraFailure('Camera stream is frozen or stagnant');
+        }
+      } else {
+        this.consecutiveFrozenFrames = 0;
+      }
+    }
+    const previousFrameTotalLuma = this.previousFrameLuma;
+    this.previousFrameLuma = totalLuma;
+
     if (avgLuma < 4) {
       this.consecutiveBlankFrames++;
       if (this.consecutiveBlankFrames > 20) {
@@ -324,34 +344,7 @@ export class VisionEngine {
       this.consecutiveBlankFrames = 0;
     }
 
-    const cameraHealthy = this.consecutiveBlankFrames < 20;
-
-    const skinRatio = skinPixelCount / totalSampled;
-    const boxW = maxX - minX;
-    const boxH = maxY - minY;
-    const faceAspectRatio = boxH / Math.max(1, boxW);
-    const faceCentroidY = skinPixelCount > 0 ? sumY / skinPixelCount : ch;
-
-    // Face presence validation:
-    // Requires real face dimensions, sensible aspect ratio, and upper-body location (not desk wood)
-    const isFaceGeometricMatch = 
-      boxW >= 18 && 
-      boxH >= 18 && 
-      boxW <= cw * 0.78 && 
-      faceAspectRatio >= 0.65 && 
-      faceAspectRatio <= 2.2 &&
-      faceCentroidY < (ch * 0.70);
-
-    const isPerceptionFace = this.latestPerception?.face.detected ?? false;
-    const rawFacePresent = (isPerceptionFace || (skinRatio >= 0.04 && skinRatio <= 0.80 && isFaceGeometricMatch));
-
-    this.presenceHistory.push(rawFacePresent);
-    if (this.presenceHistory.length > 5) this.presenceHistory.shift();
-    const facePresent = this.presenceHistory.filter(Boolean).length >= 3 && cameraHealthy;
-
-    // Estimate multiple faces
-    const boxSpanRatio = boxW / cw;
-    const faceCount = skinRatio > 0.45 && boxSpanRatio > 0.75 ? 2 : (facePresent ? 1 : 0);
+    const cameraHealthy = (this.consecutiveBlankFrames < 20) && !isFrameFrozen;
 
     // 2. Desk Motion & Hand / Writing Activity Estimation
     const deskPixelCount = Math.floor((cw / 2) * ((ch - deskStartY) / 2));
@@ -373,6 +366,56 @@ export class VisionEngine {
         deskLumaIdx++;
       }
     }
+
+    const skinRatio = skinPixelCount / totalSampled;
+    const boxW = maxX - minX;
+    const boxH = maxY - minY;
+    const faceAspectRatio = boxH / Math.max(1, boxW);
+    const faceCentroidY = skinPixelCount > 0 ? sumY / skinPixelCount : ch;
+
+    // Face presence validation:
+    // Requires real face dimensions, sensible aspect ratio, and upper-body location (not desk wood)
+    const isFaceGeometricMatch = 
+      boxW >= 18 && 
+      boxH >= 18 && 
+      boxW <= cw * 0.78 && 
+      faceAspectRatio >= 0.65 && 
+      faceAspectRatio <= 2.2 &&
+      faceCentroidY < (ch * 0.70);
+
+    const faceModelStatus = modelManager.getStatus().face;
+    const isPerceptionFace = Boolean(this.latestPerception?.face?.detected && this.latestPerception.face.confidence >= 0.50);
+    const isPerceptionPose = Boolean(this.latestPerception?.pose?.detected && this.latestPerception.pose.confidence >= 0.50);
+
+    let rawFacePresent = false;
+    let genericPersonDetected = false;
+
+    if (isPerceptionFace) {
+      rawFacePresent = true;
+      genericPersonDetected = true;
+    } else if (isPerceptionPose) {
+      genericPersonDetected = true;
+      rawFacePresent = false;
+    } else if (faceModelStatus === 'fallback' || faceModelStatus === 'uninitialized') {
+      // Fallback only if ML vision models failed to load:
+      const totalLumaDiff = previousFrameTotalLuma !== null ? Math.abs(totalLuma - previousFrameTotalLuma) : 0;
+      const hasMotion = deskDiffSum > 0 || totalLumaDiff > 1200;
+      const isCandidateFace = isFaceGeometricMatch && hasMotion && (faceCentroidY < (ch * 0.60)) && (skinRatio >= 0.06 && skinRatio <= 0.50);
+      rawFacePresent = isCandidateFace;
+      genericPersonDetected = isCandidateFace;
+    } else {
+      // ML models are active and found nothing: strictly false!
+      rawFacePresent = false;
+      genericPersonDetected = false;
+    }
+
+    this.presenceHistory.push(rawFacePresent);
+    if (this.presenceHistory.length > 5) this.presenceHistory.shift();
+    const facePresent = this.presenceHistory.filter(Boolean).length >= 3 && cameraHealthy;
+
+    // Estimate multiple faces
+    const boxSpanRatio = boxW / cw;
+    const faceCount = skinRatio > 0.45 && boxSpanRatio > 0.75 ? 2 : (facePresent ? 1 : 0);
     this.previousDeskLuminance = currentDeskLuma;
 
     // Writing/hand movement threshold
@@ -535,7 +578,6 @@ export class VisionEngine {
       const combinedPenalty = yawPenalty * 0.75 + pitchPenalty * 0.25;
       
       gazeScore = Math.max(0.45, Number((1.0 - combinedPenalty * 0.45).toFixed(2)));
-      confidence = Math.min(0.98, Number((0.68 + skinRatio * 0.6).toFixed(2)));
 
       faceBox = {
         x: Math.round((minX / cw) * 100),
@@ -559,7 +601,6 @@ export class VisionEngine {
         bodyPostureStable = this.latestPerception.pose.isPostureStable;
       }
     } else {
-      confidence = 0.0;
       headYaw = 0;
       headPitch = 0;
       headRoll = 0;
@@ -568,6 +609,55 @@ export class VisionEngine {
       bodyPostureStable = false;
       isLookingDown = false;
       faceBox = undefined;
+    }
+
+    // Determine Student Verification & Match Confidence
+    let studentFaceVerified = false;
+    let faceMatchConfidence = 0.0;
+
+    if (facePresent && cameraHealthy) {
+      confidence = this.latestPerception?.face.detected
+        ? this.latestPerception.face.confidence
+        : Math.min(0.85, 0.60 + skinRatio * 0.4);
+
+      const mlFace = this.latestPerception?.face;
+      const detectedAspect = (mlFace && mlFace.aspectRatio) ? mlFace.aspectRatio : faceAspectRatio;
+      const detectedSpan = (mlFace && mlFace.boxSpanRatio) ? mlFace.boxSpanRatio : boxSpanRatio;
+
+      const baseline = profile.studentBaseline;
+      if (baseline && baseline.calibrated) {
+        const aspectDiff = Math.abs(detectedAspect - baseline.faceAspectRatio);
+        const spanDiff = Math.abs(detectedSpan - baseline.boxSpanRatio);
+        const aspectMatch = Math.max(0.0, 1.0 - (aspectDiff / 0.45));
+        const spanMatch = Math.max(0.0, 1.0 - (spanDiff / 0.30));
+
+        const faceCenterX = faceBox ? (faceBox.x + faceBox.width / 2) : (cw > 0 && skinPixelCount > 0 ? (sumX / skinPixelCount / cw) * 100 : 50);
+        const faceCenterY = faceBox ? (faceBox.y + faceBox.height / 2) : (ch > 0 && skinPixelCount > 0 ? (sumY / skinPixelCount / ch) * 100 : 50);
+
+        const inZone = (!profile.studyZone) || (
+          faceCenterX >= profile.studyZone.minX &&
+          faceCenterX <= profile.studyZone.maxX &&
+          faceCenterY >= profile.studyZone.minY &&
+          faceCenterY <= profile.studyZone.maxY
+        );
+
+        faceMatchConfidence = Number(((aspectMatch * 0.55 + spanMatch * 0.45) * (inZone ? 1.0 : 0.6)).toFixed(2));
+        studentFaceVerified = faceMatchConfidence >= FocusConfig.studentFaceMatchThreshold && inZone;
+      } else {
+        // Not calibrated yet: face detected in normal position is accepted as the student
+        faceMatchConfidence = 0.88;
+        studentFaceVerified = true;
+      }
+    } else if (genericPersonDetected && isLookingDown && cameraHealthy) {
+      // PYQ / Paper study downward posture: torso in study zone, head pitched down
+      const baseline = profile.studentBaseline;
+      faceMatchConfidence = baseline?.calibrated ? 0.78 : 0.72;
+      studentFaceVerified = true;
+      confidence = 0.75;
+    } else {
+      confidence = 0.0;
+      studentFaceVerified = false;
+      faceMatchConfidence = 0.0;
     }
 
     const payload: VisionData = {
@@ -582,10 +672,13 @@ export class VisionEngine {
       handActivity,
       bodyPostureStable: facePresent && cameraHealthy ? bodyPostureStable : false,
       deskActivityScore,
-      isLookingDown: facePresent && cameraHealthy ? isLookingDown : false,
+      isLookingDown: (facePresent || genericPersonDetected) && cameraHealthy ? isLookingDown : false,
       lightingLevel,
       lightingScore,
       faceCount: facePresent && cameraHealthy ? faceCount : 0,
+      studentFaceVerified: studentFaceVerified && cameraHealthy,
+      faceMatchConfidence: cameraHealthy ? faceMatchConfidence : 0.0,
+      genericPersonDetected: genericPersonDetected && cameraHealthy,
       cameraHealthy,
       cameraHealthConfidence: cameraHealthy ? 1.0 : 0.0,
       phoneDetectedScore,

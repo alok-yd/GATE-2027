@@ -363,6 +363,7 @@ export class FocusEngine {
     // 0. Signal Validation & Person Presence Engine
     const validation = signalValidator.validate(this.lastVision);
     const presence = personPresenceEngine.evaluate(this.lastVision, validation, now);
+    const studentDecision = personPresenceEngine.evaluateStudentPresence(this.lastVision, validation, now);
 
     // 1. Modular Analyzers Execution
     const face = this.faceAnalyzer.analyze(this.lastVision, profile);
@@ -410,7 +411,7 @@ export class FocusEngine {
       focusScore: evidence.totalFocusScore,
       activity: activity.primaryActivity,
       confidenceVector: evidence.confidenceVector,
-      facePresent: presence.isPersonPresent,
+      facePresent: studentDecision.present,
       faceVisibility: face.visibilityCategory,
       headYaw: pose.headYaw,
       headPitch: pose.headPitch,
@@ -468,23 +469,32 @@ export class FocusEngine {
     const cameraHealthy = validation.visionQuality.isTrustworthy;
 
     focusSessionController.updatePerceptionState({
-      studentPresent: presence.isPersonPresent,
-      presenceConfidence: presence.confidence,
+      studentPresent: studentDecision.present,
+      presenceConfidence: studentDecision.confidence,
+      presenceState: studentDecision.presenceState,
+      studentFaceVerified: studentDecision.evidence.studentFaceDetected,
+      genericPersonDetected: studentDecision.evidence.genericPersonDetected,
       deviceStatus,
       deviceInUse,
       deviceInteractionEvidence: phone.deviceInteractionEvidence,
       cameraHealthy,
-      inferenceFps: 15
+      inferenceFps: 15,
+      evidenceTimestamp: this.lastVision.timestamp
     });
 
     const currentGate = focusSessionController.getState().gate;
 
-    // 7. Build Output
+    // 7. Build Output — Invariant: Focus score NEVER overrides absent student
+    const isStudentPresent = studentDecision.present;
+    const effectiveState = !isStudentPresent ? 'AWAY' : this.currentState;
+    const effectiveScore = !isStudentPresent ? 0 : smoothedScore;
+    const effectiveRawScore = !isStudentPresent ? 0 : evidence.totalFocusScore;
+
     this.lastEvaluationOutput = {
-      state: this.currentState,
-      score: smoothedScore,
-      rawScore: evidence.totalFocusScore,
-      facePresent: presence.isPersonPresent,
+      state: effectiveState,
+      score: effectiveScore,
+      rawScore: effectiveRawScore,
+      facePresent: isStudentPresent,
       personPresenceState: presence.state,
       deviceStatus,
       deviceEvidence: phone.deviceInteractionEvidence,

@@ -91,6 +91,36 @@ export interface FocusMessage {
   minIntervalMs?: number;
 }
 
+export type FocusPresenceState =
+  | 'STUDENT_PRESENT'
+  | 'STUDENT_AWAY'
+  | 'PRESENCE_UNCERTAIN'
+  | 'CAMERA_ERROR';
+
+export interface StudentPresenceEvidence {
+  studentFaceDetected: boolean;
+  faceMatchConfidence: number;
+  faceDetectionConfidence: number;
+  poseConfidence: number;
+  genericPersonDetected: boolean;
+  temporalConfidence: number;
+  confidence: number;
+  timestamp: number;
+  faceBbox?: BoundingBox;
+  isLookingDown?: boolean;
+}
+
+export interface StudentPresenceDecision {
+  present: boolean;
+  presenceState: FocusPresenceState;
+  confidence: number;
+  reason: string;
+  timestamp: number;
+  evidence: StudentPresenceEvidence;
+  isReturnStabilizing?: boolean;
+  returnStabilizationRemainingSeconds?: number;
+}
+
 export interface TimerGateState {
   studentPresent: boolean;
   deviceInUse: boolean;
@@ -99,6 +129,10 @@ export interface TimerGateState {
   verifiedTimerAllowed: boolean;
   highLevelState: HighLevelVerificationState;
   blockReason: 'NONE' | 'AWAY' | 'DEVICE_IN_USE' | 'MANUAL_PAUSE' | 'MONITORING_ERROR';
+  presenceState?: FocusPresenceState;
+  studentFaceVerified?: boolean;
+  genericPersonDetected?: boolean;
+  presenceEvidenceAgeMs?: number;
 }
 
 export interface FocusVerificationGateResult {
@@ -256,6 +290,9 @@ export interface VisionData {
   lightingScore?: number; // 0 to 1
   visionQualityScore?: number; // 0 to 1
   faceCount?: number;
+  studentFaceVerified?: boolean;
+  faceMatchConfidence?: number;
+  genericPersonDetected?: boolean;
   cameraHealthy?: boolean;
   cameraHealthConfidence?: number;
   isStale?: boolean;
@@ -285,6 +322,12 @@ export interface CalibrationProfile {
   torsoCentroid: { x: number; y: number };
   phoneBaselineScore?: number;
   studyZone?: StudyZoneBounds;
+  studentBaseline?: {
+    faceAspectRatio: number; // face height / width
+    boxSpanRatio: number; // face width / frame width
+    baselineLuma: number;
+    calibrated: boolean;
+  };
   tolerances: {
     yawTolerance: number;
     pitchTolerance: number;

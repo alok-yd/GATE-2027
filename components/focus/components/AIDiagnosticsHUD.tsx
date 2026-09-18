@@ -114,7 +114,7 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider">AI Presence & Device Diagnostics HUD</span>
+              <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider">AI Presence & Diagnostics HUD</span>
               <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
                 timerGateOpen
                   ? 'bg-emerald-950/60 border-emerald-800/80 text-emerald-400 font-bold'
@@ -128,13 +128,23 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
                 Student: {studentPresent ? 'PRESENT' : 'AWAY'}
               </span>
               <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                gate.studentFaceVerified ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300' : 'bg-zinc-800 border-zinc-700 text-zinc-400'
+              }`}>
+                Face: {gate.studentFaceVerified ? 'VERIFIED' : 'NOT VERIFIED'}
+              </span>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                gate.genericPersonDetected ? 'bg-sky-950/40 border-sky-800/60 text-sky-300' : 'bg-zinc-800 border-zinc-700 text-zinc-400'
+              }`}>
+                Generic Person: {gate.genericPersonDetected ? 'YES' : 'NO'}
+              </span>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
                 deviceInUse ? 'bg-rose-950/60 border-rose-800/80 text-rose-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300'
               }`}>
-                Device in use: {deviceInUse ? 'YES' : 'NO'}
+                Device: {deviceInUse ? 'IN USE' : 'CLEAR'}
               </span>
             </div>
             <p className="text-[11px] text-zinc-400 mt-0.5">
-              High-Level: <strong className="text-zinc-200">{gate.highLevelState}</strong> • Device Status: <strong className={deviceInUse ? 'text-rose-400 font-mono' : 'text-zinc-300 font-mono'}>{deviceStatus}</strong> • Inference: <span className="font-mono text-zinc-300">{fps} FPS</span>
+              High-Level: <strong className="text-zinc-200">{gate.highLevelState}</strong> • Presence State: <strong className="text-zinc-200 font-mono">{gate.presenceState || (studentPresent ? 'STUDENT_PRESENT' : 'STUDENT_AWAY')}</strong> • Inference: <span className="font-mono text-zinc-300">{fps} FPS</span>
             </p>
           </div>
         </div>
@@ -153,7 +163,7 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
       {isOpen && (
         <div className="p-4 border-t border-zinc-800/80 space-y-4 text-xs font-sans animate-in fade-in duration-200">
           {/* Section 43: Authoritative Diagnostics Telemetry Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
             {/* Student Presence */}
             <div className="bg-zinc-950/70 p-2.5 rounded-xl border border-zinc-800">
               <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold block">Student</span>
@@ -166,27 +176,39 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
               <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">Conf: {presenceConfidencePct}%</span>
             </div>
 
+            {/* Student Face Verified */}
+            <div className="bg-zinc-950/70 p-2.5 rounded-xl border border-zinc-800">
+              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold block">Student Face</span>
+              <div className="flex items-center gap-1.5 mt-1">
+                {gate.studentFaceVerified ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <XCircle className="w-3.5 h-3.5 text-zinc-500" />}
+                <span className={`font-mono font-bold text-xs ${gate.studentFaceVerified ? 'text-emerald-400' : 'text-zinc-400'}`}>
+                  {gate.studentFaceVerified ? 'VERIFIED' : 'UNVERIFIED'}
+                </span>
+              </div>
+              <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">{gate.studentFaceVerified ? 'Match OK' : 'No match'}</span>
+            </div>
+
+            {/* Generic Person */}
+            <div className="bg-zinc-950/70 p-2.5 rounded-xl border border-zinc-800">
+              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold block">Person In Frame</span>
+              <div className="flex items-center gap-1.5 mt-1">
+                <span className={`font-mono font-bold text-xs ${gate.genericPersonDetected ? 'text-sky-400' : 'text-zinc-500'}`}>
+                  {gate.genericPersonDetected ? 'DETECTED' : 'NONE'}
+                </span>
+              </div>
+              <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">Body / Face</span>
+            </div>
+
             {/* Device Status */}
             <div className="bg-zinc-950/70 p-2.5 rounded-xl border border-zinc-800">
               <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold block">Device Status</span>
               <div className="flex items-center gap-1.5 mt-1">
                 <Smartphone className={`w-3.5 h-3.5 ${deviceStatus === 'DEVICE_IN_USE' ? 'text-rose-400' : deviceStatus === 'DEVICE_PRESENT' ? 'text-teal-400' : 'text-zinc-500'}`} />
                 <span className={`font-mono font-bold text-xs ${deviceStatus === 'DEVICE_IN_USE' ? 'text-rose-400' : deviceStatus === 'DEVICE_PRESENT' ? 'text-teal-400' : 'text-zinc-400'}`}>
-                  {deviceStatus === 'NOT_DETECTED' ? 'NOT DETECTED' : deviceStatus === 'DEVICE_PRESENT' ? 'PRESENT (DESK)' : 'IN USE'}
+                  {deviceStatus === 'NOT_DETECTED' ? 'CLEAR' : deviceStatus === 'DEVICE_PRESENT' ? 'DESK' : 'IN USE'}
                 </span>
               </div>
               <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">Conf: {deviceConfidencePct}%</span>
-            </div>
-
-            {/* Device In Use */}
-            <div className="bg-zinc-950/70 p-2.5 rounded-xl border border-zinc-800">
-              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold block">Device In Use</span>
-              <div className="flex items-center gap-1.5 mt-1">
-                <span className={`font-mono font-bold text-xs ${deviceInUse ? 'text-rose-400' : 'text-emerald-400'}`}>
-                  {deviceInUse ? 'YES (PAUSED)' : 'NO (ALLOW)'}
-                </span>
-              </div>
-              <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">Overlap: {handInteractionPct}%</span>
             </div>
 
             {/* Camera Health */}
@@ -198,7 +220,19 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
                   {camHealth}
                 </span>
               </div>
-              <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">Update: {lastUpdateAgoMs}ms ago</span>
+              <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">Age: {lastUpdateAgoMs}ms</span>
+            </div>
+
+            {/* Evidence Age */}
+            <div className="bg-zinc-950/70 p-2.5 rounded-xl border border-zinc-800">
+              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold block">Evidence Freshness</span>
+              <div className="flex items-center gap-1.5 mt-1">
+                <Clock className="w-3.5 h-3.5 text-zinc-400" />
+                <span className={`font-mono font-bold text-xs ${lastUpdateAgoMs < 2500 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {lastUpdateAgoMs < 2500 ? 'FRESH' : 'EXPIRED'}
+                </span>
+              </div>
+              <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">{lastUpdateAgoMs}ms / 2500ms</span>
             </div>
 
             {/* Timer Gate Decision */}

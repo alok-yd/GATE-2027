@@ -16,6 +16,9 @@ export interface FocusConfigType {
 
   // Temporal & State Latching Durations (ms)
   awayGraceMs: number;
+  presenceLossGraceMs: number;
+  absenceConfirmMs: number;
+  returnConfirmMs: number;
   phoneConfirmMs: number;
   phoneRecoveryMs: number;
   thinkingGraceMs: number;
@@ -23,7 +26,12 @@ export interface FocusConfigType {
 
   // Evidence Validity & Watchdog
   evidenceMaxAgeMs: number;
+  maxPresenceEvidenceAgeMs: number;
   watchdogTimeoutMs: number;
+  visionWatchdogTimeoutMs: number;
+
+  // Student Identification & Verification Thresholds
+  studentFaceMatchThreshold: number;
 
   // Frame Scheduler Target FPS
   cameraTargetFps: number;
@@ -59,6 +67,9 @@ export const FocusConfig: FocusConfigType = {
 
   // Temporal & State Latching Durations (ms)
   awayGraceMs: 2500,
+  presenceLossGraceMs: 1200,
+  absenceConfirmMs: 2500,
+  returnConfirmMs: 1500,
   phoneConfirmMs: 1500,
   phoneRecoveryMs: 2500,
   thinkingGraceMs: 15000,
@@ -66,7 +77,12 @@ export const FocusConfig: FocusConfigType = {
 
   // Evidence Validity & Watchdog
   evidenceMaxAgeMs: 2500,
+  maxPresenceEvidenceAgeMs: 2500,
   watchdogTimeoutMs: 3000,
+  visionWatchdogTimeoutMs: 3500,
+
+  // Student Identification & Verification Thresholds
+  studentFaceMatchThreshold: 0.70,
 
   // Frame Scheduler Target FPS
   cameraTargetFps: 25,
