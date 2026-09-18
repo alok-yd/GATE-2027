@@ -128,3 +128,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = DEFAULT_SETTINGS;
+
+export const FOCUS_STORAGE_VERSION = 2;
+export const FOCUS_STORAGE_VERSION_KEY = 'gate_focus_storage_version';
+export const FOCUS_BACKUP_KEY_V1 = 'gate_focus_sessions_backup_v1';

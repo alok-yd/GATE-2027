@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { DailySummary, FocusSession, FocusTimelineEvent } from '../types';
 import { StorageService, formatTimeHoursMins } from '../services/storage';
+import { focusSessionRepository } from '../services/FocusSessionRepository';
 import { GoogleCalendarService } from '../services/calendar';
 import {
   BarChart3,
@@ -37,6 +38,11 @@ export const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
   const [filterRange, setFilterRange] = useState<'today' | '7days' | '30days'>('today');
   const [syncStatus, setSyncStatus] = useState<Record<string, string>>({});
 
+  // Strictly deduplicate and normalize sessions
+  const normalizedSessions = useMemo(() => {
+    return focusSessionRepository.normalizeSessions(sessions);
+  }, [sessions]);
+
   // Filter sessions by range
   const filteredSessions = useMemo(() => {
     const now = Date.now();
@@ -44,13 +50,13 @@ export const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
 
     if (filterRange === 'today') {
       const todayStr = new Date().toISOString().slice(0, 10);
-      return sessions.filter(s => new Date(s.startTime).toISOString().slice(0, 10) === todayStr);
+      return normalizedSessions.filter(s => new Date(s.startTime).toISOString().slice(0, 10) === todayStr);
     } else if (filterRange === '7days') {
-      return sessions.filter(s => s.startTime >= now - 7 * oneDay);
+      return normalizedSessions.filter(s => s.startTime >= now - 7 * oneDay);
     } else {
-      return sessions.filter(s => s.startTime >= now - 30 * oneDay);
+      return normalizedSessions.filter(s => s.startTime >= now - 30 * oneDay);
     }
-  }, [sessions, filterRange]);
+  }, [normalizedSessions, filterRange]);
 
   // Aggregate Subject stats
   const subjectBreakdown = useMemo(() => {
@@ -513,7 +519,7 @@ export const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
                   const med = s.studyMedium || 'Screen Study';
 
                   return (
-                    <tr key={s.id} className="hover:bg-zinc-800/40 transition-colors">
+                    <tr key={s.sessionId || s.id} className="hover:bg-zinc-800/40 transition-colors">
                       <td className="px-6 py-4">
                         <div className="font-medium text-zinc-100">{s.subject}</div>
                         <div className="text-[11px] text-zinc-400">{s.topic}</div>

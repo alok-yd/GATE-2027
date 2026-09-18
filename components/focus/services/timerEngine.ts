@@ -3,6 +3,7 @@ import { FocusMode, FocusSegment, FocusSession, FocusState, FocusTimelineEvent, 
 import { StorageService } from './storage';
 import { soundFx } from './audio';
 import { focusSessionController } from './FocusSessionController';
+import { focusSessionRepository } from './FocusSessionRepository';
 
 export interface TimerTickData {
   state: FocusState;
@@ -49,6 +50,7 @@ export class TimerEngine {
 
   // Active Session State
   private activeSessionId: string | null = null;
+  private isFinalizing: boolean = false;
   private subject: string = 'Algorithms';
   private topic: string = 'Dynamic Programming';
   private goal: string = 'Solve 5 PYQ problems with verified focus';
@@ -133,6 +135,8 @@ export class TimerEngine {
 
   subscribe(callback: TimerTickCallback): () => void {
     this.callbacks.add(callback);
+    // Immediately deliver current state to new subscriber
+    callback(this.getCurrentTickData());
     return () => this.callbacks.delete(callback);
   }
 
@@ -155,8 +159,22 @@ export class TimerEngine {
     goal: string = '',
     medium?: StudyMedium
   ): void {
-    const now = Date.now();
-    this.activeSessionId = 'sess_' + now;
+    if (this.activeSessionId) {
+      console.warn('[TimerEngine] Session already active:', this.activeSessionId);
+      return;
+    }
+
+    const session = focusSessionRepository.createSession({
+      subject,
+      topic,
+      targetSeconds,
+      mode,
+      goal,
+      studyMedium: medium || this.medium
+    });
+
+    const now = session.startTime || Date.now();
+    this.activeSessionId = session.sessionId;
     this.subject = subject;
     this.topic = topic;
     this.targetSeconds = targetSeconds;
@@ -196,7 +214,8 @@ export class TimerEngine {
       targetSeconds,
       mode,
       goal,
-      this.medium
+      this.medium,
+      session.sessionId
     );
 
     const verification = this.focusEngine.getVerificationStatus();
@@ -275,91 +294,101 @@ export class TimerEngine {
   }
 
   stopSession(): FocusSession | null {
-    focusSessionController.stopSession();
-    if (!this.activeSessionId) return null;
-
-    if (this.intervalId !== null) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
+    if (this.isFinalizing) {
+      return focusSessionRepository.getActiveSession();
+    }
+    if (!this.activeSessionId) {
+      focusSessionController.stopSession(false);
+      return null;
     }
 
+    this.isFinalizing = true;
+    try {
+      if (this.intervalId !== null) {
+        clearInterval(this.intervalId);
+        this.intervalId = null;
+      }
 
-    const endTime = Date.now();
-    const focusedSec = Math.round(this.accumulatedFocusedMs / 1000);
-    const screenFocusedSec = Math.round(this.accumulatedScreenFocusedMs / 1000);
-    const paperFocusedSec = Math.round(this.accumulatedPaperFocusedMs / 1000);
-    const mixedFocusedSec = Math.round(this.accumulatedMixedFocusedMs / 1000);
-    const thinkingSec = Math.round(this.accumulatedThinkingMs / 1000);
-    const uncertainSec = Math.round(this.accumulatedUncertainMs / 1000);
-    const unverifiedSec = Math.round(this.accumulatedUnverifiedMs / 1000);
-    const pausedSec = Math.round(this.accumulatedPausedMs / 1000);
-    const distractedSec = Math.round(this.accumulatedDistractedMs / 1000);
-    const phoneSec = Math.round(this.accumulatedPhoneMs / 1000);
-    const convSec = Math.round(this.accumulatedConversationMs / 1000);
-    const sleepSec = Math.round(this.accumulatedSleepMs / 1000);
-    const awaySec = Math.round(this.accumulatedAwayMs / 1000);
-    const breakSec = Math.round(this.accumulatedBreakMs / 1000);
-    const warningSec = Math.round(this.accumulatedWarningMs / 1000);
-    const elapsedSec = Math.round((endTime - this.sessionStartTime) / 1000);
+      const endTime = Date.now();
+      const focusedSec = Math.round(this.accumulatedFocusedMs / 1000);
+      const screenFocusedSec = Math.round(this.accumulatedScreenFocusedMs / 1000);
+      const paperFocusedSec = Math.round(this.accumulatedPaperFocusedMs / 1000);
+      const mixedFocusedSec = Math.round(this.accumulatedMixedFocusedMs / 1000);
+      const thinkingSec = Math.round(this.accumulatedThinkingMs / 1000);
+      const uncertainSec = Math.round(this.accumulatedUncertainMs / 1000);
+      const unverifiedSec = Math.round(this.accumulatedUnverifiedMs / 1000);
+      const pausedSec = Math.round(this.accumulatedPausedMs / 1000);
+      const distractedSec = Math.round(this.accumulatedDistractedMs / 1000);
+      const phoneSec = Math.round(this.accumulatedPhoneMs / 1000);
+      const convSec = Math.round(this.accumulatedConversationMs / 1000);
+      const sleepSec = Math.round(this.accumulatedSleepMs / 1000);
+      const awaySec = Math.round(this.accumulatedAwayMs / 1000);
+      const breakSec = Math.round(this.accumulatedBreakMs / 1000);
+      const warningSec = Math.round(this.accumulatedWarningMs / 1000);
+      const elapsedSec = Math.round((endTime - this.sessionStartTime) / 1000);
 
-    const avgScore = this.scoresList.length > 0
-      ? Math.round(this.scoresList.reduce((a, b) => a + b, 0) / this.scoresList.length)
-      : 80;
+      const avgScore = this.scoresList.length > 0
+        ? Math.round(this.scoresList.reduce((a, b) => a + b, 0) / this.scoresList.length)
+        : 80;
 
-    const completedSession: FocusSession = {
-      id: this.activeSessionId,
-      subject: this.subject,
-      topic: this.topic,
-      goal: this.goal,
-      mode: this.mode,
-      studyMedium: this.medium,
-      startTime: this.sessionStartTime,
-      endTime,
-      targetSeconds: this.targetSeconds,
-      focusedSeconds: focusedSec,
-      screenFocusedSeconds: screenFocusedSec,
-      paperFocusedSeconds: paperFocusedSec,
-      mixedFocusedSeconds: mixedFocusedSec,
-      thinkingSeconds: thinkingSec,
-      uncertainSeconds: uncertainSec,
-      unverifiedSeconds: unverifiedSec,
-      pausedSeconds: pausedSec,
-      warningSeconds: warningSec,
-      distractedSeconds: distractedSec,
-      phoneDistractedSeconds: phoneSec,
-      conversationSeconds: convSec,
-      possibleSleepSeconds: sleepSec,
-      awaySeconds: awaySec,
-      breakSeconds: breakSec,
-      elapsedSeconds: elapsedSec,
-      averageFocusScore: avgScore,
-      peakFocusScore: Math.max(this.peakScore, avgScore),
-      distractionCount: this.distractionCount,
-      status: focusedSec >= this.targetSeconds ? 'COMPLETED' : 'STOPPED',
-      transitionLogs: this.focusEngine.getTransitionLogs(),
-      activityEvents: this.focusEngine.getActivityEvents(),
-      segments: [...this.activeSegments]
-    };
+      if (this.currentSegment) {
+        this.currentSegment.end = endTime;
+        this.currentSegment.durationMs = Math.max(0, endTime - this.currentSegment.start);
+        this.activeSegments.push({ ...this.currentSegment });
+        this.currentSegment = null;
+      }
 
-    if (this.currentSegment) {
-      this.currentSegment.end = endTime;
-      this.currentSegment.durationMs = Math.max(0, endTime - this.currentSegment.start);
-      this.activeSegments.push({ ...this.currentSegment });
-      this.currentSegment = null;
-      completedSession.segments = [...this.activeSegments];
+      // 1. Authoritative idempotent single finalization via FocusSessionRepository
+      const completedSession = focusSessionRepository.finalizeSession(this.activeSessionId, {
+        subject: this.subject,
+        topic: this.topic,
+        goal: this.goal,
+        mode: this.mode,
+        studyMedium: this.medium,
+        startTime: this.sessionStartTime,
+        endTime,
+        targetSeconds: this.targetSeconds,
+        focusedSeconds: focusedSec,
+        screenFocusedSeconds: screenFocusedSec,
+        paperFocusedSeconds: paperFocusedSec,
+        mixedFocusedSeconds: mixedFocusedSec,
+        thinkingSeconds: thinkingSec,
+        uncertainSeconds: uncertainSec,
+        unverifiedSeconds: unverifiedSec,
+        pausedSeconds: pausedSec,
+        warningSeconds: warningSec,
+        distractedSeconds: distractedSec,
+        phoneDistractedSeconds: phoneSec,
+        conversationSeconds: convSec,
+        possibleSleepSeconds: sleepSec,
+        awaySeconds: awaySec,
+        breakSeconds: breakSec,
+        elapsedSeconds: elapsedSec,
+        averageFocusScore: avgScore,
+        peakFocusScore: Math.max(this.peakScore, avgScore),
+        distractionCount: this.distractionCount,
+        status: focusedSec >= this.targetSeconds && this.targetSeconds > 0 ? 'COMPLETED' : 'STOPPED',
+        transitionLogs: this.focusEngine.getTransitionLogs(),
+        activityEvents: this.focusEngine.getActivityEvents(),
+        segments: [...this.activeSegments]
+      });
+
+      // 2. Stop controller state and worker without triggering a second save
+      focusSessionController.stopSession(false);
+
+      if (this.timelineBuffer.length > 0) {
+        StorageService.saveTimelineEvents(this.timelineBuffer);
+        this.timelineBuffer = [];
+      }
+
+      this.focusEngine.setState('IDLE', 'Session ended');
+      this.activeSessionId = null;
+      this.emitCurrentTick();
+
+      return completedSession;
+    } finally {
+      this.isFinalizing = false;
     }
-
-    StorageService.saveSession(completedSession);
-    if (this.timelineBuffer.length > 0) {
-      StorageService.saveTimelineEvents(this.timelineBuffer);
-      this.timelineBuffer = [];
-    }
-
-    this.focusEngine.setState('IDLE', 'Session ended');
-    this.activeSessionId = null;
-    this.emitCurrentTick();
-
-    return completedSession;
   }
 
   private handleFocusEngineOutput = (output: FocusEngineOutput) => {
@@ -507,7 +536,11 @@ export class TimerEngine {
     this.emitCurrentTick();
   };
 
-  private emitCurrentTick(): void {
+  getActiveSessionId(): string | null {
+    return this.activeSessionId;
+  }
+
+  getCurrentTickData(): TimerTickData {
     const focusedSec = Math.floor(this.accumulatedFocusedMs / 1000);
     const screenFocusedSec = Math.floor(this.accumulatedScreenFocusedMs / 1000);
     const paperFocusedSec = Math.floor(this.accumulatedPaperFocusedMs / 1000);
@@ -538,7 +571,7 @@ export class TimerEngine {
       ? Math.round(this.scoresList.reduce((a, b) => a + b, 0) / this.scoresList.length)
       : engineOut.score;
 
-    const tickPayload: TimerTickData = {
+    return {
       state: this.focusEngine.getState(),
       elapsedSeconds: elapsedSec,
       focusedSeconds: focusedSec,
@@ -573,7 +606,10 @@ export class TimerEngine {
       stateExplanation: this.currentStateExplanation || engineOut.stateExplanation,
       telemetry: engineOut.telemetry
     };
+  }
 
+  private emitCurrentTick(): void {
+    const tickPayload = this.getCurrentTickData();
     this.callbacks.forEach(cb => cb(tickPayload));
   }
 }

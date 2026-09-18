@@ -465,16 +465,16 @@ export class FocusEngine {
     // 6. Feed Authoritative Session Controller
     const deviceStatus: DeviceStatus = phone.deviceStatus || (phone.isPersistentPhoneUse ? 'DEVICE_IN_USE' : (phone.phoneConfidence > 0.4 ? 'DEVICE_PRESENT' : 'NOT_DETECTED'));
     const deviceInUse: boolean = phone.deviceInUse ?? (deviceStatus === 'DEVICE_IN_USE');
-    const cameraHealthy = validation.visionQuality.isAcceptable;
+    const cameraHealthy = validation.visionQuality.isTrustworthy;
 
     focusSessionController.updatePerceptionState({
       studentPresent: presence.isPersonPresent,
       presenceConfidence: presence.confidence,
       deviceStatus,
       deviceInUse,
-      deviceInteractionEvidence: phone.evidence,
+      deviceInteractionEvidence: phone.deviceInteractionEvidence,
       cameraHealthy,
-      inferenceFps: this.lastVision.inferenceFps || 15
+      inferenceFps: 15
     });
 
     const currentGate = focusSessionController.getState().gate;
@@ -487,7 +487,7 @@ export class FocusEngine {
       facePresent: presence.isPersonPresent,
       personPresenceState: presence.state,
       deviceStatus,
-      deviceEvidence: phone.evidence,
+      deviceEvidence: phone.deviceInteractionEvidence,
       timerGate: currentGate,
       visionQualityScore: validation.visionQuality.value,
       activity: activity.primaryActivity,
@@ -551,7 +551,7 @@ export function isVerifiedFocus(
   isPersonPresent?: boolean
 ): FocusVerificationGateResult {
   const camOk = cameraHealthy ?? (output?.visionQualityScore !== undefined ? output.visionQualityScore >= 0.25 : true);
-  const present = isPersonPresent ?? (output?.facePresent ?? (output?.personPresenceState !== 'ABSENT'));
+  const present = isPersonPresent ?? (output?.facePresent ?? (output?.personPresenceState !== 'PERSON_ABSENT'));
   const isDeviceInUse = output?.timerGate?.deviceInUse ?? (output?.deviceStatus === 'DEVICE_IN_USE' || state === 'PHONE_USE');
   const isDeviceOnDesk = output?.deviceStatus === 'DEVICE_PRESENT';
   const manualPause = state === 'PAUSED';

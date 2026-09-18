@@ -12,6 +12,7 @@ import {
 import { StorageService } from './storage';
 import { soundFx } from './audio';
 import { visionEngine } from '../vision/visionEngine';
+import { focusSessionRepository } from './FocusSessionRepository';
 
 export interface FocusSessionState {
   sessionId: string | null;
@@ -195,10 +196,18 @@ export class FocusSessionController {
     targetSeconds: number,
     mode: FocusMode,
     goal: string,
-    medium: StudyMedium
-  ): void {
+    medium: StudyMedium,
+    existingSessionId?: string
+  ): string {
     const now = Date.now();
-    const sessionId = `foc_${now}_${Math.random().toString(36).slice(2, 7)}`;
+    const sessionId = existingSessionId || focusSessionRepository.createSession({
+      subject,
+      topic,
+      targetSeconds,
+      mode,
+      goal,
+      studyMedium: medium
+    }).sessionId;
 
     this.state = {
       ...this.state,
@@ -240,6 +249,7 @@ export class FocusSessionController {
 
     soundFx.playFocusRestored();
     this.notify();
+    return sessionId;
   }
 
   pauseSession(reason: string = 'User paused manually'): void {
@@ -257,8 +267,10 @@ export class FocusSessionController {
     soundFx.playFocusRestored();
   }
 
-  stopSession(): FocusSession | null {
+  stopSession(persistStandalone: boolean = false): FocusSession | null {
     if (!this.state.isActive || !this.state.sessionId) return null;
+
+    const currentSessionId = this.state.sessionId;
 
     if (this.timerWorker) {
       this.timerWorker.postMessage('stop');
@@ -286,41 +298,33 @@ export class FocusSessionController {
     const pausedSec = Math.round(this.state.accumulatedManualPauseMs / 1000);
     const elapsedSec = Math.round((now - this.state.sessionStartTime) / 1000);
 
-    const completedSession: FocusSession = {
-      id: this.state.sessionId,
-      subject: this.state.subject,
-      topic: this.state.topic,
-      goal: this.state.goal,
-      mode: this.state.mode,
-      studyMedium: this.state.medium,
-      startTime: this.state.sessionStartTime,
-      endTime: now,
-      targetSeconds: this.state.targetSeconds,
-      focusedSeconds: focusedSec,
-      screenFocusedSeconds: screenSec,
-      paperFocusedSeconds: paperSec,
-      mixedFocusedSeconds: mixedSec,
-      thinkingSeconds: thinkingSec,
-      uncertainSeconds: 0,
-      unverifiedSeconds: 0,
-      pausedSeconds: pausedSec,
-      warningSeconds: 0,
-      distractedSeconds: deviceSec,
-      phoneDistractedSeconds: deviceSec,
-      conversationSeconds: 0,
-      possibleSleepSeconds: 0,
-      awaySeconds: awaySec,
-      breakSeconds: 0,
-      elapsedSeconds: elapsedSec,
-      averageFocusScore: 90,
-      peakFocusScore: 100,
-      distractionCount: this.state.stateTransitions.filter(t => t.toState === 'DEVICE_IN_USE' || t.toState === 'AWAY').length,
-      efficiency: elapsedSec > 0 ? Math.min(100, Math.round((focusedSec / elapsedSec) * 100)) : 100,
-      segments: [...this.state.segments],
-      syncStatus: 'local'
-    };
+    let completedSession: FocusSession | null = null;
 
-    StorageService.saveSession(completedSession);
+    // Only persist if called standalone (e.g. from standalone tray action).
+    // When called from TimerEngine, TimerEngine performs the single authoritative finalization.
+    if (persistStandalone) {
+      completedSession = focusSessionRepository.finalizeSession(currentSessionId, {
+        subject: this.state.subject,
+        topic: this.state.topic,
+        goal: this.state.goal,
+        mode: this.state.mode,
+        studyMedium: this.state.medium,
+        startTime: this.state.sessionStartTime,
+        endTime: now,
+        targetSeconds: this.state.targetSeconds,
+        focusedSeconds: focusedSec,
+        screenFocusedSeconds: screenSec,
+        paperFocusedSeconds: paperSec,
+        mixedFocusedSeconds: mixedSec,
+        thinkingSeconds: thinkingSec,
+        distractedSeconds: deviceSec,
+        phoneDistractedSeconds: deviceSec,
+        awaySeconds: awaySec,
+        pausedSeconds: pausedSec,
+        elapsedSeconds: elapsedSec,
+        segments: [...this.state.segments]
+      });
+    }
 
     this.state = {
       ...this.state,

@@ -438,8 +438,18 @@ export interface UserSettings {
   messageStyle: 'CONCISE';
 }
 
+export type FocusSessionLifecycleState =
+  | 'CREATED'
+  | 'ACTIVE'
+  | 'PAUSED'
+  | 'COMPLETING'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'STOPPED';
+
 export interface FocusSession {
   id: string;
+  sessionId: string;
   subject: string;
   topic: string;
   goal: string;
@@ -467,7 +477,10 @@ export interface FocusSession {
   averageFocusScore: number;
   peakFocusScore: number;
   distractionCount: number;
-  status: 'COMPLETED' | 'STOPPED' | 'CANCELLED';
+  status: FocusSessionLifecycleState;
+  finalized?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
   syncedToCalendar?: boolean;
   calendarEventId?: string;
   notes?: string;
@@ -476,7 +489,6 @@ export interface FocusSession {
   segments?: FocusSegment[];
 
   // GATE Tracker structured integration fields
-  sessionId?: string;
   date?: string;
   studyMode?: string;
   targetDuration?: number;

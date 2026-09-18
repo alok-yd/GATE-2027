@@ -1,5 +1,6 @@
 import { DEFAULT_USER_SETTINGS, GATE_SUBJECTS } from '../constants';
 import { CalibrationProfile, DailySummary, EvaluationMetrics, FocusSession, FocusTimelineEvent, SubjectItem, UserSettings } from '../types';
+import { focusSessionRepository } from './FocusSessionRepository';
 
 import { getStoredSubjects } from '../../../services/DataExtractor';
 
@@ -195,10 +196,13 @@ export class StorageService {
       const raw = getItemWithLegacy(storage, STORAGE_KEYS.SESSIONS);
       if (!raw) {
         const seeded = this.generateSampleSessions();
-        localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(seeded));
-        return seeded;
+        if (storage) {
+          storage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(seeded));
+          storage.setItem(LEGACY_KEYS[STORAGE_KEYS.SESSIONS], JSON.stringify(seeded));
+        }
+        return focusSessionRepository.normalizeSessions(seeded);
       }
-      return JSON.parse(raw);
+      return focusSessionRepository.listSessions();
     } catch {
       return [];
     }
@@ -207,9 +211,11 @@ export class StorageService {
   static saveSession(session: FocusSession): void {
     try {
       const today = getTodayDateString();
+      const sessionId = session.sessionId || session.id;
       const enhancedSession: FocusSession = {
         ...session,
-        sessionId: session.id,
+        id: sessionId,
+        sessionId,
         date: session.date || today,
         studyMode: session.studyMode || session.mode,
         targetDuration: Math.round(session.targetSeconds / 60),
@@ -228,34 +234,13 @@ export class StorageService {
         completionStatus: session.status
       };
 
-      const sessions = this.getSessions();
-      const existingIdx = sessions.findIndex(s => s.id === session.id);
-      if (existingIdx >= 0) {
-        sessions[existingIdx] = enhancedSession;
-      } else {
-        sessions.unshift(enhancedSession);
-      }
-      if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
-        localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
-        localStorage.setItem(LEGACY_KEYS[STORAGE_KEYS.SESSIONS], JSON.stringify(sessions));
-      }
+      focusSessionRepository.upsertSession(enhancedSession, false);
 
-      // 1. Synchronize hours with GATE Daily Target
-      try {
-        const dailyKey = `gate_daily_target_${today}`;
-        const rawDaily = localStorage.getItem(dailyKey);
-        const dailyData = rawDaily ? JSON.parse(rawDaily) : { date: today, targetHours: 8, hoursStudied: 0 };
-        const addedHours = Math.round((enhancedSession.focusedSeconds / 3600) * 10) / 10;
-        dailyData.hoursStudied = Math.round(((Number(dailyData.hoursStudied) || 0) + addedHours) * 10) / 10;
-        localStorage.setItem(dailyKey, JSON.stringify(dailyData));
-      } catch (err) {
-        console.warn('Could not sync to gate_daily_target:', err);
-      }
-
-      // 2. Synchronize streak with GATE Streak Data
+      // Synchronize streak with GATE Streak Data
       try {
         if (enhancedSession.focusedSeconds >= 300) { // at least 5 mins of focused study
-          const rawStreak = localStorage.getItem('gate_streak_data');
+          const storage = getStorage();
+          const rawStreak = storage?.getItem('gate_streak_data');
           let streakData = rawStreak ? JSON.parse(rawStreak) : { currentStreak: 0, lastLogDate: '' };
           if (streakData.lastLogDate !== today) {
             const yesterday = new Date();
@@ -267,16 +252,17 @@ export class StorageService {
               streakData.currentStreak = 1;
             }
             streakData.lastLogDate = today;
-            localStorage.setItem('gate_streak_data', JSON.stringify(streakData));
+            storage?.setItem('gate_streak_data', JSON.stringify(streakData));
           }
         }
       } catch (err) {
         console.warn('Could not sync to gate_streak_data:', err);
       }
 
-      // 3. Synchronize with gate_focus_timer_state for AI Workbench & Tool Registry
+      // Synchronize with gate_focus_timer_state for AI Workbench & Tool Registry
       try {
-        localStorage.setItem('gate_focus_timer_state', JSON.stringify({
+        const storage = getStorage();
+        storage?.setItem('gate_focus_timer_state', JSON.stringify({
           isRunning: false,
           elapsedSeconds: enhancedSession.elapsedSeconds,
           protocolPhase: 'study',
@@ -294,11 +280,9 @@ export class StorageService {
         console.warn('Could not sync to gate_focus_timer_state:', err);
       }
 
-      // 4. Dispatch storage event for live UI updates
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('storage'));
       }
-
     } catch (e) {
       console.error('Failed to save session', e);
     }
@@ -306,10 +290,15 @@ export class StorageService {
 
   static deleteSession(sessionId: string): void {
     try {
-      const sessions = this.getSessions().filter(s => s.id !== sessionId);
-      localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
-      localStorage.setItem(LEGACY_KEYS[STORAGE_KEYS.SESSIONS], JSON.stringify(sessions));
-      window.dispatchEvent(new Event('storage'));
+      const storage = getStorage();
+      const sessions = focusSessionRepository.listSessions().filter(s => s.id !== sessionId && s.sessionId !== sessionId);
+      if (storage) {
+        storage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+        storage.setItem(LEGACY_KEYS[STORAGE_KEYS.SESSIONS], JSON.stringify(sessions));
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('storage'));
+      }
     } catch (e) {
       console.error('Failed to delete session', e);
     }
@@ -323,8 +312,11 @@ export class StorageService {
     } else {
       subjects.push(subject);
     }
-    localStorage.setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(subjects));
-    localStorage.setItem(LEGACY_KEYS[STORAGE_KEYS.SUBJECTS], JSON.stringify(subjects));
+    const storage = getStorage();
+    if (storage) {
+      storage.setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(subjects));
+      storage.setItem(LEGACY_KEYS[STORAGE_KEYS.SUBJECTS], JSON.stringify(subjects));
+    }
   }
 
   static hasCompletedOnboarding(): boolean {
@@ -333,27 +325,30 @@ export class StorageService {
   }
 
   static setOnboardingComplete(): void {
-    localStorage.setItem(STORAGE_KEYS.ONBOARDING, 'true');
-    localStorage.setItem(LEGACY_KEYS[STORAGE_KEYS.ONBOARDING], 'true');
+    const storage = getStorage();
+    if (storage) {
+      storage.setItem(STORAGE_KEYS.ONBOARDING, 'true');
+      storage.setItem(LEGACY_KEYS[STORAGE_KEYS.ONBOARDING], 'true');
+    }
   }
 
   static clearAll(): void {
     try {
-      localStorage.removeItem(STORAGE_KEYS.SESSIONS);
-      localStorage.removeItem(STORAGE_KEYS.TIMELINE);
-      localStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
-      localStorage.removeItem(STORAGE_KEYS.SUBJECTS);
-      localStorage.removeItem(STORAGE_KEYS.CALIBRATION);
-      localStorage.removeItem(STORAGE_KEYS.EVALUATION);
+      const storage = getStorage();
+      if (storage) {
+        storage.removeItem(STORAGE_KEYS.SESSIONS);
+        storage.removeItem(STORAGE_KEYS.TIMELINE);
+        storage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
+        storage.removeItem(STORAGE_KEYS.SUBJECTS);
+        storage.removeItem(STORAGE_KEYS.CALIBRATION);
+        storage.removeItem(STORAGE_KEYS.EVALUATION);
+      }
     } catch {}
   }
 
   static getTodaySessions(): FocusSession[] {
     const today = getTodayDateString();
-    return this.getSessions().filter(s => {
-      const sessionDate = new Date(s.startTime).toISOString().slice(0, 10);
-      return sessionDate === today;
-    });
+    return focusSessionRepository.getUniqueSessionsForDay(today);
   }
 
   static getTodaySummary(arg1?: number | FocusSession[], arg2?: number): DailySummary {
@@ -362,7 +357,8 @@ export class StorageService {
 
     if (Array.isArray(arg1)) {
       const today = getTodayDateString();
-      todaySessions = arg1.filter(s => new Date(s.startTime).toISOString().slice(0, 10) === today);
+      const filtered = arg1.filter(s => new Date(s.startTime).toISOString().slice(0, 10) === today);
+      todaySessions = focusSessionRepository.normalizeSessions(filtered);
       targetSeconds = arg2 || 12 * 3600;
     } else {
       todaySessions = this.getTodaySessions();
@@ -564,6 +560,7 @@ export class StorageService {
     return [
       {
         id: 'sess_1',
+        sessionId: 'sess_1',
         subject: 'Algorithms',
         topic: 'Dynamic Programming (DP on Trees)',
         goal: 'Solve 6 Hard PYQs with verified focus',
@@ -586,10 +583,14 @@ export class StorageService {
         averageFocusScore: 89,
         peakFocusScore: 98,
         distractionCount: 3,
-        status: 'COMPLETED'
+        status: 'COMPLETED',
+        finalized: true,
+        createdAt: now - (2 * 3600 * 1000 + 15 * 60 * 1000),
+        updatedAt: now - (15 * 60 * 1000)
       },
       {
         id: 'sess_2',
+        sessionId: 'sess_2',
         subject: 'Database Management Systems (DBMS)',
         topic: 'B+ Tree Indexing & Transactions',
         goal: 'Solve 10 GATE PYQs on Paper',
@@ -612,7 +613,10 @@ export class StorageService {
         averageFocusScore: 92,
         peakFocusScore: 99,
         distractionCount: 2,
-        status: 'COMPLETED'
+        status: 'COMPLETED',
+        finalized: true,
+        createdAt: now - (5 * 3600 * 1000),
+        updatedAt: now - (3 * 3600 * 1000)
       }
     ];
   }

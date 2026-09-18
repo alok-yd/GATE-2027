@@ -21,6 +21,7 @@ import {
   StudyMedium
 } from './focus/types';
 import { StorageService } from './focus/services/storage';
+import { focusSessionRepository } from './focus/services/FocusSessionRepository';
 import { focusEngine, FocusEngineOutput } from './focus/services/focusEngine';
 import { TimerEngine, TimerTickData, timerEngine as sharedTimerEngine } from './focus/services/timerEngine';
 import { focusSessionController } from './focus/services/FocusSessionController';
@@ -43,6 +44,8 @@ import {
 
 export const FocusTracker: React.FC = () => {
   const timerEngine = sharedTimerEngine;
+  const isStoppingRef = useRef(false);
+  const isCompletingRef = useRef(false);
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'coach' | 'calendar' | 'settings'>('dashboard');
@@ -66,49 +69,18 @@ export const FocusTracker: React.FC = () => {
   const [engineOutput, setEngineOutput] = useState<FocusEngineOutput>(() => focusEngine.getCurrentOutput());
 
   // Real-Time Timer Tick State
-  const [tickData, setTickData] = useState<TimerTickData>({
-    state: 'IDLE',
-    elapsedSeconds: 0,
-    focusedSeconds: 0,
-    screenFocusedSeconds: 0,
-    paperFocusedSeconds: 0,
-    mixedFocusedSeconds: 0,
-    thinkingSeconds: 0,
-    uncertainSeconds: 0,
-    unverifiedSeconds: 0,
-    pausedSeconds: 0,
-    remainingTargetSeconds: 7200,
-    distractedSeconds: 0,
-    phoneSeconds: 0,
-    conversationSeconds: 0,
-    sleepSeconds: 0,
-    awaySeconds: 0,
-    breakSeconds: 0,
-    efficiency: 100,
-    currentScore: 85,
-    averageScore: 85,
-    peakScore: 0,
-    distractionCount: 0,
-    targetSeconds: 7200,
-    activeSubject: 'Algorithms',
-    activeTopic: 'Dynamic Programming',
-    activeGoal: 'Solve 30 PYQs with no distractions',
-    activeMode: 'Deep Focus',
-    activeMedium: 'Screen Study',
-    isCompleted: false,
-    isVerifiedFocus: false,
-    verificationReason: 'Session not started'
-  });
+  const [tickData, setTickData] = useState<TimerTickData>(() => timerEngine.getCurrentTickData());
 
   // Calculate Today's Summary
   const todaySummary: DailySummary = useMemo(() => {
     return StorageService.getTodaySummary(sessions, settings.dailyTargetHours * 3600);
   }, [sessions, settings.dailyTargetHours]);
 
-  // Today's sessions subset
+  // Today's sessions subset (strictly unique sessions)
   const todaySessions = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10);
-    return sessions.filter(s => new Date(s.startTime).toISOString().slice(0, 10) === todayStr);
+    const normalized = focusSessionRepository.normalizeSessions(sessions);
+    return normalized.filter(s => new Date(s.startTime).toISOString().slice(0, 10) === todayStr);
   }, [sessions]);
 
   // Initialize Activity Monitor, Vision Listeners on Mount
@@ -134,7 +106,8 @@ export const FocusTracker: React.FC = () => {
 
     const unsubTimer = timerEngine.subscribe((tick) => {
       setTickData(tick);
-      if (tick.isCompleted && !completedSession) {
+      if (tick.isCompleted && !completedSession && !isCompletingRef.current) {
+        isCompletingRef.current = true;
         const finished = timerEngine.stopSession();
         if (finished) {
           setCompletedSession(finished);
@@ -165,6 +138,8 @@ export const FocusTracker: React.FC = () => {
     goal: string,
     medium: StudyMedium
   ) => {
+    isStoppingRef.current = false;
+    isCompletingRef.current = false;
     timerEngine.startSession(subject, topic, targetSeconds, mode, goal, medium);
     if (settings.autoStartCameraOnSession && !visionEngine.isActive()) {
       visionEngine.start(settings.selectedCameraId).catch(() => {});
@@ -181,11 +156,19 @@ export const FocusTracker: React.FC = () => {
   };
 
   const handleStopSession = () => {
-    const completed = timerEngine.stopSession();
-    if (completed) {
-      setCompletedSession(completed);
-      setSessions(StorageService.getSessions());
-      setTimelineEvents(StorageService.getTimelineEvents());
+    if (isStoppingRef.current) return;
+    isStoppingRef.current = true;
+    try {
+      const completed = timerEngine.stopSession();
+      if (completed) {
+        setCompletedSession(completed);
+        setSessions(StorageService.getSessions());
+        setTimelineEvents(StorageService.getTimelineEvents());
+      }
+    } finally {
+      setTimeout(() => {
+        isStoppingRef.current = false;
+      }, 1000);
     }
   };
 
