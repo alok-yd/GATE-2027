@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { FocusEngineOutput } from '../services/focusEngine';
 import { TimerTickData } from '../services/timerEngine';
 import { DeviceCapabilityDetector } from '../services/ml/DeviceCapabilityDetector';
-import { modelManager } from '../services/ml/ModelManager';
+import { modelManager, DetectorHealth } from '../services/ml/ModelManager';
 import { frameScheduler } from '../services/ml/FrameScheduler';
 import { focusSessionController, FocusSessionState } from '../services/FocusSessionController';
+import { visionWatchdog, VisionPipelineHealth } from '../services/VisionWatchdog';
+import { cameraManager } from '../services/CameraManager';
 import { ModelStatusMap, AIRuntimeProvider } from '../types';
 import {
   Cpu,
@@ -40,6 +42,8 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [modelStatus, setModelStatus] = useState<ModelStatusMap>(() => modelManager.getStatus());
+  const [detectorHealth, setDetectorHealth] = useState<Record<'face' | 'pose' | 'hands' | 'object', DetectorHealth>>(() => modelManager.getDetectorHealth());
+  const [pipelineHealth, setPipelineHealth] = useState<VisionPipelineHealth>(() => visionWatchdog.getHealth());
   const [aiRuntime, setAiRuntime] = useState<AIRuntimeProvider>('WASM');
   const [fps, setFps] = useState<number>(12);
   const [avgLatency, setAvgLatency] = useState<number>(0);
@@ -54,6 +58,7 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
     });
 
     const unsubModel = modelManager.subscribe(setModelStatus);
+    const unsubWatchdog = visionWatchdog.subscribeHealth(setPipelineHealth);
     const unsubSession = focusSessionController.subscribe((s) => {
       setSessionState(s);
     });
@@ -63,11 +68,13 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
       setFps(metrics.fps || 12);
       setDroppedFrames(metrics.droppedFrames);
       setAvgLatency(metrics.avgLatencyMs);
+      setDetectorHealth(modelManager.getDetectorHealth());
       setLastUpdateAgoMs(Date.now() - focusSessionController.getState().lastVisionUpdateAt);
     }, 500);
 
     return () => {
       unsubModel();
+      unsubWatchdog();
       unsubSession();
       clearInterval(interval);
     };
@@ -121,6 +128,17 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
                   : 'bg-rose-950/60 border-rose-800/80 text-rose-400 font-bold'
               }`}>
                 TIMER GATE: {timerGateOpen ? 'OPEN (RUNNING)' : `BLOCKED (${blockReason})`}
+              </span>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                pipelineHealth.status === 'VERIFIED'
+                  ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+                  : pipelineHealth.status === 'RECOVERING'
+                  ? 'bg-amber-950/60 border-amber-800/80 text-amber-300 animate-pulse font-bold'
+                  : pipelineHealth.status === 'DEGRADED'
+                  ? 'bg-amber-950/40 border-amber-800/60 text-amber-300'
+                  : 'bg-rose-950/60 border-rose-800/80 text-rose-300'
+              }`}>
+                Pipeline: {pipelineHealth.status}{pipelineHealth.status === 'RECOVERING' ? ` (${pipelineHealth.recoveryAttempts}/3)` : ''}
               </span>
               <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
                 studentPresent ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300' : 'bg-amber-950/40 border-amber-800/60 text-amber-300'
@@ -213,14 +231,23 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
 
             {/* Camera Health */}
             <div className="bg-zinc-950/70 p-2.5 rounded-xl border border-zinc-800">
-              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold block">Camera Health</span>
+              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold block">Camera Hardware</span>
               <div className="flex items-center gap-1.5 mt-1">
-                {camHealth === 'HEALTHY' ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />}
-                <span className={`font-mono font-bold text-xs ${camHealth === 'HEALTHY' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {camHealth}
+                {pipelineHealth.cameraHealth.status === 'HEALTHY' ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                ) : pipelineHealth.cameraHealth.status === 'RECOVERING' ? (
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+                ) : (
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                )}
+                <span className={`font-mono font-bold text-xs ${
+                  pipelineHealth.cameraHealth.status === 'HEALTHY' ? 'text-emerald-400' :
+                  pipelineHealth.cameraHealth.status === 'RECOVERING' ? 'text-amber-400' : 'text-rose-400'
+                }`}>
+                  {pipelineHealth.cameraHealth.status}
                 </span>
               </div>
-              <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">Age: {lastUpdateAgoMs}ms</span>
+              <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">Frames: {pipelineHealth.cameraHealth.frameCount}</span>
             </div>
 
             {/* Evidence Age */}
@@ -293,11 +320,11 @@ export const AIDiagnosticsHUD: React.FC<AIDiagnosticsHUDProps> = ({
 
           {/* Model Readiness & Provider Status */}
           <div className="border-t border-zinc-800/80 pt-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-3 text-[11px] font-mono">
-              <span className="text-zinc-400">Models:</span>
-              <span className="text-zinc-300">Face: <strong className="text-emerald-400">{modelStatus.face}</strong></span>
-              <span className="text-zinc-300">Pose: <strong className="text-emerald-400">{modelStatus.pose}</strong></span>
-              <span className="text-zinc-300">Hands: <strong className="text-emerald-400">{modelStatus.hands}</strong></span>
+            <div className="flex items-center gap-3 text-[11px] font-mono flex-wrap">
+              <span className="text-zinc-400">Detectors:</span>
+              <span className="text-zinc-300">Face: <strong className="text-emerald-400">{modelStatus.face}</strong> <span className="text-zinc-500">({detectorHealth.face.delegate})</span></span>
+              <span className="text-zinc-300">Pose: <strong className="text-emerald-400">{modelStatus.pose}</strong> <span className="text-zinc-500">({detectorHealth.pose.delegate})</span></span>
+              <span className="text-zinc-300">Hands: <strong className="text-emerald-400">{modelStatus.hands}</strong> <span className="text-zinc-500">({detectorHealth.hands.delegate})</span></span>
               <span className="text-zinc-300">Object: <strong className="text-emerald-400">{modelStatus.object}</strong></span>
             </div>
 

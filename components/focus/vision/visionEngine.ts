@@ -3,6 +3,8 @@ import { FocusConfig } from '../constants/FocusConfig';
 import { calibrationEngine } from '../services/calibrationEngine';
 import { frameScheduler, PerceptionFrame } from '../services/ml/FrameScheduler';
 import { modelManager } from '../services/ml/ModelManager';
+import { cameraManager } from '../services/CameraManager';
+import { visionWatchdog, VisionPipelineHealth } from '../services/VisionWatchdog';
 
 export type VisionCallback = (data: VisionData) => void;
 export type CameraFailureCallback = (reason: string) => void;
@@ -43,19 +45,15 @@ export class VisionEngine {
       this.canvasElement.height = 120;
       this.canvasCtx = this.canvasElement.getContext('2d', { willReadFrequently: true });
     }
+
+    // Only surface fatal modal to user when watchdog declares genuine UNAVAILABLE (after recovery attempts)
+    visionWatchdog.subscribeFailure(reason => {
+      this.handleCameraFailure(reason);
+    });
   }
 
   async getAvailableCameras(): Promise<MediaDeviceInfo[]> {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-        return [];
-      }
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      return devices.filter(d => d.kind === 'videoinput');
-    } catch (e: any) {
-      console.warn('Could not enumerate video devices:', e?.message || e);
-      return [];
-    }
+    return cameraManager.getAvailableCameras();
   }
 
   async start(deviceId?: string, fps: number = 10): Promise<{ success: boolean; error?: string }> {
@@ -66,59 +64,43 @@ export class VisionEngine {
     }
 
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.warn('Webcam API unavailable in this browser environment. Using smart focus simulation.');
+      const camRes = await cameraManager.start(deviceId, fps);
+      if (!camRes.success) {
+        console.warn('VisionEngine webcam start unavailable, activating smart focus mode:', camRes.error);
         this.startSimulation(fps);
-        return { success: false, error: 'Webcam not supported in this browser' };
-      }
-
-      const constraints: MediaStreamConstraints = {
-        video: deviceId
-          ? { deviceId: { exact: deviceId }, width: { ideal: 320 }, height: { ideal: 240 } }
-          : { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' },
-        audio: false
-      };
-
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-      // Listen for stream track endings
-      const videoTrack = this.stream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.onended = () => {
-          this.handleCameraFailure('Camera stream ended or disconnected by operating system');
+        return {
+          success: false,
+          error: camRes.error || 'Could not access webcam'
         };
       }
 
-      if (!this.videoElement) {
-        this.videoElement = document.createElement('video');
-        this.videoElement.setAttribute('playsinline', '');
-        this.videoElement.setAttribute('muted', '');
-        this.videoElement.muted = true;
-      }
-
-      this.videoElement.srcObject = this.stream;
-      await this.videoElement.play();
+      this.stream = cameraManager.getStream();
+      this.videoElement = cameraManager.getVideoElement();
 
       this.isRunning = true;
       this.isSimulated = false;
       this.consecutiveBlankFrames = 0;
+      this.consecutiveFrozenFrames = 0;
+      visionWatchdog.setMonitoringActive(true);
 
       // Start ModelManager and FrameScheduler for AI/ML perception
       modelManager.initialize().catch(console.warn);
       this.unsubscribeScheduler = frameScheduler.subscribe((perception) => {
         this.latestPerception = perception;
       });
-      frameScheduler.start(this.videoElement);
+      if (this.videoElement) {
+        frameScheduler.start(this.videoElement);
+      }
 
       this.loop(fps);
 
       return { success: true };
     } catch (err: any) {
-      console.warn('VisionEngine webcam start unavailable, activating smart focus mode:', err?.name || err?.message || err);
+      console.warn('VisionEngine start caught error:', err);
       this.startSimulation(fps);
       return {
         success: false,
-        error: err?.name === 'NotAllowedError' ? 'Permission denied' : (err?.message || 'Could not access webcam')
+        error: err?.message || 'Could not access webcam'
       };
     }
   }
@@ -179,6 +161,7 @@ export class VisionEngine {
   stop(): void {
     this.isRunning = false;
     this.isSimulated = false;
+    visionWatchdog.setMonitoringActive(false);
     if (this.unsubscribeScheduler) {
       this.unsubscribeScheduler();
       this.unsubscribeScheduler = null;
@@ -186,26 +169,17 @@ export class VisionEngine {
     frameScheduler.stop();
     this.latestPerception = null;
     this.stopBackgroundLoop();
-    if (this.stream) {
-      this.stream.getTracks().forEach(t => t.stop());
-      this.stream = null;
-    }
-    if (this.videoElement) {
-      this.videoElement.srcObject = null;
-    }
+    cameraManager.stop();
+    this.stream = null;
+    this.videoElement = null;
   }
 
   attachPreview(videoTag: HTMLVideoElement): void {
-    if (this.stream) {
-      videoTag.srcObject = this.stream;
-      videoTag.play().catch(() => {});
-    }
+    cameraManager.attachPreview(videoTag);
   }
 
   detachPreview(videoTag: HTMLVideoElement): void {
-    if (videoTag.srcObject) {
-      videoTag.srcObject = null;
-    }
+    cameraManager.detachPreview(videoTag);
   }
 
   subscribe(callback: VisionCallback): () => void {
@@ -223,7 +197,15 @@ export class VisionEngine {
   }
 
   getStream(): MediaStream | null {
-    return this.stream;
+    return cameraManager.getStream();
+  }
+
+  getPipelineHealth(): VisionPipelineHealth {
+    return visionWatchdog.getHealth();
+  }
+
+  subscribePipelineHealth(callback: (health: VisionPipelineHealth) => void): () => void {
+    return visionWatchdog.subscribeHealth(callback);
   }
 
   isActive(): boolean {
@@ -367,15 +349,19 @@ export class VisionEngine {
     const lightingLevel: 'dark' | 'low' | 'normal' | 'bright' =
       avgLuma < 25 ? 'dark' : avgLuma < 65 ? 'low' : avgLuma > 220 ? 'bright' : 'normal';
 
+    // Feed frame tick to watchdog and validate frame progression
+    visionWatchdog.recordCameraFrame(now);
+    const isProgressionHealthy = cameraManager.validateFrameProgression();
+
     // Whole-frame freeze detection & blank frame monitoring
     let isFrameFrozen = false;
     if (this.previousFrameLuma !== null) {
       const frameDelta = Math.abs(totalLuma - this.previousFrameLuma);
-      if (frameDelta === 0 && avgLuma > 0) {
+      if (frameDelta === 0 && avgLuma > 0 && !isProgressionHealthy) {
         this.consecutiveFrozenFrames++;
-        if (this.consecutiveFrozenFrames > 30) {
+        if (this.consecutiveFrozenFrames > 50) {
           isFrameFrozen = true;
-          this.handleCameraFailure('Camera stream is frozen or stagnant');
+          visionWatchdog.triggerRecovery('Camera stream frame stall detected');
         }
       } else {
         this.consecutiveFrozenFrames = 0;
@@ -386,14 +372,15 @@ export class VisionEngine {
 
     if (avgLuma < 4) {
       this.consecutiveBlankFrames++;
-      if (this.consecutiveBlankFrames > 20) {
-        this.handleCameraFailure('Camera is blocked, covered, or producing blank black frames');
+      if (this.consecutiveBlankFrames > 50) {
+        visionWatchdog.triggerRecovery('Camera producing blank black frames');
       }
     } else {
       this.consecutiveBlankFrames = 0;
     }
 
-    const cameraHealthy = (this.consecutiveBlankFrames < 20) && !isFrameFrozen;
+    const camHealth = cameraManager.getHealth();
+    const cameraHealthy = (camHealth.status !== 'FAILED') && !isFrameFrozen && (this.consecutiveBlankFrames < 50);
 
     // 2. Desk Motion & Hand / Writing Activity Estimation
     const deskPixelCount = Math.floor((cw / 2) * ((ch - deskStartY) / 2));

@@ -15,6 +15,7 @@ import { StorageService } from './storage';
 import { soundFx } from './audio';
 import { visionEngine } from '../vision/visionEngine';
 import { focusSessionRepository } from './FocusSessionRepository';
+import { visionWatchdog } from './VisionWatchdog';
 
 export interface FocusSessionState {
   sessionId: string | null;
@@ -401,7 +402,8 @@ export class FocusSessionController {
 
     // Check evidence age freshness
     const evidenceAgeMs = params.evidenceTimestamp !== undefined ? (now - params.evidenceTimestamp) : (currentGate.presenceEvidenceAgeMs ?? 0);
-    if (params.evidenceTimestamp !== undefined && evidenceAgeMs > FocusConfig.maxPresenceEvidenceAgeMs) {
+    const isRecoveringGrace = visionWatchdog.isWithinRecoveryGrace();
+    if (params.evidenceTimestamp !== undefined && evidenceAgeMs > FocusConfig.maxPresenceEvidenceAgeMs && !isRecoveringGrace) {
       studentPresent = false;
     }
 
@@ -531,17 +533,23 @@ export class FocusSessionController {
 
     // Watchdog check: If camera / vision stopped updating for > 2500ms, pause for presence loss
     const visionLagMs = now - this.state.lastVisionUpdateAt;
+    const isRecoveringGrace = visionWatchdog.isWithinRecoveryGrace();
+
     if (visionLagMs > FocusConfig.maxPresenceEvidenceAgeMs && this.state.gate.studentPresent) {
-      this.updatePerceptionState({
-        studentPresent: false,
-        presenceConfidence: 0.0,
-        presenceState: 'STUDENT_AWAY'
-      }, 'Stale presence evidence (> 2500ms) — student presence lost.');
-      return;
+      if (!isRecoveringGrace) {
+        this.updatePerceptionState({
+          studentPresent: false,
+          presenceConfidence: 0.0,
+          presenceState: 'STUDENT_AWAY'
+        }, 'Stale presence evidence (> 2500ms) — student presence lost.');
+        return;
+      }
     }
     if (visionLagMs > FocusConfig.visionWatchdogTimeoutMs && this.state.gate.monitoringHealthy && !this.state.gate.manualPause) {
-      this.updatePerceptionState({ cameraHealthy: false }, 'Monitoring paused — AI detection unavailable.');
-      return;
+      if (!isRecoveringGrace) {
+        this.updatePerceptionState({ cameraHealthy: false }, 'Monitoring paused — AI detection unavailable.');
+        return;
+      }
     }
 
     this.state.totalSessionMs += deltaMs;

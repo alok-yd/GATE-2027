@@ -44,6 +44,13 @@ export interface ObjectDetectionResult {
   inferenceLatencyMs: number;
 }
 
+export interface DetectorHealth {
+  status: ModelReadinessState;
+  consecutiveFailures: number;
+  lastInferenceTime: number;
+  delegate: 'GPU' | 'CPU';
+}
+
 export class ModelManager {
   private statusMap: ModelStatusMap = {
     face: 'uninitialized',
@@ -52,8 +59,17 @@ export class ModelManager {
     object: 'uninitialized'
   };
 
+  private detectorHealth: Record<'face' | 'pose' | 'hands' | 'object', DetectorHealth> = {
+    face: { status: 'uninitialized', consecutiveFailures: 0, lastInferenceTime: 0, delegate: 'CPU' },
+    pose: { status: 'uninitialized', consecutiveFailures: 0, lastInferenceTime: 0, delegate: 'CPU' },
+    hands: { status: 'uninitialized', consecutiveFailures: 0, lastInferenceTime: 0, delegate: 'CPU' },
+    object: { status: 'uninitialized', consecutiveFailures: 0, lastInferenceTime: 0, delegate: 'CPU' }
+  };
+
   private listeners: Set<(status: ModelStatusMap) => void> = new Set();
   private isInitializing: boolean = false;
+  private cachedVisionTasks: any = null;
+  private cachedFileset: any = null;
   private faceLandmarker: any = null;
   private poseLandmarker: any = null;
   private handLandmarker: any = null;
@@ -68,6 +84,11 @@ export class ModelManager {
 
     const capabilities = await DeviceCapabilityDetector.detect();
     const errors: string[] = [];
+    const preferredDelegate: 'GPU' | 'CPU' = capabilities.hasWebGPU ? 'GPU' : 'CPU';
+
+    this.detectorHealth.face.delegate = preferredDelegate;
+    this.detectorHealth.pose.delegate = preferredDelegate;
+    this.detectorHealth.hands.delegate = preferredDelegate;
 
     // Attempt to load MediaPipe Vision tasks dynamically if browser supports it
     try {
@@ -80,19 +101,21 @@ export class ModelManager {
         console.warn('Could not dynamically load @mediapipe/tasks-vision:', err);
         return null;
       });
+      this.cachedVisionTasks = visionTasks;
 
       if (visionTasks && typeof window !== 'undefined') {
         const { FilesetResolver, FaceLandmarker, PoseLandmarker, HandLandmarker } = visionTasks;
         
         try {
           const fileset = await FilesetResolver.forVisionTasks(FocusConfig.wasmBaseUrl);
+          this.cachedFileset = fileset;
 
           // Face Landmarker
           try {
             this.faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
               baseOptions: {
                 modelAssetPath: FocusConfig.faceModelUrl,
-                delegate: capabilities.hasWebGPU ? 'GPU' : 'CPU'
+                delegate: this.detectorHealth.face.delegate
               },
               runningMode: 'IMAGE',
               numFaces: 1,
@@ -100,9 +123,27 @@ export class ModelManager {
               outputFacialTransformationMatrixes: true
             });
             this.updateStatus('face', 'ready');
+            this.detectorHealth.face.consecutiveFailures = 0;
           } catch (e: any) {
-            console.warn('FaceLandmarker load fallback:', e?.message || e);
-            this.updateStatus('face', 'fallback');
+            console.warn('FaceLandmarker GPU load fallback to CPU:', e?.message || e);
+            try {
+              this.detectorHealth.face.delegate = 'CPU';
+              this.faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
+                baseOptions: {
+                  modelAssetPath: FocusConfig.faceModelUrl,
+                  delegate: 'CPU'
+                },
+                runningMode: 'IMAGE',
+                numFaces: 1,
+                outputFaceBlendshapes: true,
+                outputFacialTransformationMatrixes: true
+              });
+              this.updateStatus('face', 'ready');
+              this.detectorHealth.face.consecutiveFailures = 0;
+            } catch (cpuErr: any) {
+              console.warn('FaceLandmarker CPU load fallback:', cpuErr?.message || cpuErr);
+              this.updateStatus('face', 'fallback');
+            }
           }
 
           // Pose Landmarker
@@ -110,12 +151,13 @@ export class ModelManager {
             this.poseLandmarker = await PoseLandmarker.createFromOptions(fileset, {
               baseOptions: {
                 modelAssetPath: FocusConfig.poseModelUrl,
-                delegate: capabilities.hasWebGPU ? 'GPU' : 'CPU'
+                delegate: this.detectorHealth.pose.delegate
               },
               runningMode: 'IMAGE',
               numPoses: 1
             });
             this.updateStatus('pose', 'ready');
+            this.detectorHealth.pose.consecutiveFailures = 0;
           } catch (e: any) {
             console.warn('PoseLandmarker load fallback:', e?.message || e);
             this.updateStatus('pose', 'fallback');
@@ -126,12 +168,13 @@ export class ModelManager {
             this.handLandmarker = await HandLandmarker.createFromOptions(fileset, {
               baseOptions: {
                 modelAssetPath: FocusConfig.handModelUrl,
-                delegate: capabilities.hasWebGPU ? 'GPU' : 'CPU'
+                delegate: this.detectorHealth.hands.delegate
               },
               runningMode: 'IMAGE',
               numHands: 2
             });
             this.updateStatus('hands', 'ready');
+            this.detectorHealth.hands.consecutiveFailures = 0;
           } catch (e: any) {
             console.warn('HandLandmarker load fallback:', e?.message || e);
             this.updateStatus('hands', 'fallback');
@@ -219,7 +262,7 @@ export class ModelManager {
 
           const gazeScore = Math.max(0.4, 1.0 - (Math.abs(yaw) / 60) * 0.5 - (Math.max(0, pitch - 15) / 40) * 0.5);
 
-          this.recordInferenceSuccess(performance.now() - t0);
+          this.recordInferenceSuccess(performance.now() - t0, 'face');
           return {
             detected: true,
             confidence: 0.94,
@@ -245,13 +288,14 @@ export class ModelManager {
         }
       }
     } catch (err) {
-      this.recordInferenceFailure();
+      this.recordInferenceFailure('face');
     }
 
     return this.fallbackFaceDetection(source);
   }
 
   async detectPose(source: HTMLVideoElement | HTMLCanvasElement): Promise<PoseLandmarkResult> {
+    const t0 = performance.now();
     try {
       if (this.poseLandmarker && this.statusMap.pose === 'ready') {
         const result = this.poseLandmarker.detect(source);
@@ -264,6 +308,7 @@ export class ModelManager {
             const centerY = (leftShoulder.y + rightShoulder.y) / 2;
             const inStudyZone = centerX >= 0.2 && centerX <= 0.8 && centerY <= 0.85;
 
+            this.recordInferenceSuccess(performance.now() - t0, 'pose');
             return {
               detected: true,
               confidence: Math.min(0.96, (leftShoulder.visibility + rightShoulder.visibility) / 2),
@@ -275,7 +320,7 @@ export class ModelManager {
         }
       }
     } catch {
-      // Fallback
+      this.recordInferenceFailure('pose');
     }
 
     return {
@@ -287,6 +332,7 @@ export class ModelManager {
   }
 
   async detectHands(source: HTMLVideoElement | HTMLCanvasElement): Promise<HandLandmarkResult> {
+    const t0 = performance.now();
     try {
       if (this.handLandmarker && this.statusMap.hands === 'ready') {
         const result = this.handLandmarker.detect(source);
@@ -311,6 +357,7 @@ export class ModelManager {
           // Check if hands are in desk area (y > 45%)
           const inDeskArea = bboxes.some(b => (b.y + b.height / 2) > 45);
 
+          this.recordInferenceSuccess(performance.now() - t0, 'hands');
           return {
             detected: true,
             confidence: 0.90,
@@ -323,7 +370,7 @@ export class ModelManager {
         }
       }
     } catch {
-      // Fallback
+      this.recordInferenceFailure('hands');
     }
 
     return {
@@ -395,8 +442,9 @@ export class ModelManager {
           });
         }
       }
+      this.recordInferenceSuccess(performance.now() - t0, 'object');
     } catch {
-      // Fallback
+      this.recordInferenceFailure('object');
     }
 
     const latency = performance.now() - t0;
@@ -422,13 +470,166 @@ export class ModelManager {
     };
   }
 
-  private recordInferenceSuccess(latency: number) {
+  private recordInferenceSuccess(latency: number, detector?: 'face' | 'pose' | 'hands' | 'object') {
     this.totalInferences++;
     this.lastInferenceLatency = latency;
+    if (detector) {
+      this.detectorHealth[detector].consecutiveFailures = 0;
+      this.detectorHealth[detector].lastInferenceTime = Date.now();
+    }
   }
 
-  private recordInferenceFailure() {
+  private recordInferenceFailure(detector?: 'face' | 'pose' | 'hands' | 'object') {
     this.failedInferences++;
+    if (detector) {
+      this.detectorHealth[detector].consecutiveFailures++;
+    }
+  }
+
+  async restartDetector(name: 'face' | 'pose' | 'hands' | 'object'): Promise<boolean> {
+    console.log(`ModelManager: Restarting detector "${name}"...`);
+    this.updateStatus(name, 'loading');
+
+    try {
+      if (name === 'object') {
+        this.detectorHealth.object.consecutiveFailures = 0;
+        this.updateStatus('object', 'ready');
+        return true;
+      }
+
+      if (!this.cachedVisionTasks && typeof window !== 'undefined') {
+        this.cachedVisionTasks = await import('@mediapipe/tasks-vision').catch(err => {
+          console.warn('restartDetector: Could not load @mediapipe/tasks-vision:', err);
+          return null;
+        });
+      }
+
+      if (!this.cachedVisionTasks) {
+        this.updateStatus(name, 'fallback');
+        return false;
+      }
+
+      const { FilesetResolver, FaceLandmarker, PoseLandmarker, HandLandmarker } = this.cachedVisionTasks;
+      if (!this.cachedFileset) {
+        this.cachedFileset = await FilesetResolver.forVisionTasks(FocusConfig.wasmBaseUrl);
+      }
+
+      const fileset = this.cachedFileset;
+
+      if (name === 'face') {
+        try {
+          if (this.faceLandmarker?.close) {
+            this.faceLandmarker.close();
+          }
+        } catch {}
+        this.faceLandmarker = null;
+
+        // If it failed previously on GPU, try CPU directly
+        const targetDelegate = this.detectorHealth.face.consecutiveFailures > 2 ? 'CPU' : this.detectorHealth.face.delegate;
+        try {
+          this.faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
+            baseOptions: {
+              modelAssetPath: FocusConfig.faceModelUrl,
+              delegate: targetDelegate
+            },
+            runningMode: 'IMAGE',
+            numFaces: 1,
+            outputFaceBlendshapes: true,
+            outputFacialTransformationMatrixes: true
+          });
+          this.detectorHealth.face.delegate = targetDelegate;
+          this.detectorHealth.face.consecutiveFailures = 0;
+          this.updateStatus('face', 'ready');
+          return true;
+        } catch (e) {
+          console.warn('restartDetector face retry with CPU:', e);
+          try {
+            this.faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
+              baseOptions: {
+                modelAssetPath: FocusConfig.faceModelUrl,
+                delegate: 'CPU'
+              },
+              runningMode: 'IMAGE',
+              numFaces: 1,
+              outputFaceBlendshapes: true,
+              outputFacialTransformationMatrixes: true
+            });
+            this.detectorHealth.face.delegate = 'CPU';
+            this.detectorHealth.face.consecutiveFailures = 0;
+            this.updateStatus('face', 'ready');
+            return true;
+          } catch (cpuErr) {
+            this.updateStatus('face', 'fallback');
+            return false;
+          }
+        }
+      }
+
+      if (name === 'pose') {
+        try {
+          if (this.poseLandmarker?.close) {
+            this.poseLandmarker.close();
+          }
+        } catch {}
+        this.poseLandmarker = null;
+        try {
+          this.poseLandmarker = await PoseLandmarker.createFromOptions(fileset, {
+            baseOptions: {
+              modelAssetPath: FocusConfig.poseModelUrl,
+              delegate: 'CPU'
+            },
+            runningMode: 'IMAGE',
+            numPoses: 1
+          });
+          this.detectorHealth.pose.consecutiveFailures = 0;
+          this.updateStatus('pose', 'ready');
+          return true;
+        } catch (e) {
+          this.updateStatus('pose', 'fallback');
+          return false;
+        }
+      }
+
+      if (name === 'hands') {
+        try {
+          if (this.handLandmarker?.close) {
+            this.handLandmarker.close();
+          }
+        } catch {}
+        this.handLandmarker = null;
+        try {
+          this.handLandmarker = await HandLandmarker.createFromOptions(fileset, {
+            baseOptions: {
+              modelAssetPath: FocusConfig.handModelUrl,
+              delegate: 'CPU'
+            },
+            runningMode: 'IMAGE',
+            numHands: 2
+          });
+          this.detectorHealth.hands.consecutiveFailures = 0;
+          this.updateStatus('hands', 'ready');
+          return true;
+        } catch (e) {
+          this.updateStatus('hands', 'fallback');
+          return false;
+        }
+      }
+    } catch (err) {
+      console.warn(`restartDetector "${name}" error:`, err);
+      this.updateStatus(name, 'fallback');
+      return false;
+    }
+
+    return false;
+  }
+
+  getDetectorHealth(): Record<'face' | 'pose' | 'hands' | 'object', DetectorHealth> {
+    return {
+      face: { ...this.detectorHealth.face, status: this.statusMap.face },
+      pose: { ...this.detectorHealth.pose, status: this.statusMap.pose },
+      hands: { ...this.detectorHealth.hands, status: this.statusMap.hands },
+      object: { ...this.detectorHealth.object, status: this.statusMap.object }
+    };
   }
 
   getStatus(): ModelStatusMap {

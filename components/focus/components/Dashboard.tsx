@@ -77,6 +77,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   settings
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings>(() => settings || StorageService.getSettings());
 
   useEffect(() => {
@@ -87,6 +88,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [visionLive, setVisionLive] = useState<VisionData | null>(null);
+  const [pipelineHealth, setPipelineHealth] = useState(() => visionEngine.getPipelineHealth());
   const [showTooltip, setShowTooltip] = useState(false);
   const [showSignalBreakdown, setShowSignalBreakdown] = useState(false);
   const [showDiagnosticHUD, setShowDiagnosticHUD] = useState(false);
@@ -95,6 +97,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     return focusSessionController.subscribe(setSessionCtrlState);
   }, []);
+
+  useEffect(() => {
+    return visionEngine.subscribePipelineHealth(setPipelineHealth);
+  }, []);
+
+  const videoCallbackRef = (node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    setVideoElement(node);
+    if (node && isCameraActive) {
+      visionEngine.attachPreview(node);
+    }
+  };
+
+  useEffect(() => {
+    if (videoElement && isCameraActive) {
+      visionEngine.attachPreview(videoElement);
+    }
+  }, [videoElement, isCameraActive]);
 
   // Target calculations
   const totalTargetSec = todayTargetHours * 3600;
@@ -112,7 +132,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setIsCameraActive(false);
     } else {
       setCameraError(null);
-      const res = await visionEngine.start();
+      const res = await visionEngine.start(userSettings.selectedCameraId);
       if (res.success) {
         setIsCameraActive(true);
         if (videoRef.current) {
@@ -981,9 +1001,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
           {/* Video Viewport with Vision HUD */}
           <div className="relative aspect-4/3 w-full bg-zinc-950 rounded-2xl overflow-hidden border border-zinc-800 flex items-center justify-center">
+            {/* Auto-Recovery & Degraded Non-Blocking Badges */}
+            {pipelineHealth.status === 'RECOVERING' && (
+              <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/25 border border-amber-500/50 text-amber-200 text-xs font-semibold backdrop-blur-md animate-pulse">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                <span>AI Monitoring Recovering ({pipelineHealth.recoveryAttempts}/3)...</span>
+              </div>
+            )}
+            {pipelineHealth.status === 'DEGRADED' && (
+              <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium backdrop-blur-md">
+                <AlertTriangle className="w-3 h-3 text-amber-400" />
+                <span>Degraded Camera Signal</span>
+              </div>
+            )}
+
             {/* Real Webcam Video Stream */}
             <video
-              ref={videoRef}
+              ref={videoCallbackRef}
               playsInline
               muted
               className={`w-full h-full object-cover scale-x-[-1] transition-opacity duration-300 ${

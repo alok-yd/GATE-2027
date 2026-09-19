@@ -2,6 +2,16 @@ import { FocusConfig } from '../../constants/FocusConfig';
 import { modelManager, FaceLandmarkResult, PoseLandmarkResult, HandLandmarkResult, ObjectDetectionResult } from './ModelManager';
 import { objectTracker } from './ObjectTracker';
 import { TrackedObject } from '../../types';
+import { visionWatchdog } from '../VisionWatchdog';
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operationName: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Inference timeout (${timeoutMs}ms) for ${operationName}`)), timeoutMs)
+    )
+  ]);
+}
 
 export interface PerceptionFrame {
   timestamp: number;
@@ -20,6 +30,7 @@ export type PerceptionCallback = (frame: PerceptionFrame) => void;
 
 export class FrameScheduler {
   private isRunning: boolean = false;
+  private currentGeneration: number = 0;
   private animationFrameId: number | null = null;
   private worker: Worker | null = null;
   private intervalId: any = null;
@@ -36,6 +47,7 @@ export class FrameScheduler {
   private lastPoseTime: number = 0;
   private lastHandsTime: number = 0;
   private lastObjectTime: number = 0;
+  private lastDispatchTime: number = 0;
 
   // Latest cached results
   private latestFace: FaceLandmarkResult = {
@@ -77,14 +89,19 @@ export class FrameScheduler {
   start(videoSource: HTMLVideoElement | HTMLCanvasElement): void {
     if (this.isRunning) return;
     this.isRunning = true;
+    this.currentGeneration++;
+    const gen = this.currentGeneration;
+
     this.frameCount = 0;
     this.droppedFrames = 0;
     this.fpsWindowStart = Date.now();
+    this.lastDispatchTime = 0;
 
     const loop = () => {
-      if (!this.isRunning) return;
+      if (!this.isRunning || this.currentGeneration !== gen) return;
 
       const now = Date.now();
+      visionWatchdog.recordWorkerTick(now);
 
       // Track FPS window every 1 second
       if (now - this.fpsWindowStart >= 1000) {
@@ -98,19 +115,23 @@ export class FrameScheduler {
       const handsInterval = 1000 / FocusConfig.handsFps;
       const objectInterval = 1000 / FocusConfig.objectFps;
 
-      // 1. Face Inference (with backpressure)
+      // 1. Face Inference (with timeout and isolated error recovery)
       if (now - this.lastFaceTime >= faceInterval) {
         if (!this.isFaceRunning) {
           this.isFaceRunning = true;
           this.lastFaceTime = now;
-          modelManager.detectFace(videoSource).then(res => {
-            this.latestFace = res;
-            this.isFaceRunning = false;
-            this.frameCount++;
-            this.dispatchPerception(now);
-          }).catch(() => {
-            this.isFaceRunning = false;
-          });
+          withTimeout(modelManager.detectFace(videoSource), 2500, 'detectFace')
+            .then(res => {
+              if (this.currentGeneration !== gen || !this.isRunning) return;
+              this.latestFace = res;
+              this.isFaceRunning = false;
+              this.frameCount++;
+              visionWatchdog.recordInference(now);
+            })
+            .catch(err => {
+              console.warn('FrameScheduler: Face inference stall/error:', err?.message || err);
+              this.isFaceRunning = false;
+            });
         } else {
           this.droppedFrames++;
         }
@@ -121,12 +142,16 @@ export class FrameScheduler {
         if (!this.isPoseRunning) {
           this.isPoseRunning = true;
           this.lastPoseTime = now;
-          modelManager.detectPose(videoSource).then(res => {
-            this.latestPose = res;
-            this.isPoseRunning = false;
-          }).catch(() => {
-            this.isPoseRunning = false;
-          });
+          withTimeout(modelManager.detectPose(videoSource), 2500, 'detectPose')
+            .then(res => {
+              if (this.currentGeneration !== gen || !this.isRunning) return;
+              this.latestPose = res;
+              this.isPoseRunning = false;
+            })
+            .catch(err => {
+              console.warn('FrameScheduler: Pose inference stall/error:', err?.message || err);
+              this.isPoseRunning = false;
+            });
         } else {
           this.droppedFrames++;
         }
@@ -137,12 +162,16 @@ export class FrameScheduler {
         if (!this.isHandsRunning) {
           this.isHandsRunning = true;
           this.lastHandsTime = now;
-          modelManager.detectHands(videoSource).then(res => {
-            this.latestHands = res;
-            this.isHandsRunning = false;
-          }).catch(() => {
-            this.isHandsRunning = false;
-          });
+          withTimeout(modelManager.detectHands(videoSource), 2500, 'detectHands')
+            .then(res => {
+              if (this.currentGeneration !== gen || !this.isRunning) return;
+              this.latestHands = res;
+              this.isHandsRunning = false;
+            })
+            .catch(err => {
+              console.warn('FrameScheduler: Hands inference stall/error:', err?.message || err);
+              this.isHandsRunning = false;
+            });
         } else {
           this.droppedFrames++;
         }
@@ -153,25 +182,35 @@ export class FrameScheduler {
         if (!this.isObjectRunning) {
           this.isObjectRunning = true;
           this.lastObjectTime = now;
-          modelManager.detectObjects(videoSource).then((res: ObjectDetectionResult) => {
-            const faceCentroid = this.latestFace.bbox ? {
-              x: this.latestFace.bbox.x + this.latestFace.bbox.width / 2,
-              y: this.latestFace.bbox.y + this.latestFace.bbox.height / 2
-            } : undefined;
+          withTimeout(modelManager.detectObjects(videoSource), 2500, 'detectObjects')
+            .then((res: ObjectDetectionResult) => {
+              if (this.currentGeneration !== gen || !this.isRunning) return;
+              const faceCentroid = this.latestFace.bbox ? {
+                x: this.latestFace.bbox.x + this.latestFace.bbox.width / 2,
+                y: this.latestFace.bbox.y + this.latestFace.bbox.height / 2
+              } : undefined;
 
-            this.latestObjects = objectTracker.update(
-              res.detections,
-              this.latestHands.bboxes,
-              faceCentroid,
-              now
-            );
-            this.isObjectRunning = false;
-          }).catch(() => {
-            this.isObjectRunning = false;
-          });
+              this.latestObjects = objectTracker.update(
+                res.detections,
+                this.latestHands.bboxes,
+                faceCentroid,
+                now
+              );
+              this.isObjectRunning = false;
+            })
+            .catch(err => {
+              console.warn('FrameScheduler: Object inference stall/error:', err?.message || err);
+              this.isObjectRunning = false;
+            });
         } else {
           this.droppedFrames++;
         }
+      }
+
+      // Decoupled Perception Dispatch: emit on regular ~100ms interval (10 FPS) regardless of face speed
+      if (now - this.lastDispatchTime >= 100) {
+        this.lastDispatchTime = now;
+        this.dispatchPerception(now);
       }
 
     };
@@ -235,6 +274,11 @@ export class FrameScheduler {
 
   stop(): void {
     this.isRunning = false;
+    this.currentGeneration++;
+    this.isFaceRunning = false;
+    this.isPoseRunning = false;
+    this.isHandsRunning = false;
+    this.isObjectRunning = false;
     this.stopBackgroundTicker();
   }
 
