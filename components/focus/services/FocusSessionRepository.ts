@@ -8,7 +8,17 @@ const STORAGE_KEYS = {
   LEGACY_ACTIVE: 'ai_focus_timer_active_session_v1',
 };
 
-function getStorage(): Storage | null {
+const memoryStore = new Map<string, string>();
+const inMemoryStorage: Storage = {
+  getItem: (k: string) => memoryStore.get(k) || null,
+  setItem: (k: string, v: string) => { memoryStore.set(k, v); },
+  removeItem: (k: string) => { memoryStore.delete(k); },
+  clear: () => { memoryStore.clear(); },
+  key: (i: number) => Array.from(memoryStore.keys())[i] || null,
+  get length() { return memoryStore.size; }
+};
+
+function getStorage(): Storage {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       return window.localStorage;
@@ -17,7 +27,7 @@ function getStorage(): Storage | null {
       return localStorage;
     }
   } catch {}
-  return null;
+  return inMemoryStorage;
 }
 
 export class FocusSessionRepository {

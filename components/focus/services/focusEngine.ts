@@ -35,6 +35,8 @@ import { personPresenceEngine } from './focus/PersonPresenceEngine';
 import { conflictResolver } from './focus/ConflictResolver';
 import { PersonPresenceState, SignalConflictLog } from '../types';
 import { focusSessionController, shouldTimerRun } from './FocusSessionController';
+import { visionEngine } from '../vision/visionEngine';
+import { activityMonitor } from './activityMonitor';
 
 export interface FocusEngineOutput {
   state: FocusState;
@@ -542,6 +544,16 @@ export class FocusEngine {
 }
 
 export const focusEngine = new FocusEngine();
+
+// Permanent global sensory pipeline wiring:
+// Guarantees camera and activity feeds continue processing regardless of route changes or window state.
+visionEngine.subscribe((data) => {
+  focusEngine.updateVision(data);
+});
+
+activityMonitor.subscribe((data) => {
+  focusEngine.updateActivity(data);
+});
 
 /**
  * Authoritative Focus Verification Check (Rules 1-5, Section 17 & 58)

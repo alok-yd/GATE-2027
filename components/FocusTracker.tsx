@@ -83,17 +83,9 @@ export const FocusTracker: React.FC = () => {
     return normalized.filter(s => new Date(s.startTime).toISOString().slice(0, 10) === todayStr);
   }, [sessions]);
 
-  // Initialize Activity Monitor, Vision Listeners on Mount
+  // Initialize Activity Monitor and UI Listeners on Mount
   useEffect(() => {
     activityMonitor.start();
-
-    const unsubActivity = activityMonitor.subscribe((data) => {
-      focusEngine.updateActivity(data);
-    });
-
-    const unsubVision = visionEngine.subscribe((data) => {
-      focusEngine.updateVision(data);
-    });
 
     const unsubFailure = visionEngine.subscribeFailure((reason) => {
       setCameraFailureReason(reason);
@@ -121,8 +113,6 @@ export const FocusTracker: React.FC = () => {
       if (!focusSessionController.getState().isActive) {
         activityMonitor.stop();
       }
-      unsubActivity();
-      unsubVision();
       unsubFailure();
       unsubFocus();
       unsubTimer();

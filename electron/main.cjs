@@ -1,10 +1,11 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, powerSaveBlocker } = require('electron');
 const path = require('path');
 
 let mainWindow = null;
 let tray = null;
 let isFocusActive = false;
 let currentFocusState = 'IDLE';
+let powerSaveBlockerId = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -22,6 +23,11 @@ function createWindow() {
       webSecurity: true
     }
   });
+
+  // Explicitly disable background throttling on webContents
+  if (mainWindow.webContents && mainWindow.webContents.setBackgroundThrottling) {
+    mainWindow.webContents.setBackgroundThrottling(false);
+  }
 
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
   if (app.isPackaged) {
@@ -98,6 +104,7 @@ function updateTrayMenu() {
   ]);
 
   tray.setContextMenu(contextMenu);
+  tray.setToolTip(`GATE 2027 Prep Tracker — Focus: ${currentFocusState}`);
 }
 
 app.whenReady().then(() => {
@@ -107,7 +114,7 @@ app.whenReady().then(() => {
     // Setup tray
     const iconPath = path.join(__dirname, '../public/vite.svg');
     tray = new Tray(iconPath);
-    tray.setToolTip('GATE 2027 Prep Tracker — AI Focus');
+    tray.setToolTip('GATE 2027 Prep Tracker — AI Focus: IDLE');
     updateTrayMenu();
 
     tray.on('double-click', () => {
@@ -126,13 +133,50 @@ app.whenReady().then(() => {
 });
 
 ipcMain.on('focus:status-update', (_event, data) => {
+  const wasActive = isFocusActive;
   isFocusActive = Boolean(data?.isActive);
-  currentFocusState = data?.highLevelState || 'IDLE';
+  currentFocusState = data?.highLevelState || (isFocusActive ? 'ACTIVE' : 'IDLE');
+
+  // Prevent OS from sleeping / suspending while AI focus session is actively running
+  if (isFocusActive && powerSaveBlockerId === null) {
+    try {
+      powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+      console.log('PowerSaveBlocker started (ID:', powerSaveBlockerId, ')');
+    } catch (e) {
+      console.warn('Could not start powerSaveBlocker:', e?.message || e);
+    }
+  } else if (!isFocusActive && powerSaveBlockerId !== null) {
+    try {
+      if (powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+        powerSaveBlocker.stop(powerSaveBlockerId);
+        console.log('PowerSaveBlocker stopped (ID:', powerSaveBlockerId, ')');
+      }
+    } catch (e) {
+      console.warn('Could not stop powerSaveBlocker:', e?.message || e);
+    }
+    powerSaveBlockerId = null;
+  }
+
   updateTrayMenu();
+});
+
+app.on('before-quit', () => {
+  if (powerSaveBlockerId !== null) {
+    try {
+      powerSaveBlocker.stop(powerSaveBlockerId);
+    } catch {}
+    powerSaveBlockerId = null;
+  }
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' && !isFocusActive) {
+    if (powerSaveBlockerId !== null) {
+      try {
+        powerSaveBlocker.stop(powerSaveBlockerId);
+      } catch {}
+      powerSaveBlockerId = null;
+    }
     app.quit();
   }
 });

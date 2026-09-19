@@ -239,6 +239,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 className="w-4 h-4 rounded text-indigo-600 bg-zinc-950 border-zinc-700"
               />
             </div>
+
+            <div className="flex items-center justify-between py-2 border-t border-zinc-800">
+              <div>
+                <span className="text-zinc-200 font-medium">Continue Focus Monitoring in Background</span>
+                <p className="text-[11px] text-zinc-500">
+                  Keep AI workstation monitoring, presence detection, and verified timer running when switching apps or minimizing window
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.continueMonitoringInBackground ?? true}
+                onChange={(e) => handleChange({ continueMonitoringInBackground: e.target.checked })}
+                className="w-4 h-4 rounded text-indigo-600 bg-zinc-950 border-zinc-700"
+              />
+            </div>
           </div>
         </div>
       )}

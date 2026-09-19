@@ -137,7 +137,7 @@ export class FocusSessionController {
       (window as any).electronAPI.onToggleFocus((action: string) => {
         if (action === 'pause') this.pauseSession();
         else if (action === 'resume') this.resumeSession();
-        else if (action === 'stop') this.stopSession();
+        else if (action === 'stop') this.stopSession(true);
       });
     }
   }

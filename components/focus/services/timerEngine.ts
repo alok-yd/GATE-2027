@@ -382,6 +382,7 @@ export class TimerEngine {
       }
 
       this.focusEngine.setState('IDLE', 'Session ended');
+      focusSessionController.stopSession(false);
       this.activeSessionId = null;
       this.emitCurrentTick();
 

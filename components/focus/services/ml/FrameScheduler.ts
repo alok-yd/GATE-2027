@@ -21,6 +21,8 @@ export type PerceptionCallback = (frame: PerceptionFrame) => void;
 export class FrameScheduler {
   private isRunning: boolean = false;
   private animationFrameId: number | null = null;
+  private worker: Worker | null = null;
+  private intervalId: any = null;
   private listeners: Set<PerceptionCallback> = new Set();
 
   // Inference state flags for backpressure
@@ -172,26 +174,68 @@ export class FrameScheduler {
         }
       }
 
-      if (typeof requestAnimationFrame !== 'undefined') {
-        this.animationFrameId = requestAnimationFrame(loop);
-      } else {
-        setTimeout(loop, 40);
-      }
     };
 
-    if (typeof requestAnimationFrame !== 'undefined') {
-      this.animationFrameId = requestAnimationFrame(loop);
-    } else {
-      setTimeout(loop, 40);
+    this.startBackgroundTicker(loop);
+  }
+
+  private startBackgroundTicker(step: () => void): void {
+    this.stopBackgroundTicker();
+
+    if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+      try {
+        const workerScript = `
+          let id = null;
+          self.onmessage = function(e) {
+            if (e.data === 'start') {
+              if (id) clearInterval(id);
+              id = setInterval(function() {
+                self.postMessage('tick');
+              }, 30);
+            } else if (e.data === 'stop') {
+              if (id) {
+                clearInterval(id);
+                id = null;
+              }
+            }
+          };
+        `;
+        const blob = new Blob([workerScript], { type: 'application/javascript' });
+        this.worker = new Worker(URL.createObjectURL(blob));
+        this.worker.onmessage = () => {
+          step();
+        };
+        this.worker.postMessage('start');
+        return;
+      } catch (err) {
+        console.warn('FrameScheduler Web Worker fallback to setInterval:', err);
+      }
+    }
+
+    this.intervalId = setInterval(step, 30);
+  }
+
+  private stopBackgroundTicker(): void {
+    if (this.worker) {
+      try {
+        this.worker.postMessage('stop');
+        this.worker.terminate();
+      } catch {}
+      this.worker = null;
+    }
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    if (this.animationFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
     }
   }
 
   stop(): void {
     this.isRunning = false;
-    if (this.animationFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
+    this.stopBackgroundTicker();
   }
 
   subscribe(callback: PerceptionCallback): () => void {

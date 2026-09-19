@@ -13,6 +13,8 @@ export class VisionEngine {
   private canvasCtx: CanvasRenderingContext2D | null = null;
   private stream: MediaStream | null = null;
   private animationFrameId: number | null = null;
+  private loopWorker: Worker | null = null;
+  private loopIntervalId: any = null;
   private lastAnalysisTime: number = 0;
   private isRunning: boolean = false;
   private isSimulated: boolean = false;
@@ -35,10 +37,12 @@ export class VisionEngine {
   private consecutiveFrozenFrames: number = 0;
 
   constructor() {
-    this.canvasElement = document.createElement('canvas');
-    this.canvasElement.width = 160;
-    this.canvasElement.height = 120;
-    this.canvasCtx = this.canvasElement.getContext('2d', { willReadFrequently: true });
+    if (typeof document !== 'undefined') {
+      this.canvasElement = document.createElement('canvas');
+      this.canvasElement.width = 160;
+      this.canvasElement.height = 120;
+      this.canvasCtx = this.canvasElement.getContext('2d', { willReadFrequently: true });
+    }
   }
 
   async getAvailableCameras(): Promise<MediaDeviceInfo[]> {
@@ -128,18 +132,14 @@ export class VisionEngine {
     this.isSimulated = true;
     const intervalMs = 1000 / fps;
 
-    const frame = (now: number) => {
+    this.startBackgroundLoop(intervalMs, () => {
       if (!this.isRunning || !this.isSimulated) return;
-
-      if (now - this.lastAnalysisTime >= intervalMs) {
+      const now = Date.now();
+      if (now - this.lastAnalysisTime >= intervalMs * 0.85) {
         this.lastAnalysisTime = now;
         this.emitSimulatedFrame();
       }
-
-      this.animationFrameId = requestAnimationFrame(frame);
-    };
-
-    this.animationFrameId = requestAnimationFrame(frame);
+    });
   }
 
   private emitSimulatedFrame(): void {
@@ -185,10 +185,7 @@ export class VisionEngine {
     }
     frameScheduler.stop();
     this.latestPerception = null;
-    if (this.animationFrameId) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
+    this.stopBackgroundLoop();
     if (this.stream) {
       this.stream.getTracks().forEach(t => t.stop());
       this.stream = null;
@@ -236,18 +233,70 @@ export class VisionEngine {
   private loop(targetFps: number): void {
     const intervalMs = 1000 / targetFps;
 
-    const frame = (now: number) => {
+    this.startBackgroundLoop(intervalMs, () => {
       if (!this.isRunning) return;
-
-      if (now - this.lastAnalysisTime >= intervalMs) {
+      const now = Date.now();
+      if (now - this.lastAnalysisTime >= intervalMs * 0.85) {
         this.lastAnalysisTime = now;
         this.analyzeCurrentFrame();
       }
+    });
+  }
 
-      this.animationFrameId = requestAnimationFrame(frame);
-    };
+  private startBackgroundLoop(intervalMs: number, onTick: () => void): void {
+    this.stopBackgroundLoop();
 
-    this.animationFrameId = requestAnimationFrame(frame);
+    const tickRate = Math.max(20, Math.round(intervalMs));
+
+    if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+      try {
+        const workerScript = `
+          let id = null;
+          self.onmessage = function(e) {
+            if (e.data === 'start') {
+              if (id) clearInterval(id);
+              id = setInterval(function() {
+                self.postMessage('tick');
+              }, ${tickRate});
+            } else if (e.data === 'stop') {
+              if (id) {
+                clearInterval(id);
+                id = null;
+              }
+            }
+          };
+        `;
+        const blob = new Blob([workerScript], { type: 'application/javascript' });
+        this.loopWorker = new Worker(URL.createObjectURL(blob));
+        this.loopWorker.onmessage = () => {
+          onTick();
+        };
+        this.loopWorker.postMessage('start');
+        return;
+      } catch (err) {
+        console.warn('VisionEngine Web Worker fallback to setInterval:', err);
+      }
+    }
+
+    this.loopIntervalId = setInterval(onTick, intervalMs);
+  }
+
+  private stopBackgroundLoop(): void {
+    if (this.loopWorker) {
+      try {
+        this.loopWorker.postMessage('stop');
+        this.loopWorker.terminate();
+      } catch {}
+      this.loopWorker = null;
+    }
+    if (this.loopIntervalId !== null) {
+      clearInterval(this.loopIntervalId);
+      this.loopIntervalId = null;
+    }
+    if (this.animationFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
   }
 
   private analyzeCurrentFrame(): void {

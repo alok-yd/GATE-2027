@@ -468,6 +468,7 @@ export interface UserSettings {
   soundNotifications: boolean;
   desktopNotifications: boolean;
   minimizeToTrayOnClose: boolean;
+  continueMonitoringInBackground: boolean;
   startWithWindows: boolean;
   examName: string; // e.g. "GATE 2027"
   examDate: string; // ISO date

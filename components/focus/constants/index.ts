@@ -114,6 +114,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   soundNotifications: true,
   desktopNotifications: true,
   minimizeToTrayOnClose: true,
+  continueMonitoringInBackground: true,
   startWithWindows: false,
   examName: 'GATE 2027 CSE',
   examDate: '2027-02-06',
