@@ -37,16 +37,28 @@ export function formatDigitalClock(totalSeconds: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function getStorage(): Storage | null {
+class MemoryStorage implements Storage {
+  private store = new Map<string, string>();
+  get length(): number { return this.store.size; }
+  clear(): void { this.store.clear(); }
+  getItem(key: string): string | null { return this.store.get(key) ?? null; }
+  key(index: number): string | null { return Array.from(this.store.keys())[index] ?? null; }
+  removeItem(key: string): void { this.store.delete(key); }
+  setItem(key: string, value: string): void { this.store.set(key, String(value)); }
+}
+
+const memoryStorageFallback = new MemoryStorage();
+
+function getStorage(): Storage {
   try {
-    if (typeof window !== 'undefined' && window.localStorage) {
+    if (typeof window !== 'undefined' && window.localStorage && typeof window.localStorage.getItem === 'function' && typeof window.localStorage.setItem === 'function') {
       return window.localStorage;
     }
-    if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
+    if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function' && typeof localStorage.setItem === 'function') {
       return localStorage;
     }
   } catch {}
-  return null;
+  return memoryStorageFallback;
 }
 
 export class StorageService {
@@ -111,9 +123,9 @@ export class StorageService {
 
   static getSubjects(): SubjectItem[] {
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.SUBJECTS);
+      const raw = getStorage().getItem(STORAGE_KEYS.SUBJECTS);
       if (!raw) {
-        localStorage.setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(GATE_SUBJECTS));
+        getStorage().setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(GATE_SUBJECTS));
         return GATE_SUBJECTS;
       }
       return JSON.parse(raw);
@@ -131,16 +143,16 @@ export class StorageService {
       isGateSubject: false
     };
     subjects.push(newSubject);
-    localStorage.setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(subjects));
+    getStorage().setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(subjects));
     return newSubject;
   }
 
   static getSessions(): FocusSession[] {
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.SESSIONS);
+      const raw = getStorage().getItem(STORAGE_KEYS.SESSIONS);
       if (!raw) {
         const seeded = this.generateSampleSessions();
-        localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(seeded));
+        getStorage().setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(seeded));
         return seeded;
       }
       return JSON.parse(raw);
@@ -158,7 +170,7 @@ export class StorageService {
       } else {
         sessions.unshift(session);
       }
-      localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+      getStorage().setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
     } catch (e) {
       console.error('Failed to save session', e);
     }
@@ -167,7 +179,7 @@ export class StorageService {
   static deleteSession(sessionId: string): void {
     try {
       const sessions = this.getSessions().filter(s => s.id !== sessionId);
-      localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+      getStorage().setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
     } catch (e) {
       console.error('Failed to delete session', e);
     }
@@ -181,25 +193,26 @@ export class StorageService {
     } else {
       subjects.push(subject);
     }
-    localStorage.setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(subjects));
+    getStorage().setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(subjects));
   }
 
   static hasCompletedOnboarding(): boolean {
-    return localStorage.getItem('ai_focus_timer_onboarding_done') === 'true';
+    return getStorage().getItem('ai_focus_timer_onboarding_done') === 'true';
   }
 
   static setOnboardingComplete(): void {
-    localStorage.setItem('ai_focus_timer_onboarding_done', 'true');
+    getStorage().setItem('ai_focus_timer_onboarding_done', 'true');
   }
 
   static clearAll(): void {
     try {
-      localStorage.removeItem(STORAGE_KEYS.SESSIONS);
-      localStorage.removeItem(STORAGE_KEYS.TIMELINE);
-      localStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
-      localStorage.removeItem(STORAGE_KEYS.SUBJECTS);
-      localStorage.removeItem(STORAGE_KEYS.CALIBRATION);
-      localStorage.removeItem(STORAGE_KEYS.EVALUATION);
+      const storage = getStorage();
+      storage.removeItem(STORAGE_KEYS.SESSIONS);
+      storage.removeItem(STORAGE_KEYS.TIMELINE);
+      storage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
+      storage.removeItem(STORAGE_KEYS.SUBJECTS);
+      storage.removeItem(STORAGE_KEYS.CALIBRATION);
+      storage.removeItem(STORAGE_KEYS.EVALUATION);
     } catch {}
   }
 
@@ -298,11 +311,12 @@ export class StorageService {
 
   static saveTimelineEvents(events: FocusTimelineEvent[]): void {
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.TIMELINE);
+      const storage = getStorage();
+      const raw = storage.getItem(STORAGE_KEYS.TIMELINE);
       const existing: FocusTimelineEvent[] = raw ? JSON.parse(raw) : [];
       // Keep last 3000 timeline events to optimize storage
       const combined = [...existing, ...events].slice(-3000);
-      localStorage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(combined));
+      storage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(combined));
     } catch (e) {
       console.error('Failed to save timeline events', e);
     }
@@ -310,7 +324,7 @@ export class StorageService {
 
   static getTimelineEvents(): FocusTimelineEvent[] {
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.TIMELINE);
+      const raw = getStorage().getItem(STORAGE_KEYS.TIMELINE);
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
@@ -318,11 +332,12 @@ export class StorageService {
   }
 
   static clearAllData(): void {
-    localStorage.removeItem(STORAGE_KEYS.SESSIONS);
-    localStorage.removeItem(STORAGE_KEYS.TIMELINE);
-    localStorage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
-    localStorage.removeItem(STORAGE_KEYS.CALIBRATION);
-    localStorage.removeItem(STORAGE_KEYS.EVALUATION);
+    const storage = getStorage();
+    storage.removeItem(STORAGE_KEYS.SESSIONS);
+    storage.removeItem(STORAGE_KEYS.TIMELINE);
+    storage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
+    storage.removeItem(STORAGE_KEYS.CALIBRATION);
+    storage.removeItem(STORAGE_KEYS.EVALUATION);
   }
 
   static exportAsJSON(): string {
@@ -400,11 +415,12 @@ export class StorageService {
   static importFromJSON(jsonString: string): boolean {
     try {
       const parsed = JSON.parse(jsonString);
-      if (parsed.settings) localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed.settings));
-      if (parsed.calibration) localStorage.setItem(STORAGE_KEYS.CALIBRATION, JSON.stringify(parsed.calibration));
-      if (parsed.subjects) localStorage.setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(parsed.subjects));
-      if (parsed.sessions) localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(parsed.sessions));
-      if (parsed.timeline) localStorage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(parsed.timeline));
+      const storage = getStorage();
+      if (parsed.settings) storage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed.settings));
+      if (parsed.calibration) storage.setItem(STORAGE_KEYS.CALIBRATION, JSON.stringify(parsed.calibration));
+      if (parsed.subjects) storage.setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(parsed.subjects));
+      if (parsed.sessions) storage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(parsed.sessions));
+      if (parsed.timeline) storage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(parsed.timeline));
       return true;
     } catch (e) {
       console.error('Import failed', e);

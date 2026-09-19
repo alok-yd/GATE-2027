@@ -41,7 +41,7 @@ export type TimerTickCallback = (data: TimerTickData) => void;
 
 export class TimerEngine {
   private focusEngine: FocusEngine;
-  private intervalId: number | null = null;
+  private intervalId: any = null;
   private callbacks: Set<TimerTickCallback> = new Set();
 
   // Active Session State
@@ -160,7 +160,7 @@ export class TimerEngine {
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
     }
-    this.intervalId = window.setInterval(this.tick, 500);
+    this.intervalId = setInterval(this.tick, 500);
 
     soundFx.playFocusRestored();
     this.emitCurrentTick();

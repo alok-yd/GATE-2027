@@ -9,7 +9,7 @@ class ActivityMonitor {
   private isWindowFocused: boolean = true;
   private currentActiveApp: string = 'Visual Studio Code';
   private callbacks: Set<ActivityCallback> = new Set();
-  private intervalId: number | null = null;
+  private intervalId: any = null;
   private isTracking: boolean = false;
 
   start(): void {
@@ -17,29 +17,33 @@ class ActivityMonitor {
     this.isTracking = true;
 
     // Window focus/blur
-    window.addEventListener('focus', this.handleFocus);
-    window.addEventListener('blur', this.handleBlur);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', this.handleFocus);
+      window.addEventListener('blur', this.handleBlur);
 
-    // Keyboard activity: NEVER inspect or log event.key / characters! Strictly update timestamp.
-    window.addEventListener('keydown', this.handleKeyDown, { passive: true });
+      // Keyboard activity: NEVER inspect or log event.key / characters! Strictly update timestamp.
+      window.addEventListener('keydown', this.handleKeyDown, { passive: true });
 
-    // Mouse activity: track movement / clicks
-    window.addEventListener('mousemove', this.handleMouseMove, { passive: true });
-    window.addEventListener('mousedown', this.handleMouseDown, { passive: true });
+      // Mouse activity: track movement / clicks
+      window.addEventListener('mousemove', this.handleMouseMove, { passive: true });
+      window.addEventListener('mousedown', this.handleMouseDown, { passive: true });
+    }
 
     // Periodic evaluation at 1 Hz
-    this.intervalId = window.setInterval(() => {
+    this.intervalId = setInterval(() => {
       this.emitCurrentSnapshot();
     }, 1000);
   }
 
   stop(): void {
     this.isTracking = false;
-    window.removeEventListener('focus', this.handleFocus);
-    window.removeEventListener('blur', this.handleBlur);
-    window.removeEventListener('keydown', this.handleKeyDown);
-    window.removeEventListener('mousemove', this.handleMouseMove);
-    window.removeEventListener('mousedown', this.handleMouseDown);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('focus', this.handleFocus);
+      window.removeEventListener('blur', this.handleBlur);
+      window.removeEventListener('keydown', this.handleKeyDown);
+      window.removeEventListener('mousemove', this.handleMouseMove);
+      window.removeEventListener('mousedown', this.handleMouseDown);
+    }
 
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
