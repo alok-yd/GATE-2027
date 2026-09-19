@@ -13,6 +13,7 @@ import Revision from './components/Revision';
 import HealthTracker from './components/HealthTracker';
 import SpeakingDashboard from './components/SpeakingDashboard';
 import AINativeWorkbench from './components/AINativeWorkbench';
+import FocusTracker from './components/FocusTracker';
 
 const App: React.FC = () => {
   return (
@@ -21,6 +22,7 @@ const App: React.FC = () => {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/roadmap" element={<Timeline />} />
+          <Route path="/focus" element={<FocusTracker />} />
           <Route path="/tracker" element={<Tracker />} />
           <Route path="/pyq-tracker" element={<PYQExecutionTracker />} />
           <Route path="/strategy" element={<Strategies />} />

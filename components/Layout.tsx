@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { timerEngine, TimerTickData } from './focus/services/timerEngine';
 
 const iitBombayLogo = new URL('../iit-bombay-logo-circle.png', import.meta.url).href;
 
@@ -7,10 +8,24 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
+const formatTimerDuration = (seconds: number): string => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const location = useLocation();
   const [daysTo2027, setDaysTo2027] = useState<number>(0);
+  const [focusTick, setFocusTick] = useState<TimerTickData | null>(null);
+
+  useEffect(() => {
+    const unsub = timerEngine.subscribe((data) => {
+      setFocusTick(data);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const calculateDays = () => {
@@ -33,6 +48,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     )},
     { name: 'Roadmap', path: '/roadmap', icon: (
       <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 7m0 13V7"></path></svg>
+    )},
+    { name: 'AI Focus', path: '/focus', icon: (
+      <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
     )},
     { name: 'Lecture Tracker', path: '/tracker', icon: (
       <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
@@ -96,6 +114,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             >
               {item.icon}
               <span className="truncate">{item.name}</span>
+              {item.path === '/focus' && focusTick && focusTick.state !== 'IDLE' && (
+                <span className="ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full font-bold flex items-center gap-1.5 shadow-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>{formatTimerDuration(focusTick.focusedSeconds)}</span>
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -169,6 +193,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 >
                   {item.icon}
                   <span className="truncate">{item.name}</span>
+                  {item.path === '/focus' && focusTick && focusTick.state !== 'IDLE' && (
+                    <span className="ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full font-bold flex items-center gap-1.5 shadow-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>{formatTimerDuration(focusTick.focusedSeconds)}</span>
+                    </span>
+                  )}
                 </NavLink>
               ))}
               <div className="px-4 py-3 border-t border-slate-700 mt-2 space-y-3">
