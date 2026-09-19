@@ -6,6 +6,7 @@ import Timeline from './components/Timeline';
 import Tracker from './components/Tracker';
 import PYQExecutionTracker from './components/PYQExecutionTracker';
 import Strategies from './components/Strategies';
+import FocusTracker from './components/FocusTracker';
 import AIMentor from './components/AIMentor';
 import AIAnalyticsDashboard from './components/AIAnalyticsDashboard';
 import TestPerformance from './components/TestPerformance';
@@ -24,6 +25,7 @@ const App: React.FC = () => {
           <Route path="/tracker" element={<Tracker />} />
           <Route path="/pyq-tracker" element={<PYQExecutionTracker />} />
           <Route path="/strategy" element={<Strategies />} />
+          <Route path="/focus" element={<FocusTracker />} />
           <Route path="/health" element={<HealthTracker />} />
           <Route path="/speaking" element={<SpeakingDashboard />} />
           <Route path="/tests" element={<TestPerformance />} />
