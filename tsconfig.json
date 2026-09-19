@@ -29,7 +29,6 @@
   },
   "exclude": [
     "node_modules",
-    "dist",
-    "AI-focus-timer-v2-main"
+    "dist"
   ]
 }

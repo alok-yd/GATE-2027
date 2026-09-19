@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { focusSessionController } from './focus/services/FocusSessionController';
 
 const iitBombayLogo = new URL('../iit-bombay-logo-circle.png', import.meta.url).href;
 
@@ -12,18 +11,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const location = useLocation();
   const [daysTo2027, setDaysTo2027] = useState<number>(0);
-  const [focusSession, setFocusSession] = useState(() => focusSessionController.getState());
-
-  useEffect(() => {
-    return focusSessionController.subscribe(setFocusSession);
-  }, []);
-
-  const formatFocusDuration = (ms: number) => {
-    const totalSec = Math.floor(ms / 1000);
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  };
 
   useEffect(() => {
     const calculateDays = () => {
@@ -52,9 +39,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     )},
     { name: 'PYQ Execution Tracker', path: '/pyq-tracker', icon: (
       <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17h6M9 13h6m-6-4h6M5 5h14v14H5V5z"></path></svg>
-    )},
-    { name: 'AI Focus', path: '/focus', icon: (
-      <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
     )},
     { name: 'Health Tracker', path: '/health', icon: (
       <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 016.364 0L12 7.636l1.318-1.318a4.5 4.5 0 116.364 6.364L12 20.364l-7.682-7.682a4.5 4.5 0 010-6.364z"></path></svg>
@@ -112,28 +96,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             >
               {item.icon}
               <span className="truncate">{item.name}</span>
-              {item.path === '/focus' && focusSession.isActive && (
-                <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full font-bold flex items-center gap-1.5 shadow-xs ${
-                  focusSession.gate.highLevelState === 'ACTIVE'
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                    : focusSession.gate.highLevelState === 'AWAY'
-                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                    : focusSession.gate.highLevelState === 'DEVICE_IN_USE'
-                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                    : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    focusSession.gate.highLevelState === 'ACTIVE'
-                      ? 'bg-emerald-400 animate-pulse'
-                      : focusSession.gate.highLevelState === 'AWAY'
-                      ? 'bg-amber-400'
-                      : focusSession.gate.highLevelState === 'DEVICE_IN_USE'
-                      ? 'bg-rose-400'
-                      : 'bg-zinc-400'
-                  }`} />
-                  <span>{formatFocusDuration(focusSession.accumulatedFocusedMs)}</span>
-                </span>
-              )}
             </NavLink>
           ))}
         </nav>
@@ -207,28 +169,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 >
                   {item.icon}
                   <span className="truncate">{item.name}</span>
-                  {item.path === '/focus' && focusSession.isActive && (
-                    <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full font-bold flex items-center gap-1.5 shadow-xs ${
-                      focusSession.gate.highLevelState === 'ACTIVE'
-                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                        : focusSession.gate.highLevelState === 'AWAY'
-                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                        : focusSession.gate.highLevelState === 'DEVICE_IN_USE'
-                        ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                        : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${
-                        focusSession.gate.highLevelState === 'ACTIVE'
-                          ? 'bg-emerald-400 animate-pulse'
-                          : focusSession.gate.highLevelState === 'AWAY'
-                          ? 'bg-amber-400'
-                          : focusSession.gate.highLevelState === 'DEVICE_IN_USE'
-                          ? 'bg-rose-400'
-                          : 'bg-zinc-400'
-                      }`} />
-                      <span>{formatFocusDuration(focusSession.accumulatedFocusedMs)}</span>
-                    </span>
-                  )}
                 </NavLink>
               ))}
               <div className="px-4 py-3 border-t border-slate-700 mt-2 space-y-3">
