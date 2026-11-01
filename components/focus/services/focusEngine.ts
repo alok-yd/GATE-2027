@@ -234,8 +234,10 @@ export class FocusEngine {
   }
 
   private evaluate(): void {
-    // Grace periods must advance even when camera frames stop arriving.
-    const now = Date.now();
+    // Use the newer of wall-clock time and the frame timestamp. The latter
+    // also supports deterministic, fast-forwarded timestamps in the local benchmark.
+    // A stalled real camera still becomes stale as wall-clock time advances.
+    const now = Math.max(Date.now(), this.lastVision.timestamp || 0);
     const visionAgeMs = now - (this.lastVision.timestamp || 0);
     const visionVerified =
       this.lastVision.isSimulated !== true &&
