@@ -1038,10 +1038,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 )}
 
                 {/* Top Telemetry */}
-                <div className="flex justify-between items-start text-[10px] font-mono text-zinc-300 drop-shadow-md">
+                <div className="flex justify-between items-start gap-1 text-[10px] font-mono text-zinc-300 drop-shadow-md">
                   <div className="bg-zinc-950/80 backdrop-blur-xs px-2 py-1 rounded border border-zinc-800">
                     Yaw: <span className={Math.abs(visionLive.headYaw) > 20 ? 'text-amber-400' : 'text-emerald-400'}>{visionLive.headYaw}°</span> |
                     Pitch: <span className={visionLive.isLookingDown ? 'text-teal-400 font-bold' : 'text-zinc-200'}>{visionLive.headPitch}°</span>
+                  </div>
+                  <div className={`bg-zinc-950/80 backdrop-blur-xs px-2 py-1 rounded border ${visionLive.facePresent ? 'border-emerald-700 text-emerald-300' : 'border-rose-700 text-rose-300'}`}>
+                    Face: {visionLive.facePresent ? 'DETECTED' : 'NOT DETECTED'} · {visionLive.faceCount ?? 0}
                   </div>
                   <div className="bg-zinc-950/80 backdrop-blur-xs px-2 py-1 rounded border border-zinc-800">
                     Desk: <span className={visionLive.handActivity ? 'text-emerald-400 font-bold' : 'text-zinc-400'}>{visionLive.handActivity ? 'Writing' : 'Stable'}</span>
