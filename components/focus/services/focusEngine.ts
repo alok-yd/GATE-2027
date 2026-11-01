@@ -209,6 +209,14 @@ export class FocusEngine {
 
   setState(newState: FocusState, customReason?: string): void {
     const now = Date.now();
+
+    if (customReason === 'Session initiated' || newState === 'UNVERIFIED' || newState === 'IDLE') {
+      this.sleepAnalyzer.reset();
+      this.conversationAnalyzer.reset();
+      this.presenceEngine.reset();
+      this.focusStateMachine.reset();
+    }
+
     if (customReason === 'User paused session') {
       this.manualPauseRequested = true;
     } else if (customReason === 'User resumed session' || newState === 'IDLE') {
@@ -347,6 +355,13 @@ export class FocusEngine {
     );
 
     if (smResult.hasStateChanged) {
+      if (smResult.nextState === 'UNVERIFIED') {
+        this.sleepAnalyzer.reset();
+        this.conversationAnalyzer.reset();
+        this.presenceEngine.reset();
+        this.focusStateMachine.reset();
+      }
+
       this.contextMemory.recordTransition(
         this.currentState,
         smResult.nextState,

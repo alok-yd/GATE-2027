@@ -373,7 +373,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 className="w-full"
               />
               <p className="text-[11px] text-zinc-500">
-                Head-down PYQ work remains focus. The timer pauses only after 5–7 minutes of stillness without hand, keyboard, or mouse activity.
+                Continuous head-down tolerance duration before requiring active desk motion verification.
               </p>
             </div>
 

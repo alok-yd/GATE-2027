@@ -25,6 +25,10 @@ export interface StateMachineEvaluation {
 export class FocusStateMachine {
   private uncertaintyStartTimestamp: number | null = null;
 
+  reset(): void {
+    this.uncertaintyStartTimestamp = null;
+  }
+
   evaluate(
     currentState: FocusState,
     activity: ActivityRecognitionResult,
