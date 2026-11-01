@@ -509,7 +509,7 @@ export const BENCHMARK_SCENARIOS: EvaluationScenario[] = [
       {
         vision: { facePresent: true, confidence: 0.93, headYaw: 0, headPitch: -32, isLookingDown: true, eyeOpen: true, handActivity: false, deskActivityScore: 0.15, bodyPostureStable: true, faceCount: 1 },
         activity: { keyboardActive: false, mouseActive: false, idleSeconds: 420, activeApp: 'gateoverflow.in' },
-        durationMs: 360000
+        durationMs: 365000
       }
     ]
   },
