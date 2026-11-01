@@ -16,7 +16,7 @@ class ActivityMonitor {
     if (this.isTracking) return;
     this.isTracking = true;
 
-    // Window focus/blur
+    // Track both OS-window focus and browser-tab visibility.
     if (typeof window !== 'undefined') {
       window.addEventListener('focus', this.handleFocus);
       window.addEventListener('blur', this.handleBlur);
@@ -27,6 +27,13 @@ class ActivityMonitor {
       // Mouse activity: track movement / clicks
       window.addEventListener('mousemove', this.handleMouseMove, { passive: true });
       window.addEventListener('mousedown', this.handleMouseDown, { passive: true });
+    }
+
+    if (typeof document !== 'undefined') {
+      this.isWindowFocused =
+        document.visibilityState !== 'hidden' &&
+        (typeof document.hasFocus !== 'function' || document.hasFocus());
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
     }
 
     // Periodic evaluation at 1 Hz
@@ -43,6 +50,9 @@ class ActivityMonitor {
       window.removeEventListener('keydown', this.handleKeyDown);
       window.removeEventListener('mousemove', this.handleMouseMove);
       window.removeEventListener('mousedown', this.handleMouseDown);
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     }
 
     if (this.intervalId !== null) {
@@ -76,13 +86,22 @@ class ActivityMonitor {
       mouseActive,
       idleSeconds,
       activeApp: this.currentActiveApp,
-      isWindowFocused: this.isWindowFocused,
+      isWindowFocused: this.isWindowFocused && (typeof document === 'undefined' || document.visibilityState !== 'hidden'),
       lastActivityTimestamp: this.lastInteractionTimestamp
     };
   }
 
   private handleFocus = () => {
-    this.isWindowFocused = true;
+    this.isWindowFocused = typeof document === 'undefined' || document.visibilityState !== 'hidden';
+    this.emitCurrentSnapshot();
+  };
+
+  private handleVisibilityChange = () => {
+    if (typeof document === 'undefined' || document.visibilityState === 'hidden') {
+      this.isWindowFocused = false;
+    } else {
+      this.isWindowFocused = typeof document.hasFocus !== 'function' || document.hasFocus();
+    }
     this.emitCurrentSnapshot();
   };
 

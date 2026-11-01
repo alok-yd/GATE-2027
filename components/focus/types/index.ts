@@ -129,6 +129,8 @@ export interface VisionData {
   visionQualityScore?: number; // 0 to 1
   faceCount?: number;
   cameraHealthy?: boolean;
+  /** Synthetic fallback frames never qualify as camera-verified focus. */
+  isSimulated?: boolean;
   timestamp: number;
 }
 

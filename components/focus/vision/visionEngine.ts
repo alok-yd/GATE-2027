@@ -158,6 +158,7 @@ export class VisionEngine {
       lightingScore: 0.65,
       faceCount: 1,
       cameraHealthy: true,
+      isSimulated: true,
       timestamp: Date.now()
     };
 
@@ -477,6 +478,7 @@ export class VisionEngine {
       lightingScore,
       faceCount,
       cameraHealthy: true,
+      isSimulated: false,
       timestamp: now
     };
 

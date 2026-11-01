@@ -82,6 +82,7 @@ export class TimerEngine {
   // Timeline events queue
   private timelineBuffer: FocusTimelineEvent[] = [];
   private lastTimelineLog: number = 0;
+  private targetReachedNotified = false;
 
   constructor(focusEngine: FocusEngine) {
     this.focusEngine = focusEngine;
@@ -146,6 +147,8 @@ export class TimerEngine {
     this.scoresList = [];
     this.peakScore = 0;
     this.distractionCount = 0;
+    this.targetReachedNotified = false;
+    this.lastTimelineLog = now;
 
     let initialFocusedState: FocusState = 'FOCUSED_SCREEN';
     if (this.medium === 'Paper / PYQ Study') {
@@ -173,7 +176,6 @@ export class TimerEngine {
   }
 
   resumeSession(): void {
-    this.lastTickTimestamp = Date.now();
     let resumeState: FocusState = 'FOCUSED_SCREEN';
     if (this.medium === 'Paper / PYQ Study') {
       resumeState = 'FOCUSED_PAPER';
@@ -186,7 +188,6 @@ export class TimerEngine {
   }
 
   continueWithoutVerification(): void {
-    this.lastTickTimestamp = Date.now();
     this.focusEngine.setState('UNVERIFIED', 'User continued without camera verification');
     this.emitCurrentTick();
   }
@@ -210,6 +211,7 @@ export class TimerEngine {
     }
 
     const endTime = Date.now();
+    this.accrueElapsedTo(endTime, this.previousState);
     const focusedSec = Math.round(this.accumulatedFocusedMs / 1000);
     const screenFocusedSec = Math.round(this.accumulatedScreenFocusedMs / 1000);
     const paperFocusedSec = Math.round(this.accumulatedPaperFocusedMs / 1000);
@@ -281,6 +283,8 @@ export class TimerEngine {
   private handleFocusEngineOutput = (output: FocusEngineOutput) => {
     if (!this.activeSessionId) return;
 
+    // Attribute the elapsed interval to the old state before a transition.
+    this.accrueElapsedTo(Date.now(), this.previousState);
     this.currentStateExplanation = output.stateExplanation;
 
     // Track score distribution
@@ -312,14 +316,12 @@ export class TimerEngine {
     this.previousState = curr;
   };
 
-  private tick = () => {
-    if (!this.activeSessionId) return;
+  private accrueElapsedTo(now: number, state: FocusState): void {
+    if (!this.activeSessionId || this.lastTickTimestamp <= 0) return;
 
-    const now = Date.now();
     const deltaMs = Math.max(0, now - this.lastTickTimestamp);
     this.lastTickTimestamp = now;
-
-    const state = this.focusEngine.getState();
+    if (deltaMs === 0) return;
 
     switch (state) {
       case 'FOCUSED':
@@ -336,7 +338,6 @@ export class TimerEngine {
         this.accumulatedMixedFocusedMs += deltaMs;
         break;
       case 'THINKING':
-        // Thinking counts 100% towards verified focus time!
         this.accumulatedFocusedMs += deltaMs;
         this.accumulatedThinkingMs += deltaMs;
         if (this.medium === 'Paper / PYQ Study') {
@@ -349,7 +350,6 @@ export class TimerEngine {
         break;
       case 'UNCERTAIN':
       case 'WARNING':
-        // UNCERTAIN means the system lacks definitive evidence: verified focus continues!
         this.accumulatedFocusedMs += deltaMs;
         this.accumulatedUncertainMs += deltaMs;
         if (this.medium === 'Paper / PYQ Study') {
@@ -361,7 +361,6 @@ export class TimerEngine {
         }
         break;
       case 'UNVERIFIED':
-        // Unverified time recorded truthfully without adding to verified focus
         this.accumulatedUnverifiedMs += deltaMs;
         break;
       case 'PHONE_USE':
@@ -391,10 +390,19 @@ export class TimerEngine {
       default:
         break;
     }
+  }
+
+  private tick = () => {
+    if (!this.activeSessionId) return;
+
+    const now = Date.now();
+    this.accrueElapsedTo(now, this.previousState);
+    const state = this.focusEngine.getState();
 
     // Check target reached
     const currentFocusedSec = Math.floor(this.accumulatedFocusedMs / 1000);
-    if (currentFocusedSec >= this.targetSeconds && this.targetSeconds > 0) {
+    if (currentFocusedSec >= this.targetSeconds && this.targetSeconds > 0 && !this.targetReachedNotified) {
+      this.targetReachedNotified = true;
       soundFx.playTargetReached();
     }
 

@@ -25,16 +25,27 @@ export class PersonPresenceEngine {
   ): PersonPresenceResult {
     const rawFacePresent = vision.facePresent;
     const bodyPostureStable = vision.bodyPostureStable ?? false;
-    const deskMotion = (vision.deskActivityScore ?? 0) > 0.04 || vision.handActivity;
-    const isPosePlausible = validation.headPose.isTrustworthy && Math.abs(vision.headPitch) <= 45;
+    // The vision pipeline emits a 0.15 baseline desk score even when nothing moves.
+    // Zeroed head-pose values without a face/box are not valid presence evidence.
+    const deskMotion = (vision.deskActivityScore ?? 0) > 0.55;
+    const hasVisualSubject = vision.facePresent || Boolean(vision.faceBox);
+    const isPosePlausible =
+      hasVisualSubject &&
+      validation.headPose.isTrustworthy &&
+      Math.abs(vision.headPitch) <= 45;
     
     // 1. Evaluate instant sensory evidence
     const faceEvidence = rawFacePresent && validation.facePresence.confidence >= 0.50;
     const bodyEvidence = bodyPostureStable || isPosePlausible;
     const deskEvidence = deskMotion;
+    const secondsSinceLastConfirmed = Math.floor((now - this.lastConfirmedPresenceTimestamp) / 1000);
 
-    // Check historical evidence (within last 10 seconds)
-    const instantPresence = faceEvidence || (bodyEvidence && (deskEvidence || isPosePlausible));
+    // Real desk movement can bridge a brief face-detection drop, but cannot
+    // keep the user marked present indefinitely after leaving the workstation.
+    const instantPresence =
+      faceEvidence ||
+      (bodyEvidence && (deskEvidence || isPosePlausible)) ||
+      (deskEvidence && secondsSinceLastConfirmed < 8);
     this.presenceHistory.push(instantPresence);
     if (this.presenceHistory.length > 20) this.presenceHistory.shift();
 

@@ -107,8 +107,8 @@ export class FocusEngine {
 
   // Last known raw sensory inputs
   private lastVision: VisionData = {
-    facePresent: true,
-    confidence: 0.9,
+    facePresent: false,
+    confidence: 0.05,
     headYaw: 0,
     headPitch: -4,
     headRoll: 0,
@@ -121,7 +121,8 @@ export class FocusEngine {
     lightingLevel: 'normal',
     lightingScore: 0.65,
     faceCount: 1,
-    cameraHealthy: true,
+    cameraHealthy: false,
+    isSimulated: true,
     timestamp: Date.now()
   };
 
@@ -135,6 +136,7 @@ export class FocusEngine {
   };
 
   private callbacks: Set<FocusEngineCallback> = new Set();
+  private manualPauseRequested = false;
 
   constructor(settings: FocusEngineSettings = DEFAULT_FOCUS_SETTINGS) {
     this.settings = settings;
@@ -205,7 +207,12 @@ export class FocusEngine {
   }
 
   setState(newState: FocusState, customReason?: string): void {
-    const now = this.lastVision.timestamp || Date.now();
+    const now = Date.now();
+    if (customReason === 'User paused session') {
+      this.manualPauseRequested = true;
+    } else if (customReason === 'User resumed session' || newState === 'IDLE') {
+      this.manualPauseRequested = false;
+    }
     if (this.currentState !== newState) {
       this.contextMemory.recordTransition(
         this.currentState,
@@ -227,7 +234,14 @@ export class FocusEngine {
   }
 
   private evaluate(): void {
-    const now = this.lastVision.timestamp || Date.now();
+    // Grace periods must advance even when camera frames stop arriving.
+    const now = Date.now();
+    const visionAgeMs = now - (this.lastVision.timestamp || 0);
+    const visionVerified =
+      this.lastVision.isSimulated !== true &&
+      this.lastVision.cameraHealthy !== false &&
+      visionAgeMs >= 0 &&
+      visionAgeMs <= 5000;
     const profile = calibrationEngine.getProfile();
     const medium = this.settings.studyMedium || 'Screen Study';
 
@@ -316,7 +330,9 @@ export class FocusEngine {
       this.settings,
       medium,
       now,
-      presence
+      presence,
+      this.manualPauseRequested,
+      visionVerified
     );
 
     if (smResult.hasStateChanged) {

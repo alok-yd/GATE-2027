@@ -5,6 +5,7 @@ export interface ComputerActivityAnalysisResult {
   mouseActive: boolean;
   idleSeconds: number;
   activeApp: string;
+  isWindowFocused: boolean;
   appCategory: 'STUDY' | 'NEUTRAL' | 'DISTRACTION';
   isDistractionApp: boolean;
   isStudyApp: boolean;
@@ -74,6 +75,7 @@ export class ComputerActivityAnalyzer {
       mouseActive,
       idleSeconds,
       activeApp,
+      isWindowFocused: activity.isWindowFocused !== false,
       appCategory,
       isDistractionApp,
       isStudyApp,

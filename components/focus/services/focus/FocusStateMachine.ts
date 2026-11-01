@@ -35,20 +35,21 @@ export class FocusStateMachine {
     phone: PhoneAnalysisResult,
     conv: ConversationAnalysisResult,
     sleep: SleepAnalysisResult,
-    _comp: ComputerActivityAnalysisResult,
+    comp: ComputerActivityAnalysisResult,
     temporal: TemporalEngine,
     context: ContextMemory,
     settings: FocusEngineSettings,
     medium: StudyMedium,
     now: number = Date.now(),
-    presence?: PersonPresenceResult
+    presence?: PersonPresenceResult,
+    manualPause: boolean = false,
+    visionVerified: boolean = true
   ): StateMachineEvaluation {
     // 1. Inactive / Special States
     if (
       currentState === 'IDLE' ||
       currentState === 'BREAK' ||
-      currentState === 'COMPLETED' ||
-      currentState === 'UNVERIFIED'
+      currentState === 'COMPLETED'
     ) {
       return {
         nextState: currentState,
@@ -57,6 +58,46 @@ export class FocusStateMachine {
         graceSecondsRemaining: 0,
         returnConfirmationRemaining: 0,
         hasStateChanged: false
+      };
+    }
+
+    // Explicit user pauses are sticky; camera evidence must not auto-resume them.
+    if (manualPause) {
+      temporal.handleReturnConfirmation(false, now);
+      return {
+        nextState: 'PAUSED',
+        stateExplanation: 'Session is manually paused by the user.',
+        isGracePeriodActive: false,
+        graceSecondsRemaining: 0,
+        returnConfirmationRemaining: 0,
+        hasStateChanged: currentState !== 'PAUSED'
+      };
+    }
+
+    // Leaving the app or switching to another browser tab pauses the timer.
+    if (!comp.isWindowFocused) {
+      temporal.handleReturnConfirmation(false, now);
+      return {
+        nextState: 'PAUSED',
+        stateExplanation: 'App or browser tab is not in the foreground. Timer paused automatically.',
+        distractionReason: 'Application is not focused',
+        isGracePeriodActive: false,
+        graceSecondsRemaining: 0,
+        returnConfirmationRemaining: 0,
+        hasStateChanged: currentState !== 'PAUSED'
+      };
+    }
+
+    // Synthetic fallback frames may keep diagnostics alive, but never earn verified focus.
+    if (!visionVerified) {
+      temporal.handleReturnConfirmation(false, now);
+      return {
+        nextState: 'UNVERIFIED',
+        stateExplanation: 'Live camera verification is unavailable. Time is tracked as unverified.',
+        isGracePeriodActive: false,
+        graceSecondsRemaining: 0,
+        returnConfirmationRemaining: 0,
+        hasStateChanged: currentState !== 'UNVERIFIED'
       };
     }
 
@@ -196,7 +237,8 @@ export class FocusStateMachine {
         currentState === 'DISTRACTED' ||
         currentState === 'PHONE_USE' ||
         currentState === 'CONVERSATION' ||
-        currentState === 'POSSIBLE_SLEEP';
+        currentState === 'POSSIBLE_SLEEP' ||
+        currentState === 'UNVERIFIED';
 
       if (wasInterrupted) {
         const returnConfirm = temporal.handleReturnConfirmation(true, now, returnConfirmationSeconds);

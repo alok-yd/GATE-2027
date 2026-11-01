@@ -90,6 +90,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (isCameraActive) {
       if (videoRef.current) visionEngine.detachPreview(videoRef.current);
       visionEngine.stop();
+      visionEngine.startSimulation();
+      setCameraError(null);
       setIsCameraActive(false);
     } else {
       setCameraError(null);
