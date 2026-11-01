@@ -290,12 +290,18 @@ export class VisionEngine {
         const luma = 0.299 * r + 0.587 * g + 0.114 * b;
         totalLuma += luma;
 
-        const cb = 128 + (b - luma) * 0.564;
-        const cr = 128 + (r - luma) * 0.713;
+        // Use a stricter RGB skin-tone gate. The broad chroma-only range
+        // classified large parts of this user's light-coloured classroom wall
+        // as skin, merging the whole frame into one oversized "face" box.
         const isSkin =
-          r > 32 &&
-          cr >= 124 && cr <= 188 &&
-          cb >= 68 && cb <= 142;
+          r > 60 &&
+          g > 40 &&
+          b > 20 &&
+          r > g &&
+          r > b &&
+          (r - g) > 12 &&
+          Math.abs(r - g) > 15 &&
+          Math.max(r, g, b) - Math.min(r, g, b) > 15;
 
         if (isSkin) {
           skinMask[Math.floor(y / 2) * sampleWidth + Math.floor(x / 2)] = 1;
