@@ -466,7 +466,7 @@ export const BENCHMARK_SCENARIOS: EvaluationScenario[] = [
         durationMs: 4000
       }
     ]
-  }
+  },
 
   // 31. Watching a lecture in another browser tab is still studying.
   {
