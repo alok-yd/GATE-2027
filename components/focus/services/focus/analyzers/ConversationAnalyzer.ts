@@ -24,7 +24,7 @@ export class ConversationAnalyzer {
     face: FaceAnalysisResult
   ): ConversationAnalysisResult {
     const now = vision.timestamp || Date.now();
-    const faceCount = face.faceCount || vision.faceCount || 1;
+    const faceCount = face.faceCount ?? vision.faceCount ?? (vision.facePresent ? 1 : 0);
     const hasMultiplePeople = faceCount >= 2;
     const defaultGraceSeconds = profile.tolerances?.conversationGraceSeconds ?? 12;
     const graceSeconds = hasMultiplePeople ? 3 : defaultGraceSeconds;

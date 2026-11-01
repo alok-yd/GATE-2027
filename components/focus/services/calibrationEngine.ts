@@ -252,6 +252,12 @@ export class CalibrationEngine {
 
     // Study zone bounding box learned from screen and paper steps
     const validBoxes = screenSamples.concat(paperSamples).filter(s => s.faceBox).map(s => s.faceBox!);
+    const measuredFaceWidthRatios = validBoxes
+      .map(box => box.width / 100)
+      .filter(width => width >= 0.05 && width <= 0.90);
+    const faceBoundingBoxRatio = measuredFaceWidthRatios.length > 0
+      ? measuredFaceWidthRatios.reduce((sum, width) => sum + width, 0) / measuredFaceWidthRatios.length
+      : 0.30;
     let minX = 15;
     let maxX = 85;
     let minY = 10;
@@ -272,7 +278,7 @@ export class CalibrationEngine {
       baselinePaperPitch,
       deskYRatio: 0.55,
       lightingBaseline,
-      faceBoundingBoxRatio: 0.45,
+      faceBoundingBoxRatio,
       torsoCentroid: { x: Math.round((minX + maxX) / 2), y: Math.round((minY + maxY) / 2) },
       phoneBaselineScore,
       studyZone: {

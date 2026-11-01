@@ -19,7 +19,7 @@ export class PoseAnalyzer {
     const headYaw = vision.headYaw ?? 0;
     const headPitch = vision.headPitch ?? -4;
     const headRoll = vision.headRoll ?? 0;
-    const isSeatedPostureStable = vision.bodyPostureStable ?? true;
+    const isSeatedPostureStable = vision.bodyPostureStable ?? false;
 
     const yawTolerance = profile.isCalibrated ? profile.tolerances.yawTolerance : 30;
     const pitchTolerance = profile.isCalibrated ? profile.tolerances.pitchTolerance : 22;
@@ -56,7 +56,7 @@ export class PoseAnalyzer {
       }
     }
 
-    const bodyPresence = face.facePresent || isSeatedPostureStable;
+    const bodyPresence = face.facePresent && inStudyZone;
 
     // Continuous posture score (0 to 100)
     let postureScore = 70;

@@ -528,6 +528,21 @@ export const BENCHMARK_SCENARIOS: EvaluationScenario[] = [
       }
     ]
   },
+  // 35. Distant people moving at desks must not count as the student's presence.
+  {
+    name: '35. Student Absent While Other Desks Are Active',
+    category: 'Distraction & Threats',
+    expectedFocus: false,
+    expectedState: 'AWAY',
+    studyMedium: 'Paper / PYQ Study',
+    steps: [
+      {
+        vision: { facePresent: false, confidence: 0.05, headYaw: 0, headPitch: 0, eyeOpen: false, gazeScore: 0, handActivity: true, deskActivityScore: 0.95, bodyPostureStable: false, faceCount: 0 },
+        activity: { keyboardActive: false, mouseActive: false, idleSeconds: 0, activeApp: 'Classroom View' },
+        durationMs: 15000
+      }
+    ]
+  },
 
 ];
 

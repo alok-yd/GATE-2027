@@ -258,7 +258,7 @@ export class FocusEngine {
 
     // 0. Signal Validation & Person Presence Engine
     const validation = signalValidator.validate(this.lastVision);
-    const presence = this.presenceEngine.evaluate(this.lastVision, validation, now);
+    const presence = this.presenceEngine.evaluate(this.lastVision, validation, profile, now);
 
     // 1. Modular Analyzers Execution
     const face = this.faceAnalyzer.analyze(this.lastVision, profile);
