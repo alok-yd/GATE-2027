@@ -29,50 +29,63 @@ export class PersonPresenceEngine {
     const centerY = faceBox ? faceBox.y + faceBox.height / 2 : -1;
     const faceWidthRatio = faceBox ? faceBox.width / 100 : 0;
     const faceHeightRatio = faceBox ? faceBox.height / 100 : 0;
+
+    // A bounding box is expressed as percentages of frame width/height.
+    // Convert it back to pixel proportions before checking its aspect ratio.
     const faceAspectRatio = faceBox
-      ? faceBox.width / Math.max(1, faceBox.height)
+      ? (faceBox.width * 160) / Math.max(1, faceBox.height * 120)
       : 0;
 
-    // When calibrated, use the learned study zone. Otherwise require a
-    // reasonably large, central foreground face rather than distant room occupants.
     const zone = profile.isCalibrated ? profile.studyZone : undefined;
-    const inExpectedStudyZone = zone
-      ? centerX >= zone.minX &&
-        centerX <= zone.maxX &&
-        centerY >= zone.minY &&
-        centerY <= zone.maxY
-      : centerX >= 15 && centerX <= 85 && centerY >= 5 && centerY <= 82;
+    const zoneMargin = 18; // tolerance for normal chair/head movement
+    const insideCalibratedZone = zone
+      ? centerX >= zone.minX - zoneMargin &&
+        centerX <= zone.maxX + zoneMargin &&
+        centerY >= zone.minY - zoneMargin &&
+        centerY <= zone.maxY + zoneMargin
+      : false;
+
+    // Do not require an exact old calibration box: the detector's skin-region
+    // box can vary with lighting, facial hair and downward PYQ posture.
+    const insideBroadForegroundZone =
+      centerX >= 8 && centerX <= 92 &&
+      centerY >= 2 && centerY <= 96;
 
     const calibratedFaceWidth = profile.isCalibrated
       ? profile.faceBoundingBoxRatio
       : 0;
     const minimumFaceWidth = calibratedFaceWidth > 0.05
-      ? Math.max(0.12, calibratedFaceWidth * 0.35)
-      : 0.16;
-    const maximumFaceWidth = calibratedFaceWidth > 0.05
-      ? Math.min(0.85, calibratedFaceWidth * 1.80)
-      : 0.80;
+      ? Math.max(0.055, Math.min(0.11, calibratedFaceWidth * 0.22))
+      : 0.075;
 
     const faceGeometryValid =
       Boolean(faceBox) &&
       faceWidthRatio >= minimumFaceWidth &&
-      faceWidthRatio <= maximumFaceWidth &&
-      faceHeightRatio >= 0.10 &&
-      faceAspectRatio >= 0.35 &&
-      faceAspectRatio <= 2.10;
+      faceWidthRatio <= 0.95 &&
+      faceHeightRatio >= 0.055 &&
+      faceHeightRatio <= 0.98 &&
+      faceAspectRatio >= 0.20 &&
+      faceAspectRatio <= 3.50;
 
     const cameraFrameValid =
       vision.cameraHealthy !== false &&
       vision.isSimulated !== true &&
-      validation.visionQuality.value >= 0.35;
+      validation.visionQuality.value >= 0.25;
 
+    const hasReliableFaceSignal =
+      vision.facePresent &&
+      validation.facePresence.confidence >= 0.45 &&
+      faceGeometryValid;
+
+    // Prefer the calibrated zone, but retain a broad central-frame fallback
+    // when the saved profile is from an older face-box detector.
     const faceEvidence =
       cameraFrameValid &&
-      vision.facePresent &&
-      validation.facePresence.confidence >= 0.50 &&
-      faceGeometryValid &&
-      inExpectedStudyZone;
-
+      hasReliableFaceSignal &&
+      (
+        insideCalibratedZone ||
+        (insideBroadForegroundZone && vision.confidence >= 0.62)
+      );
     const bodyPostureStable = vision.bodyPostureStable ?? false;
     const isPosePlausible =
       faceEvidence &&
