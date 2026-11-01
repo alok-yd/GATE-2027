@@ -467,6 +467,68 @@ export const BENCHMARK_SCENARIOS: EvaluationScenario[] = [
       }
     ]
   }
+
+  // 31. Watching a lecture in another browser tab is still studying.
+  {
+    name: '31. Recorded Lecture in Another Browser Tab',
+    category: 'Screen Study',
+    expectedFocus: true,
+    expectedState: 'FOCUSED_SCREEN',
+    studyMedium: 'Screen Study',
+    steps: [
+      {
+        vision: { facePresent: true, confidence: 0.94, headYaw: 1, headPitch: -3, gazeScore: 0.92, bodyPostureStable: true, faceCount: 1 },
+        activity: { keyboardActive: false, mouseActive: false, idleSeconds: 90, activeApp: 'Chrome - Lecture Video', isWindowFocused: false },
+        durationMs: 5000
+      }
+    ]
+  },
+  // 32. Looking down while actively writing PYQs must remain verified study.
+  {
+    name: '32. Head-Down GATE PYQ Solving',
+    category: 'Paper / PYQ Study',
+    expectedFocus: true,
+    expectedState: 'FOCUSED_PAPER',
+    studyMedium: 'Paper / PYQ Study',
+    steps: [
+      {
+        vision: { facePresent: true, confidence: 0.94, headYaw: 1, headPitch: -30, isLookingDown: true, eyeOpen: true, handActivity: true, deskActivityScore: 0.82, bodyPostureStable: true, faceCount: 1 },
+        activity: { keyboardActive: false, mouseActive: false, idleSeconds: 120, activeApp: 'gateoverflow.in' },
+        durationMs: 300000
+      }
+    ]
+  },
+  // 33. Head-down stillness is only treated as possible sleep after the long tolerance.
+  {
+    name: '33. Prolonged Stationary Head-Down Posture (6 Minutes)',
+    category: 'Normal Study Movement',
+    expectedFocus: false,
+    expectedState: 'POSSIBLE_SLEEP',
+    studyMedium: 'Paper / PYQ Study',
+    steps: [
+      {
+        vision: { facePresent: true, confidence: 0.93, headYaw: 0, headPitch: -32, isLookingDown: true, eyeOpen: true, handActivity: false, deskActivityScore: 0.15, bodyPostureStable: true, faceCount: 1 },
+        activity: { keyboardActive: false, mouseActive: false, idleSeconds: 420, activeApp: 'gateoverflow.in' },
+        durationMs: 360000
+      }
+    ]
+  },
+  // 34. A second face held in the desk interaction zone is treated as a conversation risk.
+  {
+    name: '34. Two People Present at the Desk',
+    category: 'Distraction & Threats',
+    expectedFocus: false,
+    expectedState: 'CONVERSATION',
+    studyMedium: 'Screen Study',
+    steps: [
+      {
+        vision: { facePresent: true, confidence: 0.94, headYaw: 4, headPitch: -2, gazeScore: 0.88, bodyPostureStable: true, faceCount: 2, mouthMovementScore: 0.05 },
+        activity: { keyboardActive: false, mouseActive: false, idleSeconds: 20, activeApp: 'Visual Studio Code' },
+        durationMs: 5000
+      }
+    ]
+  },
+
 ];
 
 export class EvaluationEngine {
@@ -530,7 +592,7 @@ export class EvaluationEngine {
             mouseActive: step.activity.mouseActive ?? false,
             idleSeconds: step.activity.idleSeconds ?? 0,
             activeApp: step.activity.activeApp ?? 'Visual Studio Code',
-            isWindowFocused: true,
+            isWindowFocused: step.activity.isWindowFocused ?? true,
             lastActivityTimestamp: simTime
           };
 
@@ -556,7 +618,7 @@ export class EvaluationEngine {
 
       if (isActualFocus) {
         totalFocusScenarios++;
-        if (finalState === 'PAUSED' || finalState === 'DISTRACTED' || finalState === 'AWAY' || finalState === 'PHONE_USE' || finalState === 'CONVERSATION') {
+        if (finalState === 'PAUSED' || finalState === 'DISTRACTED' || finalState === 'AWAY' || finalState === 'PHONE_USE' || finalState === 'CONVERSATION' || finalState === 'POSSIBLE_SLEEP') {
           falsePauseCount++;
         }
       }

@@ -70,7 +70,7 @@ export const DEFAULT_FOCUS_SETTINGS: FocusEngineSettings = {
   distractionGraceSeconds: 5,
   returnConfirmationSeconds: 3,
   awayThresholdSeconds: 8,
-  paperHeadDownToleranceSeconds: 300,
+  paperHeadDownToleranceSeconds: 360,
   analysisFps: 10,
   
   weightFacePresence: 30,
@@ -100,7 +100,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   distractionGracePeriodSeconds: 4,
   returnConfirmationSeconds: 3,
   awayThresholdSeconds: 10,
-  paperHeadDownToleranceSeconds: 300,
+  paperHeadDownToleranceSeconds: 360,
 
   enableKeyboardTracking: true,
   enableMouseTracking: true,

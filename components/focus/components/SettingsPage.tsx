@@ -365,8 +365,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </div>
               <input
                 type="range"
-                min={60}
-                max={900}
+                min={300}
+                max={420}
                 step={30}
                 value={settings.paperHeadDownToleranceSeconds || 300}
                 onChange={(e) => handleChange({ paperHeadDownToleranceSeconds: Number(e.target.value) })}

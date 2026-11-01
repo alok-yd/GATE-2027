@@ -35,7 +35,7 @@ export class FocusStateMachine {
     phone: PhoneAnalysisResult,
     conv: ConversationAnalysisResult,
     sleep: SleepAnalysisResult,
-    comp: ComputerActivityAnalysisResult,
+    _comp: ComputerActivityAnalysisResult,
     temporal: TemporalEngine,
     context: ContextMemory,
     settings: FocusEngineSettings,
@@ -74,19 +74,8 @@ export class FocusStateMachine {
       };
     }
 
-    // Leaving the app or switching to another browser tab pauses the timer.
-    if (!comp.isWindowFocused) {
-      temporal.handleReturnConfirmation(false, now);
-      return {
-        nextState: 'PAUSED',
-        stateExplanation: 'App or browser tab is not in the foreground. Timer paused automatically.',
-        distractionReason: 'Application is not focused',
-        isGracePeriodActive: false,
-        graceSecondsRemaining: 0,
-        returnConfirmationRemaining: 0,
-        hasStateChanged: currentState !== 'PAUSED'
-      };
-    }
+    // Tab/window focus is intentionally not used as a distraction signal:
+    // recorded lectures often play in another browser tab while the student studies.
 
     // Synthetic fallback frames may keep diagnostics alive, but never earn verified focus.
     if (!visionVerified) {

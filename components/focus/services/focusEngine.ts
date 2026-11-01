@@ -26,7 +26,7 @@ import { ContextMemory } from './focus/ContextMemory';
 import { TemporalEngine } from './focus/TemporalEngine';
 import { FocusStateMachine } from './focus/FocusStateMachine';
 import { signalValidator } from './focus/SignalValidator';
-import { personPresenceEngine } from './focus/PersonPresenceEngine';
+import { PersonPresenceEngine } from './focus/PersonPresenceEngine';
 import { conflictResolver } from './focus/ConflictResolver';
 import { PersonPresenceState, SignalConflictLog } from '../types';
 
@@ -101,6 +101,7 @@ export class FocusEngine {
   private contextMemory = new ContextMemory();
   private temporalEngine = new TemporalEngine();
   private focusStateMachine = new FocusStateMachine();
+  private presenceEngine = new PersonPresenceEngine();
 
   // Cached last evaluation output
   private lastEvaluationOutput: FocusEngineOutput | null = null;
@@ -249,7 +250,7 @@ export class FocusEngine {
 
     // 0. Signal Validation & Person Presence Engine
     const validation = signalValidator.validate(this.lastVision);
-    const presence = personPresenceEngine.evaluate(this.lastVision, validation, now);
+    const presence = this.presenceEngine.evaluate(this.lastVision, validation, now);
 
     // 1. Modular Analyzers Execution
     const face = this.faceAnalyzer.analyze(this.lastVision, profile);
@@ -257,7 +258,15 @@ export class FocusEngine {
     const hand = this.handAnalyzer.analyze(this.lastVision, profile, pose);
     const phone = this.phoneAnalyzer.analyze(this.lastVision, profile, pose, hand, this.lastActivity);
     const conv = this.conversationAnalyzer.analyze(this.lastVision, profile, pose, face);
-    const sleep = this.sleepAnalyzer.analyze(this.lastVision, profile, face, pose, hand, this.lastActivity);
+    const sleep = this.sleepAnalyzer.analyze(
+      this.lastVision,
+      profile,
+      face,
+      pose,
+      hand,
+      this.lastActivity,
+      this.settings.paperHeadDownToleranceSeconds
+    );
     const comp = this.computerActivityAnalyzer.analyze(this.lastActivity, this.settings, medium);
 
     // 2. Activity Recognition Layer

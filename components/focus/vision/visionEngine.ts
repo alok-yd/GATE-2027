@@ -1,5 +1,6 @@
 import { VisionData } from '../types';
 import { calibrationEngine } from '../services/calibrationEngine';
+import { findSkinFaceRegions } from './skinFaceDetector';
 
 export type VisionCallback = (data: VisionData) => void;
 export type CameraFailureCallback = (reason: string) => void;
@@ -10,6 +11,7 @@ export class VisionEngine {
   private canvasCtx: CanvasRenderingContext2D | null = null;
   private stream: MediaStream | null = null;
   private animationFrameId: number | null = null;
+  private analysisIntervalId: any = null;
   private lastAnalysisTime: number = 0;
   private isRunning: boolean = false;
   private isSimulated: boolean = false;
@@ -177,6 +179,10 @@ export class VisionEngine {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
+    if (this.analysisIntervalId !== null) {
+      clearInterval(this.analysisIntervalId);
+      this.analysisIntervalId = null;
+    }
     if (this.stream) {
       this.stream.getTracks().forEach(t => t.stop());
       this.stream = null;
@@ -222,20 +228,23 @@ export class VisionEngine {
   }
 
   private loop(targetFps: number): void {
-    const intervalMs = 1000 / targetFps;
+    const intervalMs = Math.max(100, 1000 / Math.max(1, targetFps));
 
-    const frame = (now: number) => {
+    // requestAnimationFrame is commonly throttled or suspended in background tabs.
+    // A timer keeps webcam analysis alive during lecture playback in another tab.
+    // Browsers may still throttle background timers, so stale-frame checks remain active.
+    if (this.analysisIntervalId !== null) {
+      clearInterval(this.analysisIntervalId);
+    }
+    this.analysisIntervalId = setInterval(() => {
       if (!this.isRunning) return;
 
+      const now = Date.now();
       if (now - this.lastAnalysisTime >= intervalMs) {
         this.lastAnalysisTime = now;
         this.analyzeCurrentFrame();
       }
-
-      this.animationFrameId = requestAnimationFrame(frame);
-    };
-
-    this.animationFrameId = requestAnimationFrame(frame);
+    }, intervalMs);
   }
 
   private analyzeCurrentFrame(): void {
@@ -265,7 +274,10 @@ export class VisionEngine {
     let maxY = 0;
     let skinInDeskRegion = 0;
 
-    const totalSampled = (cw / 2) * (ch / 2);
+    const sampleWidth = Math.ceil(cw / 2);
+    const sampleHeight = Math.ceil(ch / 2);
+    const totalSampled = sampleWidth * sampleHeight;
+    const skinMask = new Uint8Array(totalSampled);
 
     for (let y = 0; y < ch; y += 2) {
       const isDeskRow = y >= deskStartY;
@@ -278,14 +290,15 @@ export class VisionEngine {
         const luma = 0.299 * r + 0.587 * g + 0.114 * b;
         totalLuma += luma;
 
+        const cb = 128 + (b - luma) * 0.564;
+        const cr = 128 + (r - luma) * 0.713;
         const isSkin =
-          r > 60 && g > 40 && b > 20 &&
-          r > g && r > b &&
-          (r - g) > 12 &&
-          Math.abs(r - g) > 15 &&
-          Math.max(r, g, b) - Math.min(r, g, b) > 15;
+          r > 32 &&
+          cr >= 124 && cr <= 188 &&
+          cb >= 68 && cb <= 142;
 
         if (isSkin) {
+          skinMask[Math.floor(y / 2) * sampleWidth + Math.floor(x / 2)] = 1;
           skinPixelCount++;
           sumX += x;
           sumY += y;
@@ -317,17 +330,25 @@ export class VisionEngine {
     }
 
     const skinRatio = skinPixelCount / totalSampled;
+    const faceRegions = findSkinFaceRegions(skinMask, sampleWidth, sampleHeight, 2);
+    const primaryFace = faceRegions[0];
 
-    // Face presence threshold: minimum mass of skin in reasonable human proportions
-    const rawFacePresent = skinRatio >= 0.04 && skinRatio <= 0.85 && (maxX - minX) > 18 && (maxY - minY) > 18;
+    // The connected-region detector is preferred. A relaxed global fallback
+    // keeps single-face presence available when lighting fragments the skin mask.
+    const fallbackFacePresent =
+      skinRatio >= 0.018 &&
+      skinRatio <= 0.85 &&
+      (maxX - minX) > 14 &&
+      (maxY - minY) > 16;
+    const rawFacePresent = Boolean(primaryFace) || fallbackFacePresent;
 
     this.presenceHistory.push(rawFacePresent);
     if (this.presenceHistory.length > 5) this.presenceHistory.shift();
     const facePresent = this.presenceHistory.filter(Boolean).length >= 3;
 
-    // Estimate multiple faces (e.g. bounding box span is unusually wide or high ratio)
-    const boxSpanRatio = (maxX - minX) / cw;
-    const faceCount = skinRatio > 0.45 && boxSpanRatio > 0.75 ? 2 : (facePresent ? 1 : 0);
+    // Two people are reported only when two separated, face-sized regions have
+    // comparable scale and height in the camera frame.
+    const faceCount = facePresent ? (faceRegions.length >= 2 ? 2 : 1) : 0;
 
     // 2. Desk Motion & Hand / Writing Activity Estimation
     const deskPixelCount = Math.floor((cw / 2) * ((ch - deskStartY) / 2));
@@ -374,8 +395,12 @@ export class VisionEngine {
     let bodyPostureStable = true;
 
     if (facePresent && skinPixelCount > 0) {
-      const centerX = sumX / skinPixelCount;
-      const centerY = sumY / skinPixelCount;
+      const centerX = primaryFace?.centerX ?? (sumX / skinPixelCount);
+      const centerY = primaryFace?.centerY ?? (sumY / skinPixelCount);
+      const faceMinX = primaryFace?.x ?? minX;
+      const faceMaxX = primaryFace ? primaryFace.x + primaryFace.width : maxX;
+      const faceMinY = primaryFace?.y ?? minY;
+      const faceMaxY = primaryFace ? primaryFace.y + primaryFace.height : maxY;
 
       // Track posture stability (variance of centroid over last 4 seconds)
       this.centroidHistory.push({ x: centerX, y: centerY, t: now });
@@ -418,16 +443,16 @@ export class VisionEngine {
       isLookingDown = headPitch <= paperPitchThreshold || centerY > (frameCenterY + 8);
 
       // Eye & Gaze estimation:
-      const boxW = maxX - minX;
-      const boxH = maxY - minY;
-      const eyeRegionY = Math.floor(minY + boxH * 0.28);
+      const boxW = faceMaxX - faceMinX;
+      const boxH = faceMaxY - faceMinY;
+      const eyeRegionY = Math.floor(faceMinY + boxH * 0.28);
       const eyeRegionH = Math.max(4, Math.floor(boxH * 0.22));
 
       // Analyze contrast in the eye band
       let eyeContrast = 0;
       let eyeSamples = 0;
       for (let ey = eyeRegionY; ey < Math.min(ch, eyeRegionY + eyeRegionH); ey++) {
-        for (let ex = Math.floor(minX + boxW * 0.2); ex < Math.min(cw, Math.floor(maxX - boxW * 0.2)); ex += 2) {
+        for (let ex = Math.floor(faceMinX + boxW * 0.2); ex < Math.min(cw, Math.floor(faceMaxX - boxW * 0.2)); ex += 2) {
           const idx = (ey * cw + ex) * 4;
           const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
           eyeContrast += Math.abs(lum - 128);
@@ -445,11 +470,14 @@ export class VisionEngine {
       const combinedPenalty = yawPenalty * 0.75 + pitchPenalty * 0.25;
       
       gazeScore = Math.max(0.45, Number((1.0 - combinedPenalty * 0.45).toFixed(2)));
-      confidence = Math.min(0.98, Number((0.68 + skinRatio * 0.6).toFixed(2)));
+      const regionConfidence = primaryFace
+        ? 0.58 + Math.min(0.38, primaryFace.area / 500)
+        : 0.68 + skinRatio * 0.6;
+      confidence = Math.min(0.98, Number(regionConfidence.toFixed(2)));
 
       faceBox = {
-        x: Math.round((minX / cw) * 100),
-        y: Math.round((minY / ch) * 100),
+        x: Math.round((faceMinX / cw) * 100),
+        y: Math.round((faceMinY / ch) * 100),
         width: Math.round((boxW / cw) * 100),
         height: Math.round((boxH / ch) * 100)
       };

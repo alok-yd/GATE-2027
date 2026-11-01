@@ -24,11 +24,11 @@ export class ConversationAnalyzer {
     face: FaceAnalysisResult
   ): ConversationAnalysisResult {
     const now = vision.timestamp || Date.now();
-    const graceSeconds = profile.tolerances?.conversationGraceSeconds ?? 12;
-    const warningGraceSeconds = Math.max(4, Math.floor(graceSeconds / 2));
-
     const faceCount = face.faceCount || vision.faceCount || 1;
     const hasMultiplePeople = faceCount >= 2;
+    const defaultGraceSeconds = profile.tolerances?.conversationGraceSeconds ?? 12;
+    const graceSeconds = hasMultiplePeople ? 3 : defaultGraceSeconds;
+    const warningGraceSeconds = hasMultiplePeople ? 1 : Math.max(4, Math.floor(graceSeconds / 2));
     const absYaw = Math.abs(pose.headYaw);
     const yawTolerance = profile.isCalibrated ? profile.tolerances.yawTolerance : 30;
 
@@ -76,7 +76,8 @@ export class ConversationAnalyzer {
       }
       conversationDurationSeconds = Math.max(0, Math.floor((now - this.conversationStartTime) / 1000));
 
-      if (conversationDurationSeconds >= graceSeconds && conversationConfidence >= 0.70) {
+      const confirmationConfidence = hasMultiplePeople ? 0.60 : 0.70;
+      if (conversationDurationSeconds >= graceSeconds && conversationConfidence >= confirmationConfidence) {
         isConfirmedConversation = true;
         reason = hasMultiplePeople
           ? `Conversation with second person confirmed (${conversationDurationSeconds}s)`
