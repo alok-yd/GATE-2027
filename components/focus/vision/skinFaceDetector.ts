@@ -151,13 +151,16 @@ export function findSkinFaceRegions(
     const verticalDistance = Math.abs(centerY - primaryCenterY);
 
     return (
-      candidate.area >= Math.max(18, primary.area * 0.28) &&
-      width >= primaryWidth * 0.50 &&
-      height >= primaryHeight * 0.52 &&
-      horizontalDistance >= Math.max(7, primaryWidth * 0.75) &&
-      horizontalDistance <= gridWidth * 0.85 &&
-      verticalDistance <= primaryHeight * 0.85 &&
-      centerY <= gridHeight * 0.82
+      // A conversation partner at the same desk should be a nearby,
+      // similarly-sized foreground face. Small distant classroom faces,
+      // posters and skin-coloured background fragments are not interaction cues.
+      candidate.area >= Math.max(28, primary.area * 0.58) &&
+      width >= primaryWidth * 0.68 &&
+      height >= primaryHeight * 0.68 &&
+      horizontalDistance >= Math.max(8, primaryWidth * 0.65) &&
+      horizontalDistance <= primaryWidth * 2.25 &&
+      verticalDistance <= primaryHeight * 0.65 &&
+      centerY <= gridHeight * 0.78
     );
   });
 

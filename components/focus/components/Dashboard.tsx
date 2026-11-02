@@ -215,7 +215,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       case 'CONVERSATION':
         return {
           title: 'CONVERSATION',
-          subtitle: engineOutput.distractionReason || 'Verbal interaction with second person detected',
+          subtitle: engineOutput.distractionReason || 'Checking for a sustained second-person or speaking signal…',
           tooltip: 'Active conversation detected. Return to study to resume timer.',
           color: 'text-amber-400',
           bg: 'bg-amber-500/15 border-amber-500/40',

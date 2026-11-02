@@ -41,21 +41,33 @@ export class ConversationAnalyzer {
     const isFacingWorkstation = pose.isLookingDown || absYaw <= yawTolerance;
     const isReadingAloudOrSolo = isMouthActive && isFacingWorkstation && !hasMultiplePeople;
 
-    let instantScore = 0.0;
+    // Do not infer conversation from a single detected person, normal gaze,
+    // quiet study, or an isolated head movement. In the current local vision
+    // pipeline mouth movement is optional, so the dependable cues are a stable
+    // second foreground face or clear speaking + sustained lateral orientation.
+    const hasExternalSpeakingCue =
+      !hasMultiplePeople &&
+      isMouthActive &&
+      absYaw > yawTolerance + 10;
+    const hasConversationCue = hasMultiplePeople || hasExternalSpeakingCue;
 
-    if (hasMultiplePeople) {
-      // Second person present in frame + mouth movement or interaction
-      instantScore = isMouthActive ? 0.90 : 0.65;
-    } else if (absYaw > yawTolerance + 10 && isMouthActive) {
-      // Head turned laterally to a person outside frame + speaking
-      instantScore = 0.75;
-    } else if (absYaw > yawTolerance + 15) {
-      // Head turned persistently away
-      instantScore = 0.40;
-    } else if (isReadingAloudOrSolo) {
-      // Read aloud is study! Only a nominal non-zero score to log activity, never enough to trigger conversation
-      instantScore = 0.15;
+    if (!hasConversationCue) {
+      this.history = [];
+      this.conversationStartTime = null;
+      return {
+        conversationConfidence: 0,
+        isPossibleConversation: false,
+        isConversationWarning: false,
+        isConfirmedConversation: false,
+        conversationDurationSeconds: 0,
+        hasMultiplePeople: false,
+        isReadingAloudOrSolo
+      };
     }
+
+    let instantScore = hasMultiplePeople
+      ? (isMouthActive ? 0.90 : 0.65)
+      : 0.75;
 
     this.history.push(instantScore);
     if (this.history.length > 10) this.history.shift();

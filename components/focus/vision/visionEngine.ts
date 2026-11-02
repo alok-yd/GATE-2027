@@ -22,6 +22,7 @@ export class VisionEngine {
   private yawHistory: number[] = [];
   private pitchHistory: number[] = [];
   private presenceHistory: boolean[] = [];
+  private multiFaceHistory: boolean[] = [];
 
   // Desk & posture tracking
   private previousDeskLuminance: Uint8Array | null = null;
@@ -175,6 +176,8 @@ export class VisionEngine {
   stop(): void {
     this.isRunning = false;
     this.isSimulated = false;
+    this.multiFaceHistory = [];
+    this.presenceHistory = [];
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -354,7 +357,14 @@ export class VisionEngine {
 
     // Two people are reported only when two separated, face-sized regions have
     // comparable scale and height in the camera frame.
-    const faceCount = facePresent ? (faceRegions.length >= 2 ? 2 : 1) : 0;
+    const rawMultipleFaces = facePresent && faceRegions.length >= 2;
+    this.multiFaceHistory.push(rawMultipleFaces);
+    if (this.multiFaceHistory.length > 5) this.multiFaceHistory.shift();
+    // Require at least 3 of the last 5 frames before exposing a second person.
+    // This filters one-frame false positives from classroom background objects.
+    const stableMultipleFaces =
+      this.multiFaceHistory.filter(Boolean).length >= 3;
+    const faceCount = facePresent ? (stableMultipleFaces ? 2 : 1) : 0;
 
     // 2. Desk Motion & Hand / Writing Activity Estimation
     const deskPixelCount = Math.floor((cw / 2) * ((ch - deskStartY) / 2));

@@ -94,21 +94,6 @@ export class FocusStateMachine {
       };
     }
 
-    // Pause conservatively whenever multiple people are detected in the desk area,
-    // even when mouth movement is too subtle for the conversation classifier.
-    if (face.faceCount >= 2) {
-      temporal.handleReturnConfirmation(false, now);
-      return {
-        nextState: 'CONVERSATION',
-        stateExplanation: 'Multiple people detected in the study area. Timer paused until the area is clear.',
-        distractionReason: 'Multiple people detected near the study desk',
-        isGracePeriodActive: false,
-        graceSecondsRemaining: 0,
-        returnConfirmationRemaining: 0,
-        hasStateChanged: currentState !== 'CONVERSATION'
-      };
-    }
-
     const smoothedScore = temporal.getSmoothedScore();
     const {
       focusThreshold,
