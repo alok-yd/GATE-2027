@@ -251,6 +251,35 @@ export class VisionEngine {
     this.consecutiveBlankFrames = 0;
     this.releaseCaptureResources();
 
+    // Immediately invalidate the last good frame so FocusEngine moves to
+    // UNVERIFIED before another timer tick can credit camera-less time.
+    const unavailableFrame: VisionData = {
+      facePresent: false,
+      confidence: 0,
+      headYaw: 0,
+      headPitch: 0,
+      headRoll: 0,
+      eyeOpen: false,
+      gazeScore: 0,
+      handActivity: false,
+      bodyPostureStable: false,
+      deskActivityScore: 0,
+      isLookingDown: false,
+      lightingLevel: 'dark',
+      lightingScore: 0,
+      faceCount: 0,
+      cameraHealthy: false,
+      isSimulated: false,
+      timestamp: Date.now()
+    };
+    this.callbacks.forEach(cb => {
+      try {
+        cb(unavailableFrame);
+      } catch (error) {
+        console.error('Camera-unavailable frame callback failed:', error);
+      }
+    });
+
     this.failureCallbacks.forEach(cb => {
       try {
         cb(reason);
