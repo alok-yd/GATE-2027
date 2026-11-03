@@ -1,17 +1,12 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { TitleBar } from './focus/components/TitleBar';
 import { Dashboard } from './focus/components/Dashboard';
+import type { CameraConnectionStatus } from './focus/components/Dashboard';
 import { AnalyticsPage } from './focus/components/AnalyticsPage';
 import { AICoachPage } from './focus/components/AICoachPage';
 import { GoogleCalendarSync } from './focus/components/GoogleCalendarSync';
 import { SettingsPage } from './focus/components/SettingsPage';
 import { SessionSetupModal } from './focus/components/SessionSetupModal';
-import { BreakModal } from './focus/components/BreakModal';
-import { SystemTrayModal } from './focus/components/SystemTrayModal';
-import { OnboardingModal } from './focus/components/OnboardingModal';
-import { CalibrationModal } from './focus/components/CalibrationModal';
-import { EvaluationModal } from './focus/components/EvaluationModal';
-import { CameraFailureModal } from './focus/components/CameraFailureModal';
 
 import {
   FocusMode,
@@ -19,14 +14,12 @@ import {
   FocusTimelineEvent,
   SubjectItem,
   UserSettings,
-  DailySummary,
-  StudyMedium
+  StudyMedium,
 } from './focus/types';
 import { DEFAULT_SETTINGS, GATE_SUBJECTS } from './focus/constants';
 import { StorageService } from './focus/services/storage';
-import { focusEngine, FocusEngineOutput } from './focus/services/focusEngine';
+import { focusEngine } from './focus/services/focusEngine';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
-import { activityMonitor } from './focus/services/activityMonitor';
 import { visionEngine } from './focus/vision/visionEngine';
 import {
   LayoutDashboard,
@@ -34,134 +27,107 @@ import {
   Brain,
   Calendar,
   Settings,
-  Shield
+  Shield,
 } from 'lucide-react';
+
+const initialTickData: TimerTickData = {
+  state: 'IDLE',
+  elapsedSeconds: 0,
+  focusedSeconds: 0,
+  screenFocusedSeconds: 0,
+  paperFocusedSeconds: 0,
+  mixedFocusedSeconds: 0,
+  thinkingSeconds: 0,
+  uncertainSeconds: 0,
+  unverifiedSeconds: 0,
+  pausedSeconds: 0,
+  remainingTargetSeconds: 7200,
+  distractedSeconds: 0,
+  phoneSeconds: 0,
+  conversationSeconds: 0,
+  sleepSeconds: 0,
+  awaySeconds: 0,
+  breakSeconds: 0,
+  efficiency: 0,
+  currentScore: 0,
+  averageScore: 0,
+  peakScore: 0,
+  distractionCount: 0,
+  targetSeconds: 7200,
+  activeSubject: 'Algorithms',
+  activeTopic: 'General Study',
+  activeGoal: 'Study session',
+  activeMode: 'Deep Focus',
+  activeMedium: 'Screen Study',
+  isCompleted: false,
+};
 
 export default function FocusTracker() {
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // Active Navigation Tab
   const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'coach' | 'calendar' | 'settings'>('dashboard');
-
-  // Modals
   const [showSetupModal, setShowSetupModal] = useState(false);
-  const [showBreakModal, setShowBreakModal] = useState(false);
-  const [showTrayModal, setShowTrayModal] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [showCalibrationModal, setShowCalibrationModal] = useState(false);
-  const [showEvaluationModal, setShowEvaluationModal] = useState(false);
-  const [showCameraFailureModal, setShowCameraFailureModal] = useState(false);
-  const [cameraFailureReason, setCameraFailureReason] = useState<string>('');
-  const [isCameraRetrying, setIsCameraRetrying] = useState(false);
-  const cameraRetryInProgressRef = useRef(false);
 
-  // Application Persistent State
   const [settings, setSettings] = useState<UserSettings>(() => StorageService.getSettings());
   const [subjects, setSubjects] = useState<SubjectItem[]>(() => StorageService.getSubjects());
   const [sessions, setSessions] = useState<FocusSession[]>(() => StorageService.getSessions());
   const [timelineEvents, setTimelineEvents] = useState<FocusTimelineEvent[]>(() => StorageService.getTimelineEvents());
 
-  // Real-Time Focus Engine Output
-  const [engineOutput, setEngineOutput] = useState<FocusEngineOutput>(() => focusEngine.getCurrentOutput());
+  const [tickData, setTickData] = useState<TimerTickData>(initialTickData);
+  const [cameraStatus, setCameraStatus] = useState<CameraConnectionStatus>('OFF');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const cameraRetryInProgressRef = useRef(false);
 
-  // Real-Time Timer Tick State
-  const [tickData, setTickData] = useState<TimerTickData>({
-    state: 'IDLE',
-    elapsedSeconds: 0,
-    focusedSeconds: 0,
-    screenFocusedSeconds: 0,
-    paperFocusedSeconds: 0,
-    mixedFocusedSeconds: 0,
-    thinkingSeconds: 0,
-    uncertainSeconds: 0,
-    unverifiedSeconds: 0,
-    pausedSeconds: 0,
-    remainingTargetSeconds: 7200,
-    distractedSeconds: 0,
-    phoneSeconds: 0,
-    conversationSeconds: 0,
-    sleepSeconds: 0,
-    awaySeconds: 0,
-    breakSeconds: 0,
-    efficiency: 100,
-    currentScore: 85,
-    averageScore: 85,
-    peakScore: 0,
-    distractionCount: 0,
-    targetSeconds: 7200,
-    activeSubject: 'Algorithms',
-    activeTopic: 'Dynamic Programming',
-    activeGoal: 'Solve 5 PYQ problems',
-    activeMode: 'Deep Focus',
-    activeMedium: 'Screen Study',
-    isCompleted: false
-  });
+  const todaySummary = useMemo(
+    () => StorageService.getTodaySummary(sessions, settings.dailyTargetHours * 3600),
+    [sessions, settings.dailyTargetHours]
+  );
 
-  // Calculate Today's Summary
-  const todaySummary: DailySummary = useMemo(() => {
-    return StorageService.getTodaySummary(sessions, settings.dailyTargetHours * 3600);
-  }, [sessions, settings.dailyTargetHours]);
-
-  // Today's sessions subset
   const todaySessions = useMemo(() => {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    return sessions.filter(s => new Date(s.startTime).toISOString().slice(0, 10) === todayStr);
+    const today = new Date().toISOString().slice(0, 10);
+    return sessions.filter((session) => new Date(session.startTime).toISOString().slice(0, 10) === today);
   }, [sessions]);
 
-  // Initialize Activity Monitor, Vision Listeners on Mount
   useEffect(() => {
-    // Start activity monitor
-    activityMonitor.start();
+    // The Focus module has one camera subscription and one timer subscription.
+    // No keyboard, mouse, tab-focus or application-activity monitor is started.
+    const unsubVision = visionEngine.subscribe((data) => focusEngine.updateVision(data));
 
-    // Pipe activity monitor snapshots into FocusEngine
-    const unsubActivity = activityMonitor.subscribe((data) => {
-      focusEngine.updateActivity(data);
-    });
-
-    // Pipe vision engine data into FocusEngine
-    const unsubVision = visionEngine.subscribe((data) => {
-      focusEngine.updateVision(data);
-    });
-
-    // Subscribe to camera failure events
     const unsubFailure = visionEngine.subscribeFailure((reason) => {
-      setCameraFailureReason(reason);
-      setShowCameraFailureModal(true);
+      setCameraStatus('UNAVAILABLE');
+      setCameraError(reason);
     });
 
-    // Check onboarding status
-    if (!StorageService.hasCompletedOnboarding()) {
-      setShowOnboarding(true);
-    }
-
-    // Subscribe to FocusEngine
-    const unsubFocus = focusEngine.subscribe((out) => {
-      setEngineOutput(out);
-    });
-
-    // Subscribe to TimerEngine
     const unsubTimer = timerEngine.subscribe((tick) => {
       setTickData(tick);
     });
 
     return () => {
-      activityMonitor.stop();
-      unsubActivity();
       unsubVision();
       unsubFailure();
-      unsubFocus();
       unsubTimer();
+      // A page unmount tears down the webcam; also close the active session so
+      // the singleton timer cannot keep running without any camera frames.
+      timerEngine.stopSession();
+      visionEngine.stop();
     };
   }, []);
 
-  // Sync settings changes to FocusEngine & ActivityMonitor
   useEffect(() => {
     focusEngine.updateSettings(settings);
-    activityMonitor.updateSettings(settings);
   }, [settings]);
 
-  // Handle Session Start
-  const handleStartSession = (
+  // A completed countdown is saved by TimerEngine. Release the webcam after
+  // completion and refresh the stored session list for the daily summary.
+  useEffect(() => {
+    if (tickData.state !== 'COMPLETED') return;
+    visionEngine.stop();
+    setCameraStatus('OFF');
+    setCameraError(null);
+    setSessions(StorageService.getSessions());
+    setTimelineEvents(StorageService.getTimelineEvents());
+  }, [tickData.state]);
+
+  const handleStartSession = async (
     subject: string,
     topic: string,
     targetSeconds: number,
@@ -169,127 +135,94 @@ export default function FocusTracker() {
     goal: string,
     medium?: StudyMedium
   ) => {
-    timerEngine.startSession(subject, topic, targetSeconds, mode, goal, medium);
     setActiveTab('dashboard');
+    setCameraStatus('CONNECTING');
+    setCameraError(null);
+
+    // Start the session clock in a paused/verification state first. It cannot
+    // accrue study time until real webcam frames confirm a person is present.
+    timerEngine.startSession(subject, topic, targetSeconds, mode, goal, medium);
+
+    const result = await visionEngine.start(
+      settings.selectedCameraId || undefined,
+      settings.frameRateFps || 4
+    );
+
+    if (result.success) {
+      setCameraStatus('AVAILABLE');
+      setCameraError(null);
+      window.dispatchEvent(new Event('ai-focus-camera-started'));
+    } else {
+      setCameraStatus('UNAVAILABLE');
+      setCameraError(result.error || 'Camera unavailable. The timer is paused.');
+    }
   };
 
-  // Handle Pause
-  const handlePauseSession = () => {
-    timerEngine.pauseSession();
-  };
-
-  // Reacquire a fresh webcam stream. Keep the recovery dialog visible until
-  // getUserMedia succeeds, rather than silently dismissing it on a no-op retry.
   const handleRetryCamera = async () => {
-    if (cameraRetryInProgressRef.current) return;
+    if (cameraRetryInProgressRef.current || tickData.state === 'IDLE' || tickData.state === 'COMPLETED') return;
     cameraRetryInProgressRef.current = true;
-    setIsCameraRetrying(true);
-    setCameraFailureReason('Reconnecting to the webcam…');
+    setCameraStatus('CONNECTING');
+    setCameraError(null);
 
     try {
       const result = await visionEngine.start(
         settings.selectedCameraId || undefined,
-        settings.frameRateFps || 10
+        settings.frameRateFps || 4
       );
-
       if (result.success) {
-        setShowCameraFailureModal(false);
-        setCameraFailureReason('');
-        window.dispatchEvent(new Event('ai-focus-camera-restarted'));
+        setCameraStatus('AVAILABLE');
+        setCameraError(null);
+        window.dispatchEvent(new Event('ai-focus-camera-started'));
       } else {
-        setCameraFailureReason(
-          result.error || 'Camera could not be reconnected. Check Windows camera permission and try again.'
-        );
-        setShowCameraFailureModal(true);
+        setCameraStatus('UNAVAILABLE');
+        setCameraError(result.error || 'Camera unavailable. The timer remains paused.');
       }
-    } catch (error) {
-      setCameraFailureReason(
-        error instanceof Error ? error.message : 'Unexpected error while reconnecting to the webcam.'
-      );
-      setShowCameraFailureModal(true);
     } finally {
       cameraRetryInProgressRef.current = false;
-      setIsCameraRetrying(false);
     }
   };
 
-  // Handle Resume
-  const handleResumeSession = () => {
-    timerEngine.resumeSession();
-  };
-
-  // Handle Stop Session
   const handleStopSession = () => {
-    const completed = timerEngine.stopSession();
-    if (completed) {
-      setSessions(StorageService.getSessions());
-      setTimelineEvents(StorageService.getTimelineEvents());
-    }
+    timerEngine.stopSession();
+    visionEngine.stop();
+    setCameraStatus('OFF');
+    setCameraError(null);
+    setSessions(StorageService.getSessions());
+    setTimelineEvents(StorageService.getTimelineEvents());
   };
 
-  // Handle Break
-  const handleStartBreak = () => {
-    timerEngine.startBreak(5);
-    setShowBreakModal(true);
-  };
-
-  const handleEndBreak = () => {
-    setShowBreakModal(false);
-    timerEngine.endBreak();
-  };
-
-  // Reset Timer
-  const handleResetTimer = () => {
-    if (confirm('Reset the current timer session?')) {
-      timerEngine.stopSession();
-    }
-  };
-
-  // Add Custom Subject
   const handleAddSubject = (name: string, category: string): SubjectItem => {
-    const newSub: SubjectItem = {
-      id: 'sub_' + Date.now(),
+    const newSubject: SubjectItem = {
+      id: `sub_${Date.now()}`,
       name,
       category,
-      isGateSubject: false
+      isGateSubject: false,
     };
-    StorageService.saveSubject(newSub);
+    StorageService.saveSubject(newSubject);
     setSubjects(StorageService.getSubjects());
-    return newSub;
+    return newSubject;
   };
 
-  // Update Settings
   const handleUpdateSettings = (newSettings: UserSettings) => {
     setSettings(newSettings);
     StorageService.saveSettings(newSettings);
   };
 
-  // Reset All Data
   const handleResetAllData = () => {
+    if (tickData.state !== 'IDLE' && tickData.state !== 'COMPLETED') {
+      timerEngine.stopSession();
+    }
+    visionEngine.stop();
     StorageService.clearAll();
     setSessions([]);
     setTimelineEvents([]);
     setSubjects(GATE_SUBJECTS);
     setSettings(DEFAULT_SETTINGS);
+    setCameraStatus('OFF');
+    setCameraError(null);
+    setTickData(initialTickData);
   };
 
-  // Finish Onboarding
-  const handleCompleteOnboarding = (cfg: {
-    targetHours: number;
-    examGoal: string;
-    sensitivity: 'Relaxed' | 'Balanced' | 'Strict';
-  }) => {
-    const updated = {
-      ...settings,
-      dailyTargetHours: cfg.targetHours,
-      focusSensitivityPreset: cfg.sensitivity
-    };
-    handleUpdateSettings(updated);
-    StorageService.setOnboardingComplete();
-    setShowOnboarding(false);
-  };
-
-  // Refresh lists
   const handleRefreshData = () => {
     setSessions(StorageService.getSessions());
     setTimelineEvents(StorageService.getTimelineEvents());
@@ -298,136 +231,76 @@ export default function FocusTracker() {
   return (
     <div
       ref={containerRef}
-      className="w-full bg-zinc-950 text-zinc-100 flex flex-col select-none overflow-hidden rounded-2xl border border-zinc-800 shadow-2xl font-sans min-h-[850px]"
+      className="flex min-h-[850px] w-full select-none flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 font-sans text-zinc-100 shadow-2xl"
     >
-      {/* Windows Desktop Title Bar */}
       <TitleBar
         focusState={tickData.state}
-        focusScore={engineOutput.score}
         activeSubject={tickData.activeSubject}
         activeTopic={tickData.activeTopic}
-        onOpenTray={() => setShowTrayModal(true)}
-        onMinimize={() => setShowTrayModal(true)}
+        onOpenTray={() => setActiveTab('settings')}
+        onMinimize={() => setActiveTab('dashboard')}
         onMaximize={() => {
           if (!document.fullscreenElement) {
-            if (containerRef.current?.requestFullscreen) {
-              containerRef.current.requestFullscreen().catch(() => {});
-            } else {
-              document.documentElement.requestFullscreen().catch(() => {});
-            }
+            containerRef.current?.requestFullscreen?.().catch(() => {});
           } else {
             document.exitFullscreen().catch(() => {});
           }
         }}
-        onClose={() => setShowTrayModal(true)}
+        onClose={() => setActiveTab('dashboard')}
       />
 
-      {/* Main Desktop Workspace with Structural Sidebar */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Navigation Sidebar */}
-        <aside className="w-16 lg:w-56 bg-zinc-950/90 border-r border-zinc-800/80 flex flex-col justify-between p-2 lg:p-3 shrink-0">
+      <div className="flex flex-1 overflow-hidden">
+        <aside className="flex w-16 shrink-0 flex-col justify-between border-r border-zinc-800/80 bg-zinc-950/90 p-2 lg:w-56 lg:p-3">
           <div className="space-y-1">
-            {/* Nav item 1: Dashboard */}
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === 'dashboard'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4 shrink-0" />
-              <span className="hidden lg:inline">Dashboard</span>
-            </button>
-
-            {/* Nav item 2: Analytics & Timeline */}
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === 'analytics'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
-              }`}
-            >
-              <BarChart3 className="w-4 h-4 shrink-0" />
-              <span className="hidden lg:inline">Analytics & Logs</span>
-            </button>
-
-            {/* Nav item 3: AI Coach */}
-            <button
-              onClick={() => setActiveTab('coach')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === 'coach'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
-              }`}
-            >
-              <Brain className="w-4 h-4 shrink-0 text-emerald-400" />
-              <div className="hidden lg:flex items-center justify-between flex-1">
-                <span>AI Coach</span>
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-mono">LIVE</span>
-              </div>
-            </button>
-
-            {/* Nav item 4: Google Calendar */}
-            <button
-              onClick={() => setActiveTab('calendar')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === 'calendar'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
-              }`}
-            >
-              <Calendar className="w-4 h-4 shrink-0 text-indigo-400" />
-              <span className="hidden lg:inline">Calendar Sync</span>
-            </button>
-
-            {/* Nav item 5: Settings */}
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === 'settings'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
-              }`}
-            >
-              <Settings className="w-4 h-4 shrink-0" />
-              <span className="hidden lg:inline">Settings</span>
-            </button>
+            {[
+              { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+              { id: 'analytics', label: 'Analytics & Logs', icon: BarChart3 },
+              { id: 'coach', label: 'AI Coach', icon: Brain },
+              { id: 'calendar', label: 'Calendar Sync', icon: Calendar },
+              { id: 'settings', label: 'Settings', icon: Settings },
+            ].map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveTab(item.id as typeof activeTab)}
+                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-semibold transition ${
+                    active
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                      : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100'
+                  }`}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="hidden lg:inline">{item.label}</span>
+                </button>
+              );
+            })}
           </div>
 
-          {/* Bottom Sidebar Status Badge */}
-          <div className="hidden lg:block p-3 rounded-2xl bg-zinc-900/70 border border-zinc-800/80 text-[11px] text-zinc-400 space-y-1">
-            <div className="flex items-center gap-1.5 text-zinc-300 font-semibold">
-              <Shield className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Multi-Signal Verified</span>
+          <div className="hidden space-y-1 rounded-2xl border border-zinc-800/80 bg-zinc-900/70 p-3 text-[11px] text-zinc-400 lg:block">
+            <div className="flex items-center gap-1.5 font-semibold text-emerald-300">
+              <Shield className="h-3.5 w-3.5" />
+              Presence detection
             </div>
-            <p className="text-[10px] text-zinc-500">
-              Head-down paper solving recognized as genuine focus.
+            <p className="text-[10px] leading-relaxed text-zinc-500">
+              Person present = timer runs. Person absent = timer pauses.
             </p>
           </div>
         </aside>
 
-        {/* Content Area */}
-        <main className="flex-1 flex flex-col overflow-hidden bg-zinc-950">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-zinc-950">
           {activeTab === 'dashboard' && (
             <Dashboard
               tickData={tickData}
-              engineOutput={engineOutput}
               todayTargetHours={settings.dailyTargetHours}
               todayVerifiedSeconds={todaySummary.focusedSeconds}
-              todayDistractionSeconds={todaySummary.distractedSeconds}
-              todaySessionCount={todaySummary.sessionCount}
-              todayLongestSession={todaySummary.longestSessionSeconds}
+              cameraStatus={cameraStatus}
+              cameraError={cameraError}
               onOpenSetup={() => setShowSetupModal(true)}
-              onPause={handlePauseSession}
-              onResume={handleResumeSession}
               onStop={handleStopSession}
-              onStartBreak={handleStartBreak}
-              onResetTimer={handleResetTimer}
-              onSelectMedium={(med) => timerEngine.setStudyMedium(med)}
-              onOpenCalibration={() => setShowCalibrationModal(true)}
-              onOpenEvaluation={() => setShowEvaluationModal(true)}
+              onRetryCamera={handleRetryCamera}
             />
           )}
 
@@ -460,80 +333,17 @@ export default function FocusTracker() {
               settings={settings}
               onUpdateSettings={handleUpdateSettings}
               onResetAllData={handleResetAllData}
-              onOpenCalibration={() => setShowCalibrationModal(true)}
-              onOpenEvaluation={() => setShowEvaluationModal(true)}
             />
           )}
         </main>
       </div>
 
-      {/* Modals & Dialogs */}
       <SessionSetupModal
         isOpen={showSetupModal}
         onClose={() => setShowSetupModal(false)}
         subjects={subjects}
         onAddSubject={handleAddSubject}
         onStartSession={handleStartSession}
-      />
-
-      <BreakModal
-        isOpen={showBreakModal}
-        onEndBreak={handleEndBreak}
-      />
-
-      <CalibrationModal
-        isOpen={showCalibrationModal}
-        onClose={() => setShowCalibrationModal(false)}
-        onComplete={() => setShowCalibrationModal(false)}
-      />
-
-      <EvaluationModal
-        isOpen={showEvaluationModal}
-        onClose={() => setShowEvaluationModal(false)}
-      />
-
-      <CameraFailureModal
-        isOpen={showCameraFailureModal}
-        reason={cameraFailureReason}
-        isRetrying={isCameraRetrying}
-        onContinueUnverified={() => {
-          setShowCameraFailureModal(false);
-          timerEngine.continueWithoutVerification();
-        }}
-        onPauseSession={() => {
-          setShowCameraFailureModal(false);
-          timerEngine.pauseSession();
-        }}
-        onRetryCamera={handleRetryCamera}
-      />
-
-      <SystemTrayModal
-        isOpen={showTrayModal}
-        onClose={() => setShowTrayModal(false)}
-        focusState={tickData.state}
-        focusScore={engineOutput.score}
-        todayVerifiedSeconds={todaySummary.focusedSeconds}
-        todayTargetHours={settings.dailyTargetHours}
-        currentSubject={tickData.activeSubject}
-        sessionFocusedSeconds={tickData.focusedSeconds}
-        onStartResume={() => {
-          if (tickData.state === 'PAUSED') handleResumeSession();
-          else setShowSetupModal(true);
-        }}
-        onPause={handlePauseSession}
-        onStartBreak={handleStartBreak}
-        onOpenSettings={() => setActiveTab('settings')}
-        onOpenDashboard={() => setActiveTab('dashboard')}
-        onQuit={() => {
-          if (confirm('Exit AI Focus Timer? Your study logs are safely saved.')) {
-            setShowTrayModal(false);
-          }
-        }}
-      />
-
-      <OnboardingModal
-        isOpen={showOnboarding}
-        onComplete={handleCompleteOnboarding}
       />
     </div>
   );

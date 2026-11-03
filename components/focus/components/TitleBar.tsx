@@ -4,7 +4,6 @@ import { Brain, Minus, Square, X, Bell, Shield, ChevronDown } from 'lucide-react
 
 interface TitleBarProps {
   focusState: FocusState;
-  focusScore: number;
   activeSubject?: string;
   activeTopic?: string;
   onOpenTray: () => void;
@@ -15,7 +14,6 @@ interface TitleBarProps {
 
 export const TitleBar: React.FC<TitleBarProps> = ({
   focusState,
-  focusScore,
   activeSubject,
   activeTopic,
   onOpenTray,
@@ -30,21 +28,21 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         return (
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            SCREEN FOCUS • {focusScore}
+            PRESENT
           </span>
         );
       case 'FOCUSED_PAPER':
         return (
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-teal-500/15 text-teal-400 border border-teal-500/30">
             <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
-            PAPER FOCUS • {focusScore}
+            PRESENT
           </span>
         );
       case 'FOCUSED_MIXED':
         return (
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-            MIXED FOCUS • {focusScore}
+            PRESENT
           </span>
         );
       case 'UNCERTAIN':
@@ -52,14 +50,14 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         return (
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-            UNCERTAIN • {focusScore}
+            CHECKING
           </span>
         );
       case 'UNVERIFIED':
         return (
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-700/40 text-zinc-300 border border-zinc-600/40">
             <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
-            UNVERIFIED
+            CAMERA UNAVAILABLE
           </span>
         );
       case 'PAUSED':
@@ -74,7 +72,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         return (
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-700/40 text-zinc-400 border border-zinc-600/40">
             <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
-            AWAY
+            ABSENT
           </span>
         );
       case 'BREAK':
@@ -121,7 +119,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       {/* Middle: Windows Drag Area / Local Privacy Assurance */}
       <div className="hidden lg:flex items-center gap-1.5 text-zinc-500 text-[11px]">
         <Shield className="w-3.5 h-3.5 text-emerald-400" />
-        <span>Local Vision Engine • Zero Cloud Video</span>
+        <span>Local Webcam Presence • No Video Upload</span>
       </div>
 
       {/* Right: Window Controls */}

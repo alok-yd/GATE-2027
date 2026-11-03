@@ -1,9 +1,9 @@
 /**
- * Lightweight, privacy-preserving face-region heuristic.
+ * Small connected-component fallback for local face-presence detection.
  *
- * This is not a neural face-recognition model: it groups skin-colour pixels
- * into face-sized connected regions. It is deliberately used only for
- * presence/second-person cues; no identity is inferred or stored.
+ * It identifies one face-like skin-colour region only. It does not count
+ * people, infer identity, analyse posture, or determine whether the user is
+ * studying. Native browser FaceDetector is preferred when available.
  */
 export interface SkinFaceRegion {
   x: number;
@@ -29,7 +29,7 @@ export function findSkinFaceRegions(
   skinMask: Uint8Array,
   gridWidth: number,
   gridHeight: number,
-  sampleSize: number = 2
+  sampleSize = 2
 ): SkinFaceRegion[] {
   if (
     gridWidth <= 0 ||
@@ -40,12 +40,10 @@ export function findSkinFaceRegions(
   }
 
   const visited = new Uint8Array(gridWidth * gridHeight);
-  const components: GridComponent[] = [];
   const stack: number[] = [];
+  let largest: GridComponent | null = null;
 
-  // 8-connected components tolerate small gaps from glasses, shadows and
-  // low-resolution sampling better than counting one large skin bounding box.
-  for (let start = 0; start < skinMask.length; start++) {
+  for (let start = 0; start < skinMask.length; start += 1) {
     if (!skinMask[start] || visited[start]) continue;
 
     visited[start] = 1;
@@ -70,10 +68,10 @@ export function findSkinFaceRegions(
       maxY = Math.max(maxY, y);
       sumX += x;
       sumY += y;
-      area++;
+      area += 1;
 
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
           if (dx === 0 && dy === 0) continue;
           const nx = x + dx;
           const ny = y + dy;
@@ -93,78 +91,34 @@ export function findSkinFaceRegions(
     const aspectRatio = width / Math.max(1, height);
     const centerY = sumY / Math.max(1, area);
 
-    // Reject tiny hand fragments, long horizontal desk surfaces, and regions
-    // deep in the desk area. A face-like region is usually compact and upper-frame.
+    // Keep one compact, upper-frame region large enough to plausibly be a face.
     if (
       area < 14 ||
       width < 5 ||
       height < 6 ||
       aspectRatio < 0.35 ||
       aspectRatio > 1.65 ||
-      centerY > gridHeight * 0.82
+      centerY > gridHeight * 0.9
     ) {
       continue;
     }
 
-    components.push({
-      minX,
-      maxX,
-      minY,
-      maxY,
-      sumX,
-      sumY,
-      area
-    });
+    if (!largest || area > largest.area) {
+      largest = { minX, maxX, minY, maxY, sumX, sumY, area };
+    }
   }
 
-  components.sort((a, b) => b.area - a.area);
-  if (components.length === 0) return [];
+  if (!largest) return [];
 
-  const toRegion = (component: GridComponent): SkinFaceRegion => {
-    const width = component.maxX - component.minX + 1;
-    const height = component.maxY - component.minY + 1;
-    return {
-      x: component.minX * sampleSize,
-      y: component.minY * sampleSize,
-      width: width * sampleSize,
-      height: height * sampleSize,
-      centerX: (component.sumX / component.area) * sampleSize,
-      centerY: (component.sumY / component.area) * sampleSize,
-      area: component.area
-    };
-  };
-
-  const primary = components[0];
-  const primaryWidth = primary.maxX - primary.minX + 1;
-  const primaryHeight = primary.maxY - primary.minY + 1;
-  const primaryCenterX = primary.sumX / primary.area;
-  const primaryCenterY = primary.sumY / primary.area;
-
-  // Count a second person only when another sizeable, face-like region is
-  // spatially separate and at a comparable height/scale to the main face.
-  const secondary = components.slice(1).find(candidate => {
-    const width = candidate.maxX - candidate.minX + 1;
-    const height = candidate.maxY - candidate.minY + 1;
-    const centerX = candidate.sumX / candidate.area;
-    const centerY = candidate.sumY / candidate.area;
-    const horizontalDistance = Math.abs(centerX - primaryCenterX);
-    const verticalDistance = Math.abs(centerY - primaryCenterY);
-
-    return (
-      // A conversation partner at the same desk should be a nearby,
-      // similarly-sized foreground face. Small distant classroom faces,
-      // posters and skin-coloured background fragments are not interaction cues.
-      candidate.area >= Math.max(28, primary.area * 0.58) &&
-      width >= primaryWidth * 0.68 &&
-      height >= primaryHeight * 0.68 &&
-      horizontalDistance >= Math.max(8, primaryWidth * 0.65) &&
-      horizontalDistance <= primaryWidth * 2.25 &&
-      verticalDistance <= primaryHeight * 0.65 &&
-      centerY <= gridHeight * 0.78
-    );
-  });
-
-  return secondary
-    ? [toRegion(primary), toRegion(secondary)]
-    : [toRegion(primary)];
+  const width = largest.maxX - largest.minX + 1;
+  const height = largest.maxY - largest.minY + 1;
+  return [{
+    x: largest.minX * sampleSize,
+    y: largest.minY * sampleSize,
+    width: width * sampleSize,
+    height: height * sampleSize,
+    centerX: (largest.sumX / largest.area) * sampleSize,
+    centerY: (largest.sumY / largest.area) * sampleSize,
+    area: largest.area,
+  }];
 }

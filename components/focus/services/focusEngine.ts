@@ -1,4 +1,3 @@
-import { DEFAULT_FOCUS_SETTINGS } from '../constants';
 import {
   ActivityData,
   ActivityEventLog,
@@ -7,36 +6,22 @@ import {
   FocusConfidenceVector,
   FocusEngineSettings,
   FocusState,
+  PersonPresenceState,
   StateTransitionLog,
   StudyMedium,
   UserSettings,
-  VisionData
+  VisionData,
 } from '../types';
-import { calibrationEngine } from './calibrationEngine';
-import { FaceAnalyzer } from './focus/analyzers/FaceAnalyzer';
-import { PoseAnalyzer } from './focus/analyzers/PoseAnalyzer';
-import { HandAnalyzer } from './focus/analyzers/HandAnalyzer';
-import { PhoneAnalyzer } from './focus/analyzers/PhoneAnalyzer';
-import { ConversationAnalyzer } from './focus/analyzers/ConversationAnalyzer';
-import { SleepAnalyzer } from './focus/analyzers/SleepAnalyzer';
-import { ComputerActivityAnalyzer } from './focus/analyzers/ComputerActivityAnalyzer';
-import { ActivityRecognizer, ActivityRecognitionResult } from './focus/ActivityRecognizer';
-import { EvidenceFusionEngine, EvidenceFusionResult } from './focus/EvidenceFusionEngine';
-import { ContextMemory } from './focus/ContextMemory';
-import { TemporalEngine } from './focus/TemporalEngine';
-import { FocusStateMachine } from './focus/FocusStateMachine';
-import { signalValidator } from './focus/SignalValidator';
-import { PersonPresenceEngine } from './focus/PersonPresenceEngine';
-import { conflictResolver } from './focus/ConflictResolver';
-import { PersonPresenceState, SignalConflictLog } from '../types';
+import { DEFAULT_FOCUS_SETTINGS } from '../constants';
 
 export interface FocusEngineOutput {
   state: FocusState;
   score: number;
   rawScore: number;
   facePresent: boolean;
-  personPresenceState?: PersonPresenceState;
-  visionQualityScore?: number;
+  personPresenceState: PersonPresenceState;
+  cameraAvailable: boolean;
+  visionQualityScore: number;
   activity?: ActivityType;
   confidenceVector?: FocusConfidenceVector;
   faceVisibility?: FaceVisibilityCategory;
@@ -55,10 +40,10 @@ export interface FocusEngineOutput {
     postureStableScore?: number;
     lightingScore?: number;
   };
-  telemetry?: {
+  telemetry: {
     headPitch: number;
     headYaw: number;
-    headRoll?: number;
+    headRoll: number;
     gazeScore: number;
     handActivity: boolean;
     bodyPostureStable: boolean;
@@ -66,135 +51,137 @@ export interface FocusEngineOutput {
     mouseActive: boolean;
     idleSeconds: number;
     studyMedium: StudyMedium;
-    lightingLevel?: string;
     faceCount?: number;
     primaryActivity?: ActivityType;
-    phoneConfidence?: number;
-    sleepConfidence?: number;
-    conversationConfidence?: number;
-    inStudyZone?: boolean;
-    personPresenceState?: PersonPresenceState;
-    visionQualityScore?: number;
-    isPersonPresent?: boolean;
-    signalConflicts?: SignalConflictLog[];
+    personPresenceState: PersonPresenceState;
+    visionQualityScore: number;
+    isPersonPresent: boolean;
   };
-  recentTransitions?: StateTransitionLog[];
-  activityEvents?: ActivityEventLog[];
+  recentTransitions: StateTransitionLog[];
+  activityEvents: ActivityEventLog[];
 }
 
 export type FocusEngineCallback = (output: FocusEngineOutput) => void;
 
+const CAMERA_STALE_AFTER_MS = 8000;
+const PRESENCE_HISTORY_LENGTH = 3;
+const REQUIRED_PRESENT_FRAMES = 2;
+
+const isFocusedState = (state: FocusState) =>
+  state === 'FOCUSED' ||
+  state === 'FOCUSED_SCREEN' ||
+  state === 'FOCUSED_PAPER' ||
+  state === 'FOCUSED_MIXED';
+
 export class FocusEngine {
   private settings: FocusEngineSettings;
+  private medium: StudyMedium;
   private currentState: FocusState = 'IDLE';
+  private sessionActive = false;
+  private manualPauseRequested = false;
+  private breakActive = false;
 
-  // Modular Component Pipeline
-  private faceAnalyzer = new FaceAnalyzer();
-  private poseAnalyzer = new PoseAnalyzer();
-  private handAnalyzer = new HandAnalyzer();
-  private phoneAnalyzer = new PhoneAnalyzer();
-  private conversationAnalyzer = new ConversationAnalyzer();
-  private sleepAnalyzer = new SleepAnalyzer();
-  private computerActivityAnalyzer = new ComputerActivityAnalyzer();
-  private activityRecognizer = new ActivityRecognizer();
-  private evidenceFusionEngine = new EvidenceFusionEngine();
-  private contextMemory = new ContextMemory();
-  private temporalEngine = new TemporalEngine();
-  private focusStateMachine = new FocusStateMachine();
-  private presenceEngine = new PersonPresenceEngine();
-
-  // Cached last evaluation output
-  private lastEvaluationOutput: FocusEngineOutput | null = null;
-
-  // Last known raw sensory inputs
   private lastVision: VisionData = {
     facePresent: false,
-    confidence: 0.05,
+    confidence: 0,
     headYaw: 0,
-    headPitch: -4,
+    headPitch: 0,
     headRoll: 0,
-    eyeOpen: true,
-    gazeScore: 0.9,
+    eyeOpen: false,
+    gazeScore: 0,
     handActivity: false,
-    bodyPostureStable: true,
-    deskActivityScore: 0.2,
+    bodyPostureStable: false,
+    deskActivityScore: 0,
     isLookingDown: false,
-    lightingLevel: 'normal',
-    lightingScore: 0.65,
-    faceCount: 1,
     cameraHealthy: false,
-    isSimulated: true,
-    timestamp: Date.now()
+    isSimulated: false,
+    timestamp: 0,
   };
 
-  private lastActivity: ActivityData = {
-    keyboardActive: false,
-    mouseActive: false,
-    idleSeconds: 0,
-    activeApp: 'Visual Studio Code',
-    isWindowFocused: true,
-    lastActivityTimestamp: Date.now()
-  };
-
-  private callbacks: Set<FocusEngineCallback> = new Set();
-  private manualPauseRequested = false;
+  private presenceHistory: boolean[] = [];
+  private callbacks = new Set<FocusEngineCallback>();
+  private transitions: StateTransitionLog[] = [];
+  private lastEvaluationOutput: FocusEngineOutput | null = null;
 
   constructor(settings: FocusEngineSettings = DEFAULT_FOCUS_SETTINGS) {
     this.settings = settings;
+    this.medium = settings.studyMedium || 'Screen Study';
   }
 
   getStudyMedium(): StudyMedium {
-    return this.settings.studyMedium || 'Screen Study';
+    return this.medium;
   }
 
   setStudyMedium(medium: StudyMedium): void {
-    this.settings.studyMedium = medium;
+    this.medium = medium;
     this.evaluate();
   }
 
   updateSettings(newSettings: FocusEngineSettings | UserSettings): void {
     if ('focusSettings' in newSettings) {
-      this.settings = {
-        ...newSettings.focusSettings,
-        studyMedium: newSettings.studyMedium ?? newSettings.focusSettings.studyMedium,
-        focusThreshold: newSettings.focusThreshold ?? newSettings.focusSettings.focusThreshold,
-        warningThreshold: newSettings.warningThreshold ?? newSettings.focusSettings.warningThreshold,
-        distractionGraceSeconds: newSettings.distractionGracePeriodSeconds ?? newSettings.focusSettings.distractionGraceSeconds,
-        returnConfirmationSeconds: newSettings.returnConfirmationSeconds ?? newSettings.focusSettings.returnConfirmationSeconds,
-        awayThresholdSeconds: newSettings.awayThresholdSeconds ?? newSettings.focusSettings.awayThresholdSeconds,
-        paperHeadDownToleranceSeconds: newSettings.paperHeadDownToleranceSeconds ?? newSettings.focusSettings.paperHeadDownToleranceSeconds,
-        studyApps: newSettings.studyApplications ?? newSettings.focusSettings.studyApps,
-        distractingApps: newSettings.distractingApplications ?? newSettings.focusSettings.distractingApps
-      };
+      this.settings = newSettings.focusSettings;
+      this.medium = newSettings.studyMedium || newSettings.focusSettings.studyMedium || this.medium;
     } else {
       this.settings = newSettings;
+      this.medium = newSettings.studyMedium || this.medium;
     }
     this.evaluate();
+  }
+
+  beginSession(): void {
+    this.sessionActive = true;
+    this.manualPauseRequested = false;
+    this.breakActive = false;
+    this.presenceHistory = [];
+    this.currentState = 'UNVERIFIED';
+    this.evaluate(true);
+  }
+
+  endSession(completed = false): void {
+    this.sessionActive = false;
+    this.manualPauseRequested = false;
+    this.breakActive = false;
+    this.presenceHistory = [];
+    this.currentState = completed ? 'COMPLETED' : 'IDLE';
+    this.evaluate(true);
   }
 
   getTransitionLogs(): StateTransitionLog[] {
-    return this.contextMemory.getTransitionLogs();
+    return this.transitions.slice(-100);
   }
 
+  // Kept as a compatibility method for the existing Analytics and AI Coach pages.
+  // Presence-only focus sessions do not generate separate activity classifications.
   getActivityEvents(): ActivityEventLog[] {
-    return this.contextMemory.getActivityEvents();
+    return [];
   }
 
   getCurrentOutput(): FocusEngineOutput {
-    if (this.lastEvaluationOutput) {
-      return this.lastEvaluationOutput;
-    }
-    this.evaluate();
+    if (!this.lastEvaluationOutput) this.evaluate(true);
     return this.lastEvaluationOutput!;
   }
 
   updateVision(data: VisionData): void {
     this.lastVision = data;
+
+    if (data.cameraHealthy !== true || data.isSimulated === true) {
+      this.presenceHistory = [];
+    } else {
+      this.presenceHistory.push(Boolean(data.facePresent));
+      if (this.presenceHistory.length > PRESENCE_HISTORY_LENGTH) {
+        this.presenceHistory.shift();
+      }
+    }
+
     this.evaluate();
   }
 
-  updateActivity(data: ActivityData): void {
-    this.lastActivity = data;
+  // Keyboard, mouse, browser-tab and active-window events are deliberately ignored.
+  updateActivity(_data: ActivityData): void {
+    // Presence-only rule: user activity is not a timer signal.
+  }
+
+  refresh(): void {
     this.evaluate();
   }
 
@@ -208,221 +195,174 @@ export class FocusEngine {
   }
 
   setState(newState: FocusState, customReason?: string): void {
-    const now = Date.now();
-
-    if (customReason === 'Session initiated' || newState === 'UNVERIFIED' || newState === 'IDLE') {
-      this.sleepAnalyzer.reset();
-      this.conversationAnalyzer.reset();
-      this.presenceEngine.reset();
-      this.focusStateMachine.reset();
+    if (customReason === 'Session initiated') {
+      this.beginSession();
+      return;
     }
 
     if (customReason === 'User paused session') {
       this.manualPauseRequested = true;
-    } else if (customReason === 'User resumed session' || newState === 'IDLE') {
+    } else if (
+      customReason === 'User resumed session' ||
+      newState === 'IDLE' ||
+      newState === 'COMPLETED'
+    ) {
       this.manualPauseRequested = false;
     }
-    if (this.currentState !== newState) {
-      this.contextMemory.recordTransition(
-        this.currentState,
-        newState,
-        this.temporalEngine.getSmoothedScore(),
-        customReason || 'Manual state change',
-        undefined,
-        undefined,
-        now
-      );
-    }
-    this.currentState = newState;
-    this.contextMemory.recordState(newState, now);
 
-    if (newState === 'BREAK' || newState === 'IDLE' || newState === 'COMPLETED' || newState === 'UNVERIFIED') {
-      this.temporalEngine.resetAllTimers();
+    if (newState === 'BREAK') {
+      this.breakActive = true;
+    } else if (customReason === 'User resumed session' || newState === 'IDLE' || newState === 'COMPLETED') {
+      this.breakActive = false;
     }
-    this.evaluate();
+
+    if (newState === 'IDLE' || newState === 'COMPLETED') {
+      this.sessionActive = false;
+      this.presenceHistory = [];
+      this.currentState = newState;
+      this.evaluate(true);
+      return;
+    }
+
+    if (newState === 'PAUSED') this.manualPauseRequested = true;
+    if (newState === 'UNVERIFIED' && customReason === 'User continued without camera verification') {
+      this.manualPauseRequested = false;
+    }
+
+    this.evaluate(true);
   }
 
-  private evaluate(): void {
-    // Use the newer of wall-clock time and the frame timestamp. The latter
-    // also supports deterministic, fast-forwarded timestamps in the local benchmark.
-    // A stalled real camera still becomes stale as wall-clock time advances.
-    const now = Math.max(Date.now(), this.lastVision.timestamp || 0);
-    const visionAgeMs = now - (this.lastVision.timestamp || 0);
-    const visionVerified =
+  private evaluate(forceEmit = false): void {
+    const now = Date.now();
+    const frameAge = this.lastVision.timestamp > 0
+      ? Math.max(0, now - this.lastVision.timestamp)
+      : Number.POSITIVE_INFINITY;
+    const cameraAvailable =
+      this.lastVision.cameraHealthy === true &&
       this.lastVision.isSimulated !== true &&
-      this.lastVision.cameraHealthy !== false &&
-      visionAgeMs >= 0 &&
-      visionAgeMs <= 5000;
-    const profile = calibrationEngine.getProfile();
-    const medium = this.settings.studyMedium || 'Screen Study';
+      frameAge <= CAMERA_STALE_AFTER_MS;
 
-    // 0. Signal Validation & Person Presence Engine
-    const validation = signalValidator.validate(this.lastVision);
-    const presence = this.presenceEngine.evaluate(this.lastVision, validation, profile, now);
+    const recentPresenceCount = this.presenceHistory.filter(Boolean).length;
+    const isPersonPresent =
+      cameraAvailable &&
+      this.presenceHistory.length >= 2 &&
+      recentPresenceCount >= REQUIRED_PRESENT_FRAMES;
 
-    // 1. Modular Analyzers Execution
-    const face = this.faceAnalyzer.analyze(this.lastVision, profile);
-    const pose = this.poseAnalyzer.analyze(this.lastVision, profile, face);
-    const hand = this.handAnalyzer.analyze(this.lastVision, profile, pose);
-    const phone = this.phoneAnalyzer.analyze(this.lastVision, profile, pose, hand, this.lastActivity);
-    const conv = this.conversationAnalyzer.analyze(this.lastVision, profile, pose, face);
-    const sleep = this.sleepAnalyzer.analyze(
-      this.lastVision,
-      profile,
-      face,
-      pose,
-      hand,
-      this.lastActivity,
-      this.settings.paperHeadDownToleranceSeconds
-    );
-    const comp = this.computerActivityAnalyzer.analyze(this.lastActivity, this.settings, medium);
+    let nextState = this.currentState;
+    let stateExplanation = 'Start a session to activate webcam presence detection.';
+    let personPresenceState: PersonPresenceState = 'VISION_UNCERTAIN';
 
-    // 2. Activity Recognition Layer
-    const recentActivity = this.contextMemory.getRecentActivity();
-    const activity: ActivityRecognitionResult = this.activityRecognizer.recognize(
-      face,
-      pose,
-      hand,
-      phone,
-      conv,
-      sleep,
-      comp,
-      medium,
-      recentActivity
-    );
-    this.contextMemory.recordActivity(activity.primaryActivity, now);
-
-    // 3. Evidence Fusion & Focus Confidence Vector
-    const evidence: EvidenceFusionResult = this.evidenceFusionEngine.fuse(
-      face,
-      pose,
-      hand,
-      phone,
-      conv,
-      sleep,
-      comp,
-      activity,
-      this.settings,
-      medium,
-      presence,
-      validation
-    );
-
-    // 4. Temporal Reasoning & Smoothing
-    this.temporalEngine.recordObservation({
-      timestamp: now,
-      focusScore: evidence.totalFocusScore,
-      activity: activity.primaryActivity,
-      confidenceVector: evidence.confidenceVector,
-      facePresent: presence.isPersonPresent,
-      faceVisibility: face.visibilityCategory,
-      headYaw: pose.headYaw,
-      headPitch: pose.headPitch,
-      gazeScore: face.gazeScore,
-      handActivity: hand.handActivity,
-      bodyPostureStable: pose.isSeatedPostureStable,
-      phoneScore: phone.phoneConfidence,
-      conversationScore: conv.conversationConfidence,
-      sleepScore: sleep.sleepConfidence,
-      keyboardActive: comp.keyboardActive,
-      mouseActive: comp.mouseActive,
-      idleSeconds: comp.idleSeconds,
-      activeApp: comp.activeApp
-    });
-
-    const smoothedScore = this.temporalEngine.getSmoothedScore();
-
-    // 5. Hierarchical Focus State Machine
-    const smResult = this.focusStateMachine.evaluate(
-      this.currentState,
-      activity,
-      evidence,
-      face,
-      pose,
-      hand,
-      phone,
-      conv,
-      sleep,
-      comp,
-      this.temporalEngine,
-      this.contextMemory,
-      this.settings,
-      medium,
-      now,
-      presence,
-      this.manualPauseRequested,
-      visionVerified
-    );
-
-    if (smResult.hasStateChanged) {
-      if (smResult.nextState === 'UNVERIFIED') {
-        this.sleepAnalyzer.reset();
-        this.conversationAnalyzer.reset();
-        this.presenceEngine.reset();
-        this.focusStateMachine.reset();
-      }
-
-      this.contextMemory.recordTransition(
-        this.currentState,
-        smResult.nextState,
-        smoothedScore,
-        smResult.distractionReason || smResult.stateExplanation,
-        activity.primaryActivity,
-        evidence.confidenceVector,
-        now
-      );
-      this.currentState = smResult.nextState;
-      this.contextMemory.recordState(this.currentState, now);
+    if (!this.sessionActive) {
+      nextState = this.currentState === 'COMPLETED' ? 'COMPLETED' : 'IDLE';
+      stateExplanation = this.currentState === 'COMPLETED'
+        ? 'SESSION COMPLETED — Target study time reached.'
+        : 'READY — Start a session to activate webcam presence detection.';
+    } else if (this.manualPauseRequested) {
+      nextState = 'PAUSED';
+      stateExplanation = 'MANUALLY PAUSED — Countdown is held.';
+      personPresenceState = cameraAvailable
+        ? (isPersonPresent ? 'PERSON_PRESENT' : 'PERSON_ABSENT')
+        : 'VISION_UNCERTAIN';
+    } else if (this.breakActive) {
+      nextState = 'BREAK';
+      stateExplanation = 'BREAK — Countdown is held.';
+      personPresenceState = cameraAvailable
+        ? (isPersonPresent ? 'PERSON_PRESENT' : 'PERSON_ABSENT')
+        : 'VISION_UNCERTAIN';
+    } else if (!cameraAvailable) {
+      nextState = 'UNVERIFIED';
+      stateExplanation = 'CAMERA UNAVAILABLE — Timer paused. Reconnect the webcam to continue.';
+      personPresenceState = 'VISION_UNCERTAIN';
+    } else if (isPersonPresent) {
+      nextState = this.medium === 'Paper / PYQ Study'
+        ? 'FOCUSED_PAPER'
+        : this.medium === 'Mixed Study'
+          ? 'FOCUSED_MIXED'
+          : 'FOCUSED_SCREEN';
+      stateExplanation = 'PRESENT — TIMER RUNNING.';
+      personPresenceState = 'PERSON_PRESENT';
+    } else {
+      nextState = 'AWAY';
+      stateExplanation = 'ABSENT — TIMER PAUSED. Return in front of the webcam to resume.';
+      personPresenceState = 'PERSON_ABSENT';
     }
 
-    // 6. Build Output
-    this.lastEvaluationOutput = {
+    const cameraOrPresenceChanged =
+      !this.lastEvaluationOutput ||
+      this.lastEvaluationOutput.cameraAvailable !== cameraAvailable ||
+      this.lastEvaluationOutput.facePresent !== isPersonPresent;
+
+    const stateChanged = nextState !== this.currentState;
+    if (stateChanged) {
+      const previous = this.currentState;
+      this.currentState = nextState;
+      this.transitions.push({
+        id: `presence_${now}_${this.transitions.length}`,
+        timestamp: now,
+        oldState: previous,
+        newState: nextState,
+        focusScore: isPersonPresent ? 100 : 0,
+        reason: stateExplanation,
+      });
+      if (this.transitions.length > 100) this.transitions.shift();
+    }
+
+    const score = isPersonPresent && isFocusedState(nextState) ? 100 : 0;
+    const activity: ActivityType = isPersonPresent ? 'SCREEN_READING' : 'AWAY';
+    const output: FocusEngineOutput = {
       state: this.currentState,
-      score: smoothedScore,
-      rawScore: evidence.totalFocusScore,
-      facePresent: presence.isPersonPresent,
-      personPresenceState: presence.state,
-      visionQualityScore: validation.visionQuality.value,
-      activity: activity.primaryActivity,
-      confidenceVector: evidence.confidenceVector,
-      faceVisibility: face.visibilityCategory,
-      distractionReason: smResult.distractionReason,
-      stateExplanation: smResult.stateExplanation,
-      isGracePeriodActive: smResult.isGracePeriodActive,
-      graceSecondsRemaining: smResult.graceSecondsRemaining,
-      returnConfirmationRemaining: smResult.returnConfirmationRemaining,
-      signalBreakdown: evidence.signalScores,
-      telemetry: {
-        headPitch: pose.headPitch,
-        headYaw: pose.headYaw,
-        headRoll: pose.headRoll,
-        gazeScore: face.gazeScore,
-        handActivity: hand.handActivity,
-        bodyPostureStable: pose.isSeatedPostureStable,
-        keyboardActive: comp.keyboardActive,
-        mouseActive: comp.mouseActive,
-        idleSeconds: comp.idleSeconds,
-        studyMedium: medium,
-        lightingLevel: face.lightingLevel,
-        faceCount: face.faceCount,
-        primaryActivity: activity.primaryActivity,
-        phoneConfidence: phone.phoneConfidence,
-        sleepConfidence: sleep.sleepConfidence,
-        conversationConfidence: conv.conversationConfidence,
-        inStudyZone: pose.inStudyZone,
-        personPresenceState: presence.state,
-        visionQualityScore: validation.visionQuality.value,
-        isPersonPresent: presence.isPersonPresent,
-        signalConflicts: conflictResolver.getConflictHistory()
+      score,
+      rawScore: score,
+      facePresent: isPersonPresent,
+      personPresenceState,
+      cameraAvailable,
+      visionQualityScore: cameraAvailable ? 1 : 0,
+      activity,
+      distractionReason: isPersonPresent ? undefined : stateExplanation,
+      stateExplanation,
+      isGracePeriodActive: false,
+      graceSecondsRemaining: 0,
+      returnConfirmationRemaining: 0,
+      signalBreakdown: {
+        faceScore: isPersonPresent ? 100 : 0,
+        headPoseScore: 0,
+        eyeGazeScore: 0,
+        activityScore: 0,
+        appContextScore: 0,
+        deskActivityScore: 0,
+        postureStableScore: 0,
+        lightingScore: cameraAvailable ? 100 : 0,
       },
-      recentTransitions: this.contextMemory.getTransitionLogs().slice(-10),
-      activityEvents: this.contextMemory.getActivityEvents().slice(-10)
+      telemetry: {
+        headPitch: 0,
+        headYaw: 0,
+        headRoll: 0,
+        gazeScore: 0,
+        handActivity: false,
+        bodyPostureStable: false,
+        keyboardActive: false,
+        mouseActive: false,
+        idleSeconds: 0,
+        studyMedium: this.medium,
+        personPresenceState,
+        visionQualityScore: cameraAvailable ? 1 : 0,
+        isPersonPresent,
+      },
+      recentTransitions: this.getTransitionLogs().slice(-10),
+      activityEvents: [],
     };
 
-    // 7. Dispatch to listeners
-    this.callbacks.forEach(cb => cb(this.lastEvaluationOutput!));
+    this.lastEvaluationOutput = output;
+    if (forceEmit || stateChanged || cameraOrPresenceChanged) {
+      this.callbacks.forEach((callback) => {
+        try {
+          callback(output);
+        } catch (error) {
+          console.error('[AI Focus] Focus listener failed:', error);
+        }
+      });
+    }
   }
 }
 
 export const focusEngine = new FocusEngine();
-

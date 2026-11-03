@@ -1,14 +1,12 @@
 import { DEFAULT_USER_SETTINGS, GATE_SUBJECTS } from '../constants';
-import { CalibrationProfile, DailySummary, EvaluationMetrics, FocusSession, FocusTimelineEvent, SubjectItem, UserSettings } from '../types';
+import { DailySummary, FocusSession, FocusTimelineEvent, SubjectItem, UserSettings } from '../types';
 
 const STORAGE_KEYS = {
   SETTINGS: 'ai_focus_timer_settings_v1',
   SESSIONS: 'ai_focus_timer_sessions_v1',
   TIMELINE: 'ai_focus_timer_timeline_v1',
   SUBJECTS: 'ai_focus_timer_subjects_v1',
-  ACTIVE_SESSION: 'ai_focus_timer_active_session_v1',
-  CALIBRATION: 'ai_focus_timer_calibration_v1',
-  EVALUATION: 'ai_focus_timer_evaluation_v1'
+  ACTIVE_SESSION: 'ai_focus_timer_active_session_v1'
 };
 
 // Helper for today's date string YYYY-MM-DD
@@ -80,44 +78,6 @@ export class StorageService {
       if (storage) storage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
     } catch (e) {
       console.error('Failed to save settings to storage', e);
-    }
-  }
-
-  static getCalibrationProfile(): CalibrationProfile | null {
-    try {
-      const storage = getStorage();
-      const raw = storage ? storage.getItem(STORAGE_KEYS.CALIBRATION) : null;
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  static saveCalibrationProfile(profile: CalibrationProfile): void {
-    try {
-      const storage = getStorage();
-      if (storage) storage.setItem(STORAGE_KEYS.CALIBRATION, JSON.stringify(profile));
-    } catch (e) {
-      console.error('Failed to save calibration profile', e);
-    }
-  }
-
-  static getEvaluationMetrics(): EvaluationMetrics | null {
-    try {
-      const storage = getStorage();
-      const raw = storage ? storage.getItem(STORAGE_KEYS.EVALUATION) : null;
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  static saveEvaluationMetrics(metrics: EvaluationMetrics): void {
-    try {
-      const storage = getStorage();
-      if (storage) storage.setItem(STORAGE_KEYS.EVALUATION, JSON.stringify(metrics));
-    } catch (e) {
-      console.error('Failed to save evaluation metrics', e);
     }
   }
 

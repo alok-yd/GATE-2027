@@ -1,5 +1,12 @@
 import { FocusEngine, FocusEngineOutput, focusEngine } from './focusEngine';
-import { FocusMode, FocusSession, FocusState, FocusTimelineEvent, isFocusedState, StudyMedium } from '../types';
+import {
+  FocusMode,
+  FocusSession,
+  FocusState,
+  FocusTimelineEvent,
+  isFocusedState,
+  StudyMedium,
+} from '../types';
 import { StorageService } from './storage';
 import { soundFx } from './audio';
 
@@ -39,54 +46,44 @@ export interface TimerTickData {
 
 export type TimerTickCallback = (data: TimerTickData) => void;
 
+/**
+ * Session time is credited exclusively while FocusEngine reports a webcam-
+ * detected person as present. AWAY, UNVERIFIED and PAUSED time never reduces
+ * the countdown. A single interval owns all timer updates.
+ */
 export class TimerEngine {
   private focusEngine: FocusEngine;
-  private intervalId: any = null;
-  private callbacks: Set<TimerTickCallback> = new Set();
+  private intervalId: number | null = null;
+  private callbacks = new Set<TimerTickCallback>();
 
-  // Active Session State
   private activeSessionId: string | null = null;
-  private subject: string = 'Algorithms';
-  private topic: string = 'Dynamic Programming';
-  private goal: string = 'Solve 5 PYQ problems with verified focus';
+  private subject = 'Algorithms';
+  private topic = 'Dynamic Programming';
+  private goal = 'Study session';
   private mode: FocusMode = 'Deep Focus';
   private medium: StudyMedium = 'Screen Study';
-  private targetSeconds: number = 7200; // 2 hours default
-  private sessionStartTime: number = 0;
+  private targetSeconds = 7200;
+  private sessionStartTime = 0;
 
-  // Time accumulators (in milliseconds for high precision)
-  private accumulatedFocusedMs: number = 0;
-  private accumulatedScreenFocusedMs: number = 0;
-  private accumulatedPaperFocusedMs: number = 0;
-  private accumulatedMixedFocusedMs: number = 0;
-  private accumulatedThinkingMs: number = 0;
-  private accumulatedUncertainMs: number = 0;
-  private accumulatedUnverifiedMs: number = 0;
-  private accumulatedPausedMs: number = 0;
-  private accumulatedWarningMs: number = 0;
-  private accumulatedDistractedMs: number = 0;
-  private accumulatedPhoneMs: number = 0;
-  private accumulatedConversationMs: number = 0;
-  private accumulatedSleepMs: number = 0;
-  private accumulatedAwayMs: number = 0;
-  private accumulatedBreakMs: number = 0;
-  private lastTickTimestamp: number = 0;
+  private accumulatedFocusedMs = 0;
+  private accumulatedScreenFocusedMs = 0;
+  private accumulatedPaperFocusedMs = 0;
+  private accumulatedMixedFocusedMs = 0;
+  private accumulatedUnverifiedMs = 0;
+  private accumulatedPausedMs = 0;
+  private accumulatedAwayMs = 0;
+  private accumulatedBreakMs = 0;
+  private lastTickTimestamp = 0;
 
-  // Scores & metrics
-  private scoresList: number[] = [];
-  private peakScore: number = 0;
-  private distractionCount: number = 0;
   private previousState: FocusState = 'IDLE';
-  private currentStateExplanation: string = '';
-
-  // Timeline events queue
+  private currentStateExplanation = '';
   private timelineBuffer: FocusTimelineEvent[] = [];
-  private lastTimelineLog: number = 0;
+  private lastTimelineLog = 0;
   private targetReachedNotified = false;
 
-  constructor(focusEngine: FocusEngine) {
-    this.focusEngine = focusEngine;
-    this.medium = focusEngine.getStudyMedium();
+  constructor(engine: FocusEngine) {
+    this.focusEngine = engine;
+    this.medium = engine.getStudyMedium();
     this.focusEngine.subscribe(this.handleFocusEngineOutput);
   }
 
@@ -110,22 +107,21 @@ export class TimerEngine {
     topic: string,
     targetSeconds: number,
     mode: FocusMode = 'Deep Focus',
-    goal: string = '',
+    goal = '',
     medium?: StudyMedium
   ): void {
+    if (this.activeSessionId) this.stopSession();
+
     const now = Date.now();
-    this.activeSessionId = 'sess_' + now;
+    this.activeSessionId = `sess_${now}`;
     this.subject = subject;
     this.topic = topic;
-    this.targetSeconds = targetSeconds;
+    this.goal = goal || 'Study session';
     this.mode = mode;
-    if (medium) {
-      this.medium = medium;
-      this.focusEngine.setStudyMedium(medium);
-    } else {
-      this.medium = this.focusEngine.getStudyMedium();
-    }
-    this.goal = goal;
+    if (medium) this.medium = medium;
+    this.focusEngine.setStudyMedium(this.medium);
+
+    this.targetSeconds = Math.max(1, Math.floor(targetSeconds));
     this.sessionStartTime = now;
     this.lastTickTimestamp = now;
 
@@ -133,107 +129,82 @@ export class TimerEngine {
     this.accumulatedScreenFocusedMs = 0;
     this.accumulatedPaperFocusedMs = 0;
     this.accumulatedMixedFocusedMs = 0;
-    this.accumulatedThinkingMs = 0;
-    this.accumulatedUncertainMs = 0;
     this.accumulatedUnverifiedMs = 0;
     this.accumulatedPausedMs = 0;
-    this.accumulatedWarningMs = 0;
-    this.accumulatedDistractedMs = 0;
-    this.accumulatedPhoneMs = 0;
-    this.accumulatedConversationMs = 0;
-    this.accumulatedSleepMs = 0;
     this.accumulatedAwayMs = 0;
     this.accumulatedBreakMs = 0;
-    this.scoresList = [];
-    this.peakScore = 0;
-    this.distractionCount = 0;
-    this.targetReachedNotified = false;
+    this.timelineBuffer = [];
     this.lastTimelineLog = now;
+    this.targetReachedNotified = false;
+    this.currentStateExplanation = 'Waiting for webcam presence. The countdown is paused.';
 
-    let initialFocusedState: FocusState = 'FOCUSED_SCREEN';
-    if (this.medium === 'Paper / PYQ Study') {
-      initialFocusedState = 'FOCUSED_PAPER';
-    } else if (this.medium === 'Mixed Study') {
-      initialFocusedState = 'FOCUSED_MIXED';
-    }
+    // Establish a paused baseline before activating presence detection.
+    // The engine immediately changes to PRESENT only after stable camera frames.
+    this.previousState = 'UNVERIFIED';
+    this.focusEngine.beginSession();
+    this.previousState = this.focusEngine.getState();
 
-    this.previousState = initialFocusedState;
-    this.focusEngine.setState(initialFocusedState, 'Session initiated');
-
-    if (this.intervalId !== null) {
-      clearInterval(this.intervalId);
-    }
-    this.intervalId = setInterval(this.tick, 500);
-
-    soundFx.playFocusRestored();
+    if (this.intervalId !== null) window.clearInterval(this.intervalId);
+    this.intervalId = window.setInterval(this.tick, 250);
     this.emitCurrentTick();
   }
 
   pauseSession(): void {
+    if (!this.activeSessionId) return;
     this.focusEngine.setState('PAUSED', 'User paused session');
-    soundFx.playAutoPaused();
     this.emitCurrentTick();
   }
 
   resumeSession(): void {
-    let resumeState: FocusState = 'FOCUSED_SCREEN';
-    if (this.medium === 'Paper / PYQ Study') {
-      resumeState = 'FOCUSED_PAPER';
-    } else if (this.medium === 'Mixed Study') {
-      resumeState = 'FOCUSED_MIXED';
-    }
-    this.focusEngine.setState(resumeState, 'User resumed session');
-    soundFx.playFocusRestored();
+    if (!this.activeSessionId) return;
+    // FocusEngine re-checks the current webcam presence before allowing time.
+    this.focusEngine.setState('FOCUSED_SCREEN', 'User resumed session');
     this.emitCurrentTick();
   }
 
   continueWithoutVerification(): void {
+    if (!this.activeSessionId) return;
     this.focusEngine.setState('UNVERIFIED', 'User continued without camera verification');
     this.emitCurrentTick();
   }
 
-  startBreak(durationMinutes: number = 5): void {
-    this.focusEngine.setState('BREAK', `User started ${durationMinutes}m break`);
+  startBreak(_durationMinutes = 5): void {
+    if (!this.activeSessionId) return;
+    this.focusEngine.setState('BREAK', 'User started a break');
     this.emitCurrentTick();
   }
 
   endBreak(): void {
+    if (!this.activeSessionId) return;
     soundFx.playBreakEnd();
     this.resumeSession();
   }
 
   stopSession(): FocusSession | null {
     if (!this.activeSessionId) return null;
+    // finishSession accrues the final partial interval before determining status.
+    return this.finishSession(false);
+  }
 
-    if (this.intervalId !== null) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
+  private finishSession(completed: boolean): FocusSession | null {
+    if (!this.activeSessionId) return null;
 
     const endTime = Date.now();
     this.accrueElapsedTo(endTime, this.previousState);
-    const focusedSec = Math.round(this.accumulatedFocusedMs / 1000);
-    const screenFocusedSec = Math.round(this.accumulatedScreenFocusedMs / 1000);
-    const paperFocusedSec = Math.round(this.accumulatedPaperFocusedMs / 1000);
-    const mixedFocusedSec = Math.round(this.accumulatedMixedFocusedMs / 1000);
-    const thinkingSec = Math.round(this.accumulatedThinkingMs / 1000);
-    const uncertainSec = Math.round(this.accumulatedUncertainMs / 1000);
-    const unverifiedSec = Math.round(this.accumulatedUnverifiedMs / 1000);
-    const pausedSec = Math.round(this.accumulatedPausedMs / 1000);
-    const distractedSec = Math.round(this.accumulatedDistractedMs / 1000);
-    const phoneSec = Math.round(this.accumulatedPhoneMs / 1000);
-    const convSec = Math.round(this.accumulatedConversationMs / 1000);
-    const sleepSec = Math.round(this.accumulatedSleepMs / 1000);
-    const awaySec = Math.round(this.accumulatedAwayMs / 1000);
-    const breakSec = Math.round(this.accumulatedBreakMs / 1000);
-    const warningSec = Math.round(this.accumulatedWarningMs / 1000);
-    const elapsedSec = Math.round((endTime - this.sessionStartTime) / 1000);
 
-    const avgScore = this.scoresList.length > 0
-      ? Math.round(this.scoresList.reduce((a, b) => a + b, 0) / this.scoresList.length)
-      : 80;
+    if (this.intervalId !== null) {
+      window.clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
 
-    const completedSession: FocusSession = {
+    const focusedSeconds = Math.floor(this.accumulatedFocusedMs / 1000);
+    const screenFocusedSeconds = Math.floor(this.accumulatedScreenFocusedMs / 1000);
+    const paperFocusedSeconds = Math.floor(this.accumulatedPaperFocusedMs / 1000);
+    const mixedFocusedSeconds = Math.floor(this.accumulatedMixedFocusedMs / 1000);
+    const elapsedSeconds = Math.max(0, Math.floor((endTime - this.sessionStartTime) / 1000));
+    const isCompleted = completed || focusedSeconds >= this.targetSeconds;
+
+    const session: FocusSession = {
       id: this.activeSessionId,
       subject: this.subject,
       topic: this.topic,
@@ -243,77 +214,69 @@ export class TimerEngine {
       startTime: this.sessionStartTime,
       endTime,
       targetSeconds: this.targetSeconds,
-      focusedSeconds: focusedSec,
-      screenFocusedSeconds: screenFocusedSec,
-      paperFocusedSeconds: paperFocusedSec,
-      mixedFocusedSeconds: mixedFocusedSec,
-      thinkingSeconds: thinkingSec,
-      uncertainSeconds: uncertainSec,
-      unverifiedSeconds: unverifiedSec,
-      pausedSeconds: pausedSec,
-      warningSeconds: warningSec,
-      distractedSeconds: distractedSec,
-      phoneDistractedSeconds: phoneSec,
-      conversationSeconds: convSec,
-      possibleSleepSeconds: sleepSec,
-      awaySeconds: awaySec,
-      breakSeconds: breakSec,
-      elapsedSeconds: elapsedSec,
-      averageFocusScore: avgScore,
-      peakFocusScore: Math.max(this.peakScore, avgScore),
-      distractionCount: this.distractionCount,
-      status: focusedSec >= this.targetSeconds ? 'COMPLETED' : 'STOPPED',
+      focusedSeconds,
+      screenFocusedSeconds,
+      paperFocusedSeconds,
+      mixedFocusedSeconds,
+      thinkingSeconds: 0,
+      uncertainSeconds: 0,
+      unverifiedSeconds: Math.floor(this.accumulatedUnverifiedMs / 1000),
+      pausedSeconds: Math.floor(this.accumulatedPausedMs / 1000),
+      warningSeconds: 0,
+      distractedSeconds: 0,
+      phoneDistractedSeconds: 0,
+      conversationSeconds: 0,
+      possibleSleepSeconds: 0,
+      awaySeconds: Math.floor(this.accumulatedAwayMs / 1000),
+      breakSeconds: Math.floor(this.accumulatedBreakMs / 1000),
+      elapsedSeconds,
+      averageFocusScore: focusedSeconds > 0 ? 100 : 0,
+      peakFocusScore: focusedSeconds > 0 ? 100 : 0,
+      distractionCount: 0,
+      status: isCompleted ? 'COMPLETED' : 'STOPPED',
       transitionLogs: this.focusEngine.getTransitionLogs(),
-      activityEvents: this.focusEngine.getActivityEvents()
+      activityEvents: [],
     };
 
-    StorageService.saveSession(completedSession);
+    StorageService.saveSession(session);
     if (this.timelineBuffer.length > 0) {
       StorageService.saveTimelineEvents(this.timelineBuffer);
-      this.timelineBuffer = [];
     }
 
-    this.focusEngine.setState('IDLE', 'Session ended');
     this.activeSessionId = null;
+    this.previousState = isCompleted ? 'COMPLETED' : 'IDLE';
+    this.focusEngine.endSession(isCompleted);
     this.emitCurrentTick();
 
-    return completedSession;
+    return session;
   }
 
-  private handleFocusEngineOutput = (output: FocusEngineOutput) => {
+  private handleFocusEngineOutput = (output: FocusEngineOutput): void => {
     if (!this.activeSessionId) return;
 
-    // Attribute the elapsed interval to the old state before a transition.
+    // Close the old state interval before applying the new presence state.
     this.accrueElapsedTo(Date.now(), this.previousState);
+
+    const previous = this.previousState;
+    const next = output.state;
     this.currentStateExplanation = output.stateExplanation;
 
-    // Track score distribution
-    if (output.score > 0) {
-      this.scoresList.push(output.score);
-      if (output.score > this.peakScore) {
-        this.peakScore = output.score;
-      }
-    }
-
-    const curr = output.state;
-    const prev = this.previousState;
-
-    // Transitions between focused states (SCREEN, PAPER, MIXED) are continuous and do not fragment
-    const isBothFocused = isFocusedState(curr) && isFocusedState(prev);
-
-    if (curr !== prev && !isBothFocused) {
-      if (isFocusedState(curr) && (prev === 'PAUSED' || prev === 'AWAY' || prev === 'UNCERTAIN' || prev === 'WARNING')) {
+    if (next !== previous) {
+      if (
+        isFocusedState(next) &&
+        (previous === 'AWAY' || previous === 'UNVERIFIED' || previous === 'PAUSED')
+      ) {
         soundFx.playFocusRestored();
-      } else if (curr === 'WARNING' && isFocusedState(prev)) {
-        soundFx.playWarning();
-        this.distractionCount++;
-      } else if (curr === 'PAUSED' && prev !== 'PAUSED') {
-        soundFx.playAutoPaused();
-      } else if (curr === 'AWAY' && prev !== 'AWAY') {
+      } else if (
+        isFocusedState(previous) &&
+        (next === 'AWAY' || next === 'UNVERIFIED' || next === 'PAUSED')
+      ) {
         soundFx.playAutoPaused();
       }
     }
-    this.previousState = curr;
+
+    this.previousState = next;
+    this.emitCurrentTick();
   };
 
   private accrueElapsedTo(now: number, state: FocusState): void {
@@ -323,63 +286,24 @@ export class TimerEngine {
     this.lastTickTimestamp = now;
     if (deltaMs === 0) return;
 
-    switch (state) {
-      case 'FOCUSED':
-      case 'FOCUSED_SCREEN':
-        this.accumulatedFocusedMs += deltaMs;
-        this.accumulatedScreenFocusedMs += deltaMs;
-        break;
-      case 'FOCUSED_PAPER':
-        this.accumulatedFocusedMs += deltaMs;
+    if (isFocusedState(state)) {
+      this.accumulatedFocusedMs += deltaMs;
+      if (state === 'FOCUSED_PAPER') {
         this.accumulatedPaperFocusedMs += deltaMs;
-        break;
-      case 'FOCUSED_MIXED':
-        this.accumulatedFocusedMs += deltaMs;
+      } else if (state === 'FOCUSED_MIXED') {
         this.accumulatedMixedFocusedMs += deltaMs;
-        break;
-      case 'THINKING':
-        this.accumulatedFocusedMs += deltaMs;
-        this.accumulatedThinkingMs += deltaMs;
-        if (this.medium === 'Paper / PYQ Study') {
-          this.accumulatedPaperFocusedMs += deltaMs;
-        } else if (this.medium === 'Mixed Study') {
-          this.accumulatedMixedFocusedMs += deltaMs;
-        } else {
-          this.accumulatedScreenFocusedMs += deltaMs;
-        }
-        break;
-      case 'UNCERTAIN':
-      case 'WARNING':
-        this.accumulatedFocusedMs += deltaMs;
-        this.accumulatedUncertainMs += deltaMs;
-        if (this.medium === 'Paper / PYQ Study') {
-          this.accumulatedPaperFocusedMs += deltaMs;
-        } else if (this.medium === 'Mixed Study') {
-          this.accumulatedMixedFocusedMs += deltaMs;
-        } else {
-          this.accumulatedScreenFocusedMs += deltaMs;
-        }
-        break;
+      } else {
+        this.accumulatedScreenFocusedMs += deltaMs;
+      }
+      return;
+    }
+
+    switch (state) {
       case 'UNVERIFIED':
         this.accumulatedUnverifiedMs += deltaMs;
         break;
-      case 'PHONE_USE':
-        this.accumulatedDistractedMs += deltaMs;
-        this.accumulatedPhoneMs += deltaMs;
-        break;
-      case 'CONVERSATION':
-        this.accumulatedDistractedMs += deltaMs;
-        this.accumulatedConversationMs += deltaMs;
-        break;
-      case 'POSSIBLE_SLEEP':
-        this.accumulatedDistractedMs += deltaMs;
-        this.accumulatedSleepMs += deltaMs;
-        break;
       case 'PAUSED':
         this.accumulatedPausedMs += deltaMs;
-        break;
-      case 'DISTRACTED':
-        this.accumulatedDistractedMs += deltaMs;
         break;
       case 'AWAY':
         this.accumulatedAwayMs += deltaMs;
@@ -388,114 +312,114 @@ export class TimerEngine {
         this.accumulatedBreakMs += deltaMs;
         break;
       default:
+        // IDLE, COMPLETED, and all non-presence states earn no study time.
         break;
     }
   }
 
-  private tick = () => {
+  private tick = (): void => {
     if (!this.activeSessionId) return;
 
+    // Re-check camera freshness even if browser background throttling delays frames.
+    this.focusEngine.refresh();
     const now = Date.now();
     this.accrueElapsedTo(now, this.previousState);
-    const state = this.focusEngine.getState();
 
-    // Check target reached
-    const currentFocusedSec = Math.floor(this.accumulatedFocusedMs / 1000);
-    if (currentFocusedSec >= this.targetSeconds && this.targetSeconds > 0 && !this.targetReachedNotified) {
+    const focusedSeconds = Math.floor(this.accumulatedFocusedMs / 1000);
+    if (
+      focusedSeconds >= this.targetSeconds &&
+      this.targetSeconds > 0 &&
+      !this.targetReachedNotified
+    ) {
       this.targetReachedNotified = true;
       soundFx.playTargetReached();
+      this.finishSession(true);
+      return;
     }
 
-    // Sample timeline every 5 seconds
     if (now - this.lastTimelineLog >= 5000) {
       this.lastTimelineLog = now;
-      const engineOut = this.focusEngine.getCurrentOutput();
-      const evt: FocusTimelineEvent = {
-        id: 'tl_' + now,
+      const output = this.focusEngine.getCurrentOutput();
+      this.timelineBuffer.push({
+        id: `tl_${now}`,
         sessionId: this.activeSessionId,
         timestamp: now,
-        state,
-        focusScore: engineOut.score,
-        facePresent: engineOut.facePresent,
-        headYaw: engineOut.telemetry?.headYaw ?? 0,
-        headPitch: engineOut.telemetry?.headPitch ?? 0,
-        eyeOpen: true,
+        state: this.focusEngine.getState(),
+        focusScore: output.facePresent ? 100 : 0,
+        facePresent: output.facePresent,
+        headYaw: 0,
+        headPitch: 0,
+        eyeOpen: output.facePresent,
         activeApp: 'Study Environment',
-        handActivity: engineOut.telemetry?.handActivity,
-        activity: engineOut.activity
-      };
-      this.timelineBuffer.push(evt);
+        handActivity: false,
+        activity: output.facePresent ? 'SCREEN_READING' : 'AWAY',
+      });
     }
 
     this.emitCurrentTick();
   };
 
   private emitCurrentTick(): void {
-    const focusedSec = Math.floor(this.accumulatedFocusedMs / 1000);
-    const screenFocusedSec = Math.floor(this.accumulatedScreenFocusedMs / 1000);
-    const paperFocusedSec = Math.floor(this.accumulatedPaperFocusedMs / 1000);
-    const mixedFocusedSec = Math.floor(this.accumulatedMixedFocusedMs / 1000);
-    const thinkingSec = Math.floor(this.accumulatedThinkingMs / 1000);
-    const uncertainSec = Math.floor(this.accumulatedUncertainMs / 1000);
-    const unverifiedSec = Math.floor(this.accumulatedUnverifiedMs / 1000);
-    const pausedSec = Math.floor(this.accumulatedPausedMs / 1000);
-    const distractedSec = Math.floor(this.accumulatedDistractedMs / 1000);
-    const phoneSec = Math.floor(this.accumulatedPhoneMs / 1000);
-    const convSec = Math.floor(this.accumulatedConversationMs / 1000);
-    const sleepSec = Math.floor(this.accumulatedSleepMs / 1000);
-    const awaySec = Math.floor(this.accumulatedAwayMs / 1000);
-    const breakSec = Math.floor(this.accumulatedBreakMs / 1000);
+    const focusedSeconds = Math.floor(this.accumulatedFocusedMs / 1000);
+    const screenFocusedSeconds = Math.floor(this.accumulatedScreenFocusedMs / 1000);
+    const paperFocusedSeconds = Math.floor(this.accumulatedPaperFocusedMs / 1000);
+    const mixedFocusedSeconds = Math.floor(this.accumulatedMixedFocusedMs / 1000);
+    const unverifiedSeconds = Math.floor(this.accumulatedUnverifiedMs / 1000);
+    const pausedSeconds = Math.floor(this.accumulatedPausedMs / 1000);
+    const awaySeconds = Math.floor(this.accumulatedAwayMs / 1000);
+    const breakSeconds = Math.floor(this.accumulatedBreakMs / 1000);
 
     const now = Date.now();
-    const elapsedSec = this.sessionStartTime > 0
-      ? Math.floor((now - this.sessionStartTime) / 1000)
+    const elapsedSeconds = this.sessionStartTime > 0
+      ? Math.max(0, Math.floor((now - this.sessionStartTime) / 1000))
       : 0;
+    const remainingTargetSeconds = Math.max(0, this.targetSeconds - focusedSeconds);
+    const nonBreakElapsed = Math.max(1, elapsedSeconds - breakSeconds);
+    const efficiency = Math.min(
+      100,
+      Math.max(0, Math.round((focusedSeconds / nonBreakElapsed) * 100))
+    );
 
-    const remaining = Math.max(0, this.targetSeconds - focusedSec);
-    // Truthful Focus Efficiency: verifiedFocusTime / (elapsedTime - plannedBreakTime)
-    const nonBreakElapsed = Math.max(1, elapsedSec - breakSec);
-    const efficiency = Math.min(100, Math.max(0, Math.round((focusedSec / nonBreakElapsed) * 100)));
+    const output = this.focusEngine.getCurrentOutput();
+    const isCompleted =
+      focusedSeconds >= this.targetSeconds ||
+      output.state === 'COMPLETED';
 
-    const engineOut = this.focusEngine.getCurrentOutput();
-    const avgScore = this.scoresList.length > 0
-      ? Math.round(this.scoresList.reduce((a, b) => a + b, 0) / this.scoresList.length)
-      : engineOut.score;
-
-    const tickPayload: TimerTickData = {
-      state: this.focusEngine.getState(),
-      elapsedSeconds: elapsedSec,
-      focusedSeconds: focusedSec,
-      screenFocusedSeconds: screenFocusedSec,
-      paperFocusedSeconds: paperFocusedSec,
-      mixedFocusedSeconds: mixedFocusedSec,
-      thinkingSeconds: thinkingSec,
-      uncertainSeconds: uncertainSec,
-      unverifiedSeconds: unverifiedSec,
-      pausedSeconds: pausedSec,
-      remainingTargetSeconds: remaining,
-      distractedSeconds: distractedSec,
-      phoneSeconds: phoneSec,
-      conversationSeconds: convSec,
-      sleepSeconds: sleepSec,
-      awaySeconds: awaySec,
-      breakSeconds: breakSec,
+    const payload: TimerTickData = {
+      state: output.state,
+      elapsedSeconds,
+      focusedSeconds,
+      screenFocusedSeconds,
+      paperFocusedSeconds,
+      mixedFocusedSeconds,
+      thinkingSeconds: 0,
+      uncertainSeconds: 0,
+      unverifiedSeconds,
+      pausedSeconds,
+      remainingTargetSeconds,
+      distractedSeconds: 0,
+      phoneSeconds: 0,
+      conversationSeconds: 0,
+      sleepSeconds: 0,
+      awaySeconds,
+      breakSeconds,
       efficiency,
-      currentScore: engineOut.score,
-      averageScore: avgScore,
-      peakScore: Math.max(this.peakScore, engineOut.score),
-      distractionCount: this.distractionCount,
+      currentScore: output.facePresent ? 100 : 0,
+      averageScore: focusedSeconds > 0 ? 100 : 0,
+      peakScore: focusedSeconds > 0 ? 100 : 0,
+      distractionCount: 0,
       targetSeconds: this.targetSeconds,
       activeSubject: this.subject,
       activeTopic: this.topic,
       activeGoal: this.goal,
       activeMode: this.mode,
       activeMedium: this.medium,
-      isCompleted: focusedSec >= this.targetSeconds && this.targetSeconds > 0,
-      stateExplanation: this.currentStateExplanation || engineOut.stateExplanation,
-      telemetry: engineOut.telemetry
+      isCompleted,
+      stateExplanation: this.currentStateExplanation || output.stateExplanation,
+      telemetry: output.telemetry,
     };
 
-    this.callbacks.forEach(cb => cb(tickPayload));
+    this.callbacks.forEach((callback) => callback(payload));
   }
 }
 

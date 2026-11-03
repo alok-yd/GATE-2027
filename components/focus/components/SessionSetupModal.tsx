@@ -1,131 +1,131 @@
 import React, { useState } from 'react';
 import { FocusMode, StudyMedium, SubjectItem } from '../types';
-import { X, Target, Clock, BookOpen, Sparkles, Plus, Check, Monitor, FileText } from 'lucide-react';
+import { BookOpen, Clock, Plus, Target, X } from 'lucide-react';
 
 interface SessionSetupModalProps {
   isOpen: boolean;
   onClose: () => void;
   subjects: SubjectItem[];
   onAddSubject: (name: string, category: string) => SubjectItem;
-  onStartSession: (subject: string, topic: string, targetSeconds: number, mode: FocusMode, goal: string, medium: StudyMedium) => void;
+  onStartSession: (
+    subject: string,
+    topic: string,
+    targetSeconds: number,
+    mode: FocusMode,
+    goal: string,
+    medium: StudyMedium
+  ) => void;
 }
 
 const DURATION_PRESETS = [
-  { label: '45m', seconds: 45 * 60 },
-  { label: '1h', seconds: 60 * 60 },
-  { label: '90m', seconds: 90 * 60 },
-  { label: '2h', seconds: 120 * 60 },
-  { label: '3h', seconds: 180 * 60 },
-  { label: '4h', seconds: 240 * 60 }
+  { label: '45 min', seconds: 45 * 60 },
+  { label: '1 hour', seconds: 60 * 60 },
+  { label: '90 min', seconds: 90 * 60 },
+  { label: '2 hours', seconds: 120 * 60 },
+  { label: '3 hours', seconds: 180 * 60 },
+  { label: '4 hours', seconds: 240 * 60 },
 ];
-
-const MODES: FocusMode[] = ['Deep Focus', 'Normal Study', 'Revision', 'PYQ Practice', 'Mock Test', 'Custom'];
-const MEDIUMS: StudyMedium[] = ['Screen Study', 'Paper / PYQ Study', 'Mixed Study'];
 
 export const SessionSetupModal: React.FC<SessionSetupModalProps> = ({
   isOpen,
   onClose,
   subjects,
   onAddSubject,
-  onStartSession
+  onStartSession,
 }) => {
   const [selectedSubject, setSelectedSubject] = useState(subjects[0]?.name || 'Algorithms');
   const [topic, setTopic] = useState('');
   const [goal, setGoal] = useState('');
-  const [targetSeconds, setTargetSeconds] = useState(120 * 60); // 2 hours
-  const [mode, setMode] = useState<FocusMode>('Deep Focus');
-  const [medium, setMedium] = useState<StudyMedium>('Paper / PYQ Study');
+  const [targetSeconds, setTargetSeconds] = useState(120 * 60);
   const [isAddingSubject, setIsAddingSubject] = useState(false);
   const [newSubjectName, setNewSubjectName] = useState('');
 
   if (!isOpen) return null;
 
-  const handleCreateSubject = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSubjectName.trim()) return;
-    const added = onAddSubject(newSubjectName.trim(), 'Custom');
+  const handleCreateSubject = (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = newSubjectName.trim();
+    if (!name) return;
+
+    const added = onAddSubject(name, 'Custom');
     setSelectedSubject(added.name);
     setNewSubjectName('');
     setIsAddingSubject(false);
   };
 
-  const handleStart = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleStart = (event: React.FormEvent) => {
+    event.preventDefault();
     onStartSession(
       selectedSubject,
-      topic.trim() || 'General Problem Solving',
+      topic.trim() || 'General Study',
       targetSeconds,
-      mode,
-      goal.trim(),
-      medium
+      'Deep Focus',
+      goal.trim() || 'Study session',
+      'Screen Study'
     );
     onClose();
   };
 
+  const selectedDuration = () => {
+    const hours = Math.floor(targetSeconds / 3600);
+    const minutes = Math.floor((targetSeconds % 3600) / 60);
+    return [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '']
+      .filter(Boolean)
+      .join(' ') || '0m';
+  };
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-100 animate-in fade-in zoom-in-95 duration-150">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
-              <Target className="w-4 h-4" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 text-zinc-100 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950/60 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-indigo-500/30 bg-indigo-500/15 text-indigo-300">
+              <Target className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-zinc-100">Setup Verified Focus Session</h2>
-              <p className="text-xs text-zinc-400">Configure your target duration and study goals</p>
+              <h2 className="text-base font-bold">Start Study Session</h2>
+              <p className="text-xs text-zinc-400">Choose your subject and countdown duration</p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-100 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+            aria-label="Close session setup"
+            className="rounded-lg p-2 text-zinc-400 transition hover:bg-zinc-800 hover:text-white"
           >
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleStart} className="p-6 space-y-5">
-          {/* Subject selection */}
+        <form onSubmit={handleStart} className="space-y-5 p-6">
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Subject</span>
+              <label className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
+                <BookOpen className="h-3.5 w-3.5 text-indigo-300" />
+                Subject
               </label>
-              {!isAddingSubject ? (
-                <button
-                  type="button"
-                  onClick={() => setIsAddingSubject(true)}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>Add Subject</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setIsAddingSubject(false)}
-                  className="text-xs text-zinc-400 hover:text-zinc-300"
-                >
-                  Cancel
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setIsAddingSubject((value) => !value)}
+                className="flex items-center gap-1 text-xs font-semibold text-indigo-300 hover:text-indigo-200"
+              >
+                <Plus className="h-3 w-3" />
+                Add subject
+              </button>
             </div>
 
             {isAddingSubject ? (
               <div className="flex gap-2">
                 <input
-                  type="text"
-                  placeholder="New subject name (e.g., Linear Algebra)"
                   value={newSubjectName}
-                  onChange={(e) => setNewSubjectName(e.target.value)}
-                  className="flex-1 bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                  onChange={(event) => setNewSubjectName(event.target.value)}
+                  placeholder="New subject name"
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
                 />
                 <button
                   type="button"
                   onClick={handleCreateSubject}
-                  className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-500"
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500"
                 >
                   Save
                 </button>
@@ -133,51 +133,46 @@ export const SessionSetupModal: React.FC<SessionSetupModalProps> = ({
             ) : (
               <select
                 value={selectedSubject}
-                onChange={(e) => setSelectedSubject(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-hidden focus:border-indigo-500"
+                onChange={(event) => setSelectedSubject(event.target.value)}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
               >
-                {subjects.map((sub) => (
-                  <option key={sub.id} value={sub.name}>
-                    {sub.name} {sub.isGateSubject ? '(GATE)' : ''}
+                {subjects.map((subject) => (
+                  <option key={subject.id} value={subject.name}>
+                    {subject.name}{subject.isGateSubject ? ' (GATE)' : ''}
                   </option>
                 ))}
               </select>
             )}
           </div>
 
-          {/* Topic */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-zinc-300">Topic / Specific Focus</label>
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-zinc-300">Topic / Study task</label>
             <input
-              type="text"
-              placeholder="e.g., Dynamic Programming, B-Trees, Normalization, Virtual Memory..."
               value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-hidden focus:border-indigo-500"
+              onChange={(event) => setTopic(event.target.value)}
+              placeholder="e.g. Dynamic Programming, Cache Memory, OS Scheduling"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
             />
           </div>
 
-          {/* Target Duration Presets */}
-          <div className="space-y-2">
-            <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Target Study Time</span>
+          <div className="space-y-3">
+            <label className="flex items-center justify-between text-xs font-semibold text-zinc-300">
+              <span className="flex items-center gap-2">
+                <Clock className="h-3.5 w-3.5 text-emerald-300" />
+                Target duration
               </span>
-              <span className="text-emerald-400 font-mono">
-                {Math.floor(targetSeconds / 3600)}h {Math.floor((targetSeconds % 3600) / 60)}m
-              </span>
+              <span className="font-mono text-sm text-emerald-300">{selectedDuration()}</span>
             </label>
-            <div className="grid grid-cols-6 gap-1.5">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {DURATION_PRESETS.map((preset) => (
                 <button
                   key={preset.label}
                   type="button"
                   onClick={() => setTargetSeconds(preset.seconds)}
-                  className={`py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                  className={`rounded-lg border px-3 py-2.5 text-xs font-semibold transition ${
                     targetSeconds === preset.seconds
-                      ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-xs'
-                      : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                      ? 'border-emerald-500 bg-emerald-500/15 text-emerald-200'
+                      : 'border-zinc-700 bg-zinc-950 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
                   }`}
                 >
                   {preset.label}
@@ -186,94 +181,33 @@ export const SessionSetupModal: React.FC<SessionSetupModalProps> = ({
             </div>
           </div>
 
-          {/* Mode Selection */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Study Mode</span>
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {MODES.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMode(m)}
-                  className={`py-2 px-2.5 text-xs font-medium rounded-lg border text-left transition-all ${
-                    mode === m
-                      ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300'
-                      : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span>{m}</span>
-                    {mode === m && <Check className="w-3 h-3 text-indigo-400" />}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Study Medium (Screen vs Paper / PYQ vs Mixed) */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5 text-teal-400" />
-                <span>Study Medium & Posture Mode</span>
-              </span>
-              <span className="text-[10px] text-teal-400 font-mono">Head-down safe</span>
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {MEDIUMS.map((med) => (
-                <button
-                  key={med}
-                  type="button"
-                  onClick={() => setMedium(med)}
-                  className={`py-2 px-2.5 text-xs font-medium rounded-lg border text-left transition-all ${
-                    medium === med
-                      ? 'bg-teal-500/20 border-teal-500 text-teal-300 shadow-xs'
-                      : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="truncate">{med}</span>
-                    {medium === med && <Check className="w-3 h-3 text-teal-400 shrink-0" />}
-                  </div>
-                </button>
-              ))}
-            </div>
-            <p className="text-[11px] text-zinc-500">
-              {medium === 'Paper / PYQ Study' && 'High tolerance for solving on notebook with pen & paper. Looking down will not pause timer.'}
-              {medium === 'Screen Study' && 'Standard screen & IDE focus. Moderate head-down tolerance.'}
-              {medium === 'Mixed Study' && 'Seamlessly alternate between notebook derivations and monitor.'}
-            </p>
-          </div>
-
-          {/* Concrete Goal */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-zinc-300">Session Outcome / Concrete Goal</label>
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-zinc-300">Session outcome (optional)</label>
             <input
-              type="text"
-              placeholder="e.g., Solve 5 Hard PYQs without checking solution hint"
               value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-hidden focus:border-indigo-500"
+              onChange={(event) => setGoal(event.target.value)}
+              placeholder="e.g. Solve 5 GATE PYQs"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
             />
           </div>
 
-          {/* Action Buttons */}
-          <div className="pt-2 flex items-center justify-end gap-3 border-t border-zinc-800">
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs leading-relaxed text-emerald-200">
+            The countdown runs only while a person is detected in front of your webcam. Leaving the frame pauses the timer without resetting the remaining time.
+          </div>
+
+          <div className="flex justify-end gap-3 border-t border-zinc-800 pt-4">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
+              className="rounded-lg px-4 py-2.5 text-xs font-semibold text-zinc-400 hover:text-white"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-indigo-600/20 transition-all cursor-pointer"
+              className="rounded-xl bg-gradient-to-r from-indigo-600 to-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-600/20 transition hover:brightness-110"
             >
-              Start Verified Focus Session
+              Start Session
             </button>
           </div>
         </form>
@@ -281,3 +215,5 @@ export const SessionSetupModal: React.FC<SessionSetupModalProps> = ({
     </div>
   );
 };
+
+export default SessionSetupModal;
