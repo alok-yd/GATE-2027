@@ -1,12 +1,13 @@
 import { DEFAULT_USER_SETTINGS, GATE_SUBJECTS } from '../constants';
-import { DailySummary, FocusSession, FocusTimelineEvent, SubjectItem, UserSettings } from '../types';
+import { DailySummary, FocusSession, FocusTimelineEvent, StudyMedium, SubjectItem, UserSettings } from '../types';
 
 const STORAGE_KEYS = {
   SETTINGS: 'ai_focus_timer_settings_v1',
   SESSIONS: 'ai_focus_timer_sessions_v1',
   TIMELINE: 'ai_focus_timer_timeline_v1',
   SUBJECTS: 'ai_focus_timer_subjects_v1',
-  ACTIVE_SESSION: 'ai_focus_timer_active_session_v1'
+  ACTIVE_SESSION: 'ai_focus_timer_active_session_v1',
+  VERIFIED_STUDY_TIME: 'gate_ai_focus_verified_study_time_v1'
 };
 
 // Helper for today's date string YYYY-MM-DD
@@ -35,6 +36,30 @@ export function formatDigitalClock(totalSeconds: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+interface VerifiedStudySessionDay {
+  totalMilliseconds: number;
+  screenStudyMilliseconds: number;
+  paperPyqStudyMilliseconds: number;
+  mixedStudyMilliseconds: number;
+  lastRecordedThroughTimestamp?: number;
+}
+
+interface VerifiedStudyTimeLedger {
+  version: 1;
+  days: Record<string, Record<string, VerifiedStudySessionDay>>;
+  updatedAt: string;
+}
+
+let lastVerifiedStudyEventAt = 0;
+
+const localDateKey = (timestamp: number): string => {
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 class MemoryStorage implements Storage {
   private store = new Map<string, string>();
   get length(): number { return this.store.size; }
@@ -58,6 +83,75 @@ function getStorage(): Storage {
   } catch {}
   return memoryStorageFallback;
 }
+
+const getVerifiedLedger = (storage: Storage): VerifiedStudyTimeLedger => {
+  const rawLedger = storage.getItem(STORAGE_KEYS.VERIFIED_STUDY_TIME);
+  if (rawLedger) {
+    try {
+      const parsed = JSON.parse(rawLedger) as VerifiedStudyTimeLedger;
+      if (parsed?.version === 1 && parsed.days && typeof parsed.days === 'object') return parsed;
+    } catch {
+      // Recover a malformed ledger from eligible historical saved sessions below.
+    }
+  }
+
+  const ledger: VerifiedStudyTimeLedger = {
+    version: 1,
+    days: {},
+    updatedAt: new Date().toISOString(),
+  };
+
+  // One-time migration for legacy AI Focus sessions. The older session format
+  // stored only a total, not timestamped verified segments, so only same-local-
+  // day sessions can be migrated without inventing a cross-midnight split.
+  const rawSessions = storage.getItem(STORAGE_KEYS.SESSIONS);
+  if (rawSessions) {
+    try {
+      const sessions = JSON.parse(rawSessions) as FocusSession[];
+      if (Array.isArray(sessions)) {
+        sessions.forEach((session) => {
+          const id = String(session?.id || '');
+          const focusedSeconds = Number(session?.focusedSeconds);
+          const startTime = Number(session?.startTime);
+          const endTime = Number(session?.endTime);
+
+          // Exclude demo records (sess_1 / sess_2) seeded by the UI.
+          if (!/^sess_\d+_\d+$/.test(id)) return;
+          if (!['COMPLETED', 'STOPPED'].includes(session?.status)) return;
+          if (!Number.isFinite(focusedSeconds) || focusedSeconds <= 0) return;
+          if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return;
+          if (localDateKey(startTime) !== localDateKey(Math.max(startTime, endTime - 1))) return;
+
+          const dateKey = localDateKey(startTime);
+          const day = ledger.days[dateKey] || (ledger.days[dateKey] = {});
+          const milliseconds = Math.floor(focusedSeconds) * 1000;
+          const migrated: VerifiedStudySessionDay = {
+            totalMilliseconds: milliseconds,
+            screenStudyMilliseconds: 0,
+            paperPyqStudyMilliseconds: 0,
+            mixedStudyMilliseconds: 0,
+            lastRecordedThroughTimestamp: endTime,
+          };
+
+          if (session.studyMedium === 'Paper / PYQ Study') {
+            migrated.paperPyqStudyMilliseconds = milliseconds;
+          } else if (session.studyMedium === 'Mixed Study') {
+            migrated.mixedStudyMilliseconds = milliseconds;
+          } else {
+            migrated.screenStudyMilliseconds = milliseconds;
+          }
+
+          day[id] = migrated;
+        });
+      }
+    } catch {
+      // Ignore unreadable legacy records; new verified sessions will be recorded normally.
+    }
+  }
+
+  storage.setItem(STORAGE_KEYS.VERIFIED_STUDY_TIME, JSON.stringify(ledger));
+  return ledger;
+};
 
 export class StorageService {
   static getSettings(): UserSettings {
@@ -105,6 +199,136 @@ export class StorageService {
     subjects.push(newSubject);
     getStorage().setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(subjects));
     return newSubject;
+  }
+
+  /**
+   * Add one already-verified, non-overlapping timer interval to the persistent
+   * date-wise ledger. The interval is split at local midnight, and session IDs
+   * keep separate sessions distinct without ever re-adding a previous total.
+   */
+  static addVerifiedStudyInterval(
+    sessionId: string,
+    startTimestamp: number,
+    endTimestamp: number,
+    medium: StudyMedium
+  ): void {
+    if (!sessionId || !Number.isFinite(startTimestamp) || !Number.isFinite(endTimestamp)) return;
+    if (endTimestamp <= startTimestamp) return;
+
+    try {
+      const storage = getStorage();
+      const ledger = getVerifiedLedger(storage);
+
+      let cursor = Math.floor(startTimestamp);
+      const end = Math.floor(endTimestamp);
+      const touchedDates: string[] = [];
+
+      while (cursor < end) {
+        const date = new Date(cursor);
+        const dateKey = localDateKey(cursor);
+        const nextLocalMidnight = new Date(
+          date.getFullYear(),
+          date.getMonth(),
+          date.getDate() + 1,
+          0, 0, 0, 0
+        ).getTime();
+        const segmentEnd = Math.min(end, nextLocalMidnight);
+        const segmentMilliseconds = Math.max(0, segmentEnd - cursor);
+
+        if (segmentMilliseconds > 0) {
+          const day = ledger.days[dateKey] || (ledger.days[dateKey] = {});
+          const session = day[sessionId] || (day[sessionId] = {
+            totalMilliseconds: 0,
+            screenStudyMilliseconds: 0,
+            paperPyqStudyMilliseconds: 0,
+            mixedStudyMilliseconds: 0,
+          });
+
+          // Enforce append-only, non-overlapping intervals per session/date.
+          // Replayed or overlapping timer callbacks can only add the unrecorded
+          // remainder, so retries/navigation never double-count study time.
+          const recordedThrough = Number(session.lastRecordedThroughTimestamp);
+          const acceptedStart = Number.isFinite(recordedThrough)
+            ? Math.max(cursor, recordedThrough)
+            : cursor;
+          const acceptedMilliseconds = Math.max(0, segmentEnd - acceptedStart);
+
+          if (acceptedMilliseconds > 0) {
+            session.totalMilliseconds += acceptedMilliseconds;
+            if (medium === 'Paper / PYQ Study') {
+              session.paperPyqStudyMilliseconds += acceptedMilliseconds;
+            } else if (medium === 'Mixed Study') {
+              session.mixedStudyMilliseconds += acceptedMilliseconds;
+            } else {
+              session.screenStudyMilliseconds += acceptedMilliseconds;
+            }
+            session.lastRecordedThroughTimestamp = segmentEnd;
+            if (!touchedDates.includes(dateKey)) touchedDates.push(dateKey);
+          }
+        }
+
+        cursor = segmentEnd;
+      }
+
+      ledger.updatedAt = new Date().toISOString();
+      storage.setItem(STORAGE_KEYS.VERIFIED_STUDY_TIME, JSON.stringify(ledger));
+
+      // Custom same-window event plus the native storage event generated by
+      // localStorage for other tabs/windows.
+      if (typeof window !== 'undefined' && Date.now() - lastVerifiedStudyEventAt >= 1000) {
+        lastVerifiedStudyEventAt = Date.now();
+        window.dispatchEvent(new CustomEvent('gate-ai-focus-study-time-updated', {
+          detail: { dates: touchedDates, updatedAt: ledger.updatedAt },
+        }));
+      }
+    } catch (error) {
+      console.error('[AI Focus] Failed to persist verified study time:', error);
+    }
+  }
+
+  static getVerifiedStudySecondsForDate(date: string): number {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return 0;
+
+    try {
+      const ledger = getVerifiedLedger(getStorage());
+      const day = ledger?.version === 1 ? ledger.days?.[date] : undefined;
+      if (!day || typeof day !== 'object') return 0;
+
+      const totalMilliseconds = Object.values(day).reduce((total, session) => {
+        const value = Number(session?.totalMilliseconds);
+        return total + (Number.isFinite(value) && value > 0 ? value : 0);
+      }, 0);
+
+      return Math.floor(totalMilliseconds / 1000);
+    } catch {
+      return 0;
+    }
+  }
+
+  static getVerifiedStudyBreakdownForDate(date: string): {
+    totalSeconds: number;
+    screenStudySeconds: number;
+    paperPyqStudySeconds: number;
+    mixedStudySeconds: number;
+  } {
+    try {
+      const ledger = getVerifiedLedger(getStorage());
+      const day = ledger?.version === 1 ? ledger.days?.[date] : undefined;
+      const sessions = day && typeof day === 'object' ? Object.values(day) : [];
+      const sum = (field: keyof VerifiedStudySessionDay) => sessions.reduce((total, session) => {
+        const value = Number(session?.[field]);
+        return total + (Number.isFinite(value) && value > 0 ? value : 0);
+      }, 0);
+
+      return {
+        totalSeconds: Math.floor(sum('totalMilliseconds') / 1000),
+        screenStudySeconds: Math.floor(sum('screenStudyMilliseconds') / 1000),
+        paperPyqStudySeconds: Math.floor(sum('paperPyqStudyMilliseconds') / 1000),
+        mixedStudySeconds: Math.floor(sum('mixedStudyMilliseconds') / 1000),
+      };
+    } catch {
+      return { totalSeconds: 0, screenStudySeconds: 0, paperPyqStudySeconds: 0, mixedStudySeconds: 0 };
+    }
   }
 
   static getSessions(): FocusSession[] {
@@ -171,6 +395,7 @@ export class StorageService {
       storage.removeItem(STORAGE_KEYS.TIMELINE);
       storage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
       storage.removeItem(STORAGE_KEYS.SUBJECTS);
+      storage.removeItem(STORAGE_KEYS.VERIFIED_STUDY_TIME);
     } catch {}
   }
 

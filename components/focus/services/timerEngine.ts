@@ -86,7 +86,14 @@ export class TimerEngine {
 
   subscribe(callback: TimerTickCallback): () => void {
     this.callbacks.add(callback);
+    // Immediately hydrate a newly mounted Focus screen with the current
+    // singleton timer state (including a session continuing on another route).
+    this.emitCurrentTick();
     return () => this.callbacks.delete(callback);
+  }
+
+  hasActiveSession(): boolean {
+    return Boolean(this.activeSessionId);
   }
 
   setStudyMedium(medium: StudyMedium): void {
@@ -195,13 +202,22 @@ export class TimerEngine {
   private accrueTo(timestamp: number, state: FocusState): void {
     if (!this.activeSessionId || this.lastTickTimestamp <= 0) return;
 
-    const end = Math.max(this.lastTickTimestamp, timestamp);
-    const deltaMs = end - this.lastTickTimestamp;
+    const start = this.lastTickTimestamp;
+    const end = Math.max(start, timestamp);
+    const deltaMs = end - start;
     this.lastTickTimestamp = end;
     if (deltaMs <= 0) return;
 
     if (state === 'FOCUSED') {
       this.focusedMs += deltaMs;
+      if (this.activeSessionId) {
+        StorageService.addVerifiedStudyInterval(
+          this.activeSessionId,
+          start,
+          end,
+          this.medium
+        );
+      }
       if (this.medium === 'Paper / PYQ Study') {
         this.paperFocusedMs += deltaMs;
       } else if (this.medium === 'Mixed Study') {

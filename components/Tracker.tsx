@@ -6,6 +6,7 @@ import {
   getStoredSubjects,
   getSubjectLectureStatus,
 } from '../services/DataExtractor';
+import { StorageService, getTodayDateString } from './focus/services/storage';
 
 interface DailyProgress {
   date: string;
@@ -19,7 +20,64 @@ interface DailyTarget {
   goalDescription: string;
   hoursStudied: number;
   completionPercentage: number;
+  hoursStudiedSource?: 'ai_focus' | 'manual';
+  manualHoursStudied?: number;
+  aiFocusVerifiedSeconds?: number;
 }
+
+const createDefaultDailyTarget = (date: string): DailyTarget => ({
+  date,
+  subject: '',
+  goalDescription: '',
+  hoursStudied: 0,
+  completionPercentage: 0,
+  hoursStudiedSource: 'ai_focus',
+  manualHoursStudied: 0,
+  aiFocusVerifiedSeconds: 0,
+});
+
+const loadDailyTargetWithAiFocusSync = (date: string): DailyTarget => {
+  const raw = localStorage.getItem(`gate_daily_target_${date}`);
+  let stored: DailyTarget = createDefaultDailyTarget(date);
+
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<DailyTarget>;
+      stored = {
+        ...createDefaultDailyTarget(date),
+        ...parsed,
+        date,
+      };
+    } catch {
+      // Keep the safe defaults and recover the selected date's AI Focus total.
+    }
+  }
+
+  if (stored.hoursStudiedSource === 'manual') {
+    const manualHours = Number(stored.manualHoursStudied ?? stored.hoursStudied ?? 0);
+    return {
+      ...stored,
+      hoursStudied: Number.isFinite(manualHours) && manualHours > 0 ? manualHours : 0,
+      hoursStudiedSource: 'manual',
+      manualHoursStudied: Number.isFinite(manualHours) && manualHours > 0 ? manualHours : 0,
+    };
+  }
+
+  const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
+  const preservedManualHours = Number(stored.manualHoursStudied ?? stored.hoursStudied ?? 0);
+  const manualHours = Number.isFinite(preservedManualHours) && preservedManualHours > 0
+    ? preservedManualHours
+    : 0;
+  const syncedHours = Number((verifiedSeconds / 3600).toFixed(2));
+
+  return {
+    ...stored,
+    hoursStudied: syncedHours,
+    hoursStudiedSource: 'ai_focus',
+    manualHoursStudied: manualHours,
+    aiFocusVerifiedSeconds: verifiedSeconds,
+  };
+};
 
 interface WeeklyTarget {
   weekId: string; // Start date of the week (Sunday)
@@ -37,19 +95,15 @@ const Tracker: React.FC = () => {
   const allSubjectsComplete = phaseStatus.allComplete;
   
   // Date State for Daily View
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString());
 
   // Daily Lecture Counter
   const [dailyProgress, setDailyProgress] = useState<DailyProgress>({ date: '', count: 0, goal: 3 });
   
   // Daily Target/Log State
-  const [dailyTarget, setDailyTarget] = useState<DailyTarget>({
-    date: selectedDate,
-    subject: '',
-    goalDescription: '',
-    hoursStudied: 0,
-    completionPercentage: 0
-  });
+  const [dailyTarget, setDailyTarget] = useState<DailyTarget>(
+    () => loadDailyTargetWithAiFocusSync(selectedDate)
+  );
 
   // Weekly Target State
   const [weeklyTarget, setWeeklyTarget] = useState<WeeklyTarget>({
@@ -147,12 +201,12 @@ const Tracker: React.FC = () => {
     const day = d.getDay();
     const diff = d.getDate() - day; // Adjust when day is Sunday
     const weekStart = new Date(d.setDate(diff));
-    return weekStart.toISOString().split('T')[0];
+    return `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, '0')}-${String(weekStart.getDate()).padStart(2, '0')}`;
   };
 
   // Helper: Update Streak
   const checkAndUpdateStreak = () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayDateString();
     const stored = localStorage.getItem('gate_streak_data');
     let data = stored ? JSON.parse(stored) : { currentStreak: 0, lastLogDate: '' };
 
@@ -163,7 +217,7 @@ const Tracker: React.FC = () => {
 
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
 
     // If last log was yesterday, increment. Otherwise (older than yesterday), reset to 1.
     if (data.lastLogDate === yesterdayStr) {
@@ -198,18 +252,9 @@ const Tracker: React.FC = () => {
     }
 
     // 3. Load Daily Target Log for Selected Date
-    const storedTarget = localStorage.getItem(`gate_daily_target_${selectedDate}`);
-    if (storedTarget) {
-      setDailyTarget(JSON.parse(storedTarget));
-    } else {
-      setDailyTarget({
-        date: selectedDate,
-        subject: '',
-        goalDescription: '',
-        hoursStudied: 0,
-        completionPercentage: 0
-      });
-    }
+    const loadedTarget = loadDailyTargetWithAiFocusSync(selectedDate);
+    setDailyTarget(loadedTarget);
+    localStorage.setItem(`gate_daily_target_${selectedDate}`, JSON.stringify(loadedTarget));
 
     // 4. Load Weekly Target
     const currentWeekId = getWeekId(selectedDate);
@@ -239,7 +284,7 @@ const Tracker: React.FC = () => {
     setDailyProgress(newProgress);
     localStorage.setItem(`gate_progress_${newProgress.date}`, JSON.stringify(newProgress));
     // Also update global for dashboard reference if it's today
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayDateString();
     if (newProgress.date === today) {
         localStorage.setItem('gate_daily_progress', JSON.stringify(newProgress));
     }
@@ -247,18 +292,98 @@ const Tracker: React.FC = () => {
 
   // Save Daily Target Log
   const handleTargetChange = (field: keyof DailyTarget, value: any) => {
-    const updated = { ...dailyTarget, [field]: value };
+    const updated: DailyTarget = {
+      ...dailyTarget,
+      [field]: value,
+      ...(field === 'hoursStudied'
+        ? {
+            hoursStudiedSource: 'manual' as const,
+            manualHoursStudied: Number(value) || 0,
+          }
+        : {}),
+    };
     setDailyTarget(updated);
     localStorage.setItem(`gate_daily_target_${updated.date}`, JSON.stringify(updated));
 
     // Update streak if user is logging meaningful progress (hours or completion) for TODAY
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayDateString();
     if (updated.date === today && (field === 'hoursStudied' || field === 'completionPercentage')) {
       if (Number(value) > 0) {
         checkAndUpdateStreak();
       }
     }
   };
+
+  const handleUseManualStudyHours = () => {
+    const preservedManualHours = Number(dailyTarget.manualHoursStudied ?? dailyTarget.hoursStudied ?? 0);
+    const manualHours = Number.isFinite(preservedManualHours) && preservedManualHours > 0
+      ? preservedManualHours
+      : 0;
+    const updated: DailyTarget = {
+      ...dailyTarget,
+      hoursStudied: manualHours,
+      manualHoursStudied: manualHours,
+      hoursStudiedSource: 'manual',
+    };
+    setDailyTarget(updated);
+    localStorage.setItem(`gate_daily_target_${updated.date}`, JSON.stringify(updated));
+  };
+
+  const handleSyncStudyHoursFromAiFocus = () => {
+    const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(dailyTarget.date);
+    const syncedHours = Number((verifiedSeconds / 3600).toFixed(2));
+    const manualBackup = dailyTarget.hoursStudiedSource === 'manual'
+      ? Number(dailyTarget.hoursStudied) || 0
+      : Number(dailyTarget.manualHoursStudied) || 0;
+    const updated: DailyTarget = {
+      ...dailyTarget,
+      hoursStudied: syncedHours,
+      manualHoursStudied: manualBackup,
+      aiFocusVerifiedSeconds: verifiedSeconds,
+      hoursStudiedSource: 'ai_focus',
+    };
+    setDailyTarget(updated);
+    localStorage.setItem(`gate_daily_target_${updated.date}`, JSON.stringify(updated));
+  };
+
+  // Keep the selected Lecture Tracker date in sync with AI Focus live updates
+  // in this tab and storage updates from another tab/window.
+  useEffect(() => {
+    const refreshSyncedHours = () => {
+      setDailyTarget((current) => {
+        if (current.date !== selectedDate || current.hoursStudiedSource === 'manual') return current;
+
+        const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(selectedDate);
+        const syncedHours = Number((verifiedSeconds / 3600).toFixed(2));
+        if (
+          current.aiFocusVerifiedSeconds === verifiedSeconds &&
+          current.hoursStudied === syncedHours
+        ) {
+          return current;
+        }
+
+        const updated: DailyTarget = {
+          ...current,
+          hoursStudied: syncedHours,
+          aiFocusVerifiedSeconds: verifiedSeconds,
+          hoursStudiedSource: 'ai_focus',
+        };
+        try {
+          localStorage.setItem(`gate_daily_target_${selectedDate}`, JSON.stringify(updated));
+        } catch (error) {
+          console.error('[Lecture Tracker] Could not save synced AI Focus hours:', error);
+        }
+        return updated;
+      });
+    };
+
+    window.addEventListener('gate-ai-focus-study-time-updated', refreshSyncedHours);
+    window.addEventListener('storage', refreshSyncedHours);
+    return () => {
+      window.removeEventListener('gate-ai-focus-study-time-updated', refreshSyncedHours);
+      window.removeEventListener('storage', refreshSyncedHours);
+    };
+  }, [selectedDate]);
 
   // Save Weekly Target
   const handleWeeklyChange = (field: keyof WeeklyTarget, value: any) => {
@@ -287,7 +412,7 @@ const Tracker: React.FC = () => {
 
       // Check Streak only if updating for TODAY (or assume any active work counts)
       // Usually strict apps require the date to be today.
-      const today = new Date().toISOString().split('T')[0];
+      const today = getTodayDateString();
       if (selectedDate === today) {
         checkAndUpdateStreak();
       }
@@ -302,7 +427,7 @@ const Tracker: React.FC = () => {
   };
 
   const downloadReport = () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayDateString();
     let reportContent = `GATE 2027 PROGRESS REPORT\nGenerated on: ${today}\n\n`;
 
     // 1. Overall Stats
@@ -500,17 +625,49 @@ const Tracker: React.FC = () => {
 
               <div className="space-y-6 flex flex-col justify-center">
                 <div className="bg-slate-50 p-5 rounded-xl border border-slate-100">
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Total Hours Studied</label>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <label className="block text-sm font-bold text-slate-700">Total Hours Studied</label>
+                    {dailyTarget.hoursStudiedSource === 'manual' ? (
+                      <span className="rounded-full bg-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-600">
+                        Manual entry
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">
+                        ✓ Synced from AI Focus
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-4">
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       value={dailyTarget.hoursStudied}
+                      readOnly={dailyTarget.hoursStudiedSource !== 'manual'}
                       onChange={(e) => handleTargetChange('hoursStudied', parseFloat(e.target.value) || 0)}
-                      className="w-32 px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-xl font-bold text-slate-800"
+                      className={`w-32 rounded-lg border border-slate-300 px-4 py-3 text-xl font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 ${
+                        dailyTarget.hoursStudiedSource === 'manual' ? 'bg-white' : 'bg-slate-100'
+                      }`}
                       min="0"
-                      step="0.5"
+                      step="0.01"
                     />
                     <span className="text-slate-500 font-medium">hours</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[11px] text-slate-500">
+                      {dailyTarget.hoursStudiedSource === 'manual'
+                        ? 'Manual hours are kept separate from the AI Focus verified-time ledger.'
+                        : `Verified AI Focus time: ${Math.floor((dailyTarget.aiFocusVerifiedSeconds || 0) / 3600)}h ${Math.floor(((dailyTarget.aiFocusVerifiedSeconds || 0) % 3600) / 60)}m ${(dailyTarget.aiFocusVerifiedSeconds || 0) % 60}s`}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={dailyTarget.hoursStudiedSource === 'manual'
+                        ? handleSyncStudyHoursFromAiFocus
+                        : handleUseManualStudyHours}
+                      className="text-xs font-semibold text-indigo-600 transition hover:text-indigo-800"
+                    >
+                      {dailyTarget.hoursStudiedSource === 'manual'
+                        ? 'Sync from AI Focus'
+                        : 'Edit manually'}
+                    </button>
                   </div>
                 </div>
 

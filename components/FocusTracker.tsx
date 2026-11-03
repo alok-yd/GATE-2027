@@ -18,6 +18,7 @@ import {
 } from './focus/types';
 import { DEFAULT_SETTINGS, GATE_SUBJECTS } from './focus/constants';
 import { StorageService } from './focus/services/storage';
+
 import { focusEngine } from './focus/services/focusEngine';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
 import { visionEngine } from './focus/vision/visionEngine';
@@ -29,6 +30,30 @@ import {
   Settings,
   Shield,
 } from 'lucide-react';
+
+let focusRuntimeBridgeInstalled = false;
+
+/**
+ * Keep the webcam-to-FocusEngine bridge alive for the lifetime of the app,
+ * not just while the /focus route is mounted. This lets an active session
+ * continue counting verified time while the user visits Lecture Tracker.
+ */
+const ensureFocusRuntimeBridge = () => {
+  if (focusRuntimeBridgeInstalled) return;
+  focusRuntimeBridgeInstalled = true;
+
+  visionEngine.subscribe((data) => focusEngine.updateVision(data));
+  focusEngine.subscribe((output) => {
+    if (output.state === 'COMPLETED') visionEngine.stop();
+  });
+
+  window.addEventListener('beforeunload', () => {
+    timerEngine.stopSession();
+    visionEngine.stop();
+  });
+};
+
+
 
 const initialTickData: TimerTickData = {
   state: 'IDLE',
@@ -73,7 +98,11 @@ export default function FocusTracker() {
   const [timelineEvents, setTimelineEvents] = useState<FocusTimelineEvent[]>(() => StorageService.getTimelineEvents());
 
   const [tickData, setTickData] = useState<TimerTickData>(initialTickData);
-  const [cameraStatus, setCameraStatus] = useState<CameraConnectionStatus>('OFF');
+  const [cameraStatus, setCameraStatus] = useState<CameraConnectionStatus>(() =>
+    timerEngine.hasActiveSession()
+      ? (visionEngine.isActive() ? 'AVAILABLE' : 'UNAVAILABLE')
+      : 'OFF'
+  );
   const [cameraError, setCameraError] = useState<string | null>(null);
   const cameraRetryInProgressRef = useRef(false);
   const sessionStartGenerationRef = useRef(0);
@@ -89,9 +118,9 @@ export default function FocusTracker() {
   }, [sessions]);
 
   useEffect(() => {
-    // The Focus module has one camera subscription and one timer subscription.
-    // No keyboard, mouse, tab-focus or application-activity monitor is started.
-    const unsubVision = visionEngine.subscribe((data) => focusEngine.updateVision(data));
+    // The runtime vision bridge is app-scoped so AI Focus keeps counting while
+    // the user navigates to Lecture Tracker or another route.
+    ensureFocusRuntimeBridge();
 
     const unsubFailure = visionEngine.subscribeFailure((reason) => {
       setCameraStatus('UNAVAILABLE');
@@ -104,13 +133,11 @@ export default function FocusTracker() {
 
     return () => {
       sessionStartGenerationRef.current += 1;
-      unsubVision();
       unsubFailure();
       unsubTimer();
-      // A page unmount tears down the webcam; also close the active session so
-      // the singleton timer cannot keep running without any camera frames.
-      timerEngine.stopSession();
-      visionEngine.stop();
+      // Route navigation must not stop an active verified study session.
+      // The app-scoped camera bridge and singleton timer continue until the
+      // user presses STOP, the target completes, or the page is unloaded.
     };
   }, []);
 
