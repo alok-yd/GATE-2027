@@ -147,9 +147,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setVisionLive(v);
     });
 
+    const unsubFailure = visionEngine.subscribeFailure((reason) => {
+      if (unmounted) return;
+      setIsCameraActive(false);
+      setCameraError(reason);
+    });
+
+    const handleCameraRestarted = () => {
+      if (unmounted) return;
+      setCameraError(null);
+      setIsCameraActive(visionEngine.isActive() && !visionEngine.isSimulating());
+      if (videoRef.current) {
+        visionEngine.attachPreview(videoRef.current);
+      }
+    };
+
+    window.addEventListener('ai-focus-camera-restarted', handleCameraRestarted);
+
     return () => {
       unmounted = true;
       unsub();
+      unsubFailure();
+      window.removeEventListener('ai-focus-camera-restarted', handleCameraRestarted);
     };
   }, []);
 

@@ -52,6 +52,8 @@ export default function FocusTracker() {
   const [showEvaluationModal, setShowEvaluationModal] = useState(false);
   const [showCameraFailureModal, setShowCameraFailureModal] = useState(false);
   const [cameraFailureReason, setCameraFailureReason] = useState<string>('');
+  const [isCameraRetrying, setIsCameraRetrying] = useState(false);
+  const cameraRetryInProgressRef = useRef(false);
 
   // Application Persistent State
   const [settings, setSettings] = useState<UserSettings>(() => StorageService.getSettings());
@@ -174,6 +176,41 @@ export default function FocusTracker() {
   // Handle Pause
   const handlePauseSession = () => {
     timerEngine.pauseSession();
+  };
+
+  // Reacquire a fresh webcam stream. Keep the recovery dialog visible until
+  // getUserMedia succeeds, rather than silently dismissing it on a no-op retry.
+  const handleRetryCamera = async () => {
+    if (cameraRetryInProgressRef.current) return;
+    cameraRetryInProgressRef.current = true;
+    setIsCameraRetrying(true);
+    setCameraFailureReason('Reconnecting to the webcam…');
+
+    try {
+      const result = await visionEngine.start(
+        settings.selectedCameraId || undefined,
+        settings.frameRateFps || 10
+      );
+
+      if (result.success) {
+        setShowCameraFailureModal(false);
+        setCameraFailureReason('');
+        window.dispatchEvent(new Event('ai-focus-camera-restarted'));
+      } else {
+        setCameraFailureReason(
+          result.error || 'Camera could not be reconnected. Check Windows camera permission and try again.'
+        );
+        setShowCameraFailureModal(true);
+      }
+    } catch (error) {
+      setCameraFailureReason(
+        error instanceof Error ? error.message : 'Unexpected error while reconnecting to the webcam.'
+      );
+      setShowCameraFailureModal(true);
+    } finally {
+      cameraRetryInProgressRef.current = false;
+      setIsCameraRetrying(false);
+    }
   };
 
   // Handle Resume
@@ -458,6 +495,7 @@ export default function FocusTracker() {
       <CameraFailureModal
         isOpen={showCameraFailureModal}
         reason={cameraFailureReason}
+        isRetrying={isCameraRetrying}
         onContinueUnverified={() => {
           setShowCameraFailureModal(false);
           timerEngine.continueWithoutVerification();
@@ -466,10 +504,7 @@ export default function FocusTracker() {
           setShowCameraFailureModal(false);
           timerEngine.pauseSession();
         }}
-        onRetryCamera={() => {
-          setShowCameraFailureModal(false);
-          visionEngine.start();
-        }}
+        onRetryCamera={handleRetryCamera}
       />
 
       <SystemTrayModal

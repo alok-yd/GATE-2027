@@ -4,6 +4,7 @@ import { AlertTriangle, Play, Pause, CameraOff, ShieldAlert } from 'lucide-react
 interface CameraFailureModalProps {
   isOpen: boolean;
   reason?: string;
+  isRetrying?: boolean;
   onContinueUnverified: () => void;
   onPauseSession: () => void;
   onRetryCamera: () => void;
@@ -12,6 +13,7 @@ interface CameraFailureModalProps {
 export const CameraFailureModal: React.FC<CameraFailureModalProps> = ({
   isOpen,
   reason,
+  isRetrying = false,
   onContinueUnverified,
   onPauseSession,
   onRetryCamera
@@ -64,10 +66,12 @@ export const CameraFailureModal: React.FC<CameraFailureModalProps> = ({
           </button>
 
           <button
+            type="button"
             onClick={onRetryCamera}
-            className="w-full py-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+            disabled={isRetrying}
+            className="w-full py-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Retry Camera Connection
+            {isRetrying ? 'Reconnecting Camera…' : 'Retry Camera Connection'}
           </button>
         </div>
       </div>

@@ -15,6 +15,7 @@ export class VisionEngine {
   private lastAnalysisTime: number = 0;
   private isRunning: boolean = false;
   private isSimulated: boolean = false;
+  private cameraFailureNotified: boolean = false;
   private callbacks: Set<VisionCallback> = new Set();
   private failureCallbacks: Set<CameraFailureCallback> = new Set();
   
@@ -53,11 +54,18 @@ export class VisionEngine {
   }
 
   async start(deviceId?: string, fps: number = 10): Promise<{ success: boolean; error?: string }> {
-    if (this.isRunning && !this.isSimulated) return { success: true };
+    const liveTrack = this.stream?.getVideoTracks().some(track => track.readyState === 'live') ?? false;
+    if (this.isRunning && !this.isSimulated && !this.cameraFailureNotified && liveTrack) {
+      return { success: true };
+    }
 
-    if (this.isSimulated) {
+    // A previously failed stream must be released and reacquired. A stale
+    // MediaStream object must never make Retry report success without retrying.
+    if (this.isRunning || this.stream || this.isSimulated) {
       this.stop();
     }
+    this.cameraFailureNotified = false;
+    this.consecutiveBlankFrames = 0;
 
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -95,6 +103,7 @@ export class VisionEngine {
 
       this.isRunning = true;
       this.isSimulated = false;
+      this.cameraFailureNotified = false;
       this.consecutiveBlankFrames = 0;
       this.loop(fps);
 
@@ -173,12 +182,17 @@ export class VisionEngine {
     return this.isSimulated;
   }
 
-  stop(): void {
+  private releaseCaptureResources(): void {
     this.isRunning = false;
     this.isSimulated = false;
     this.multiFaceHistory = [];
     this.presenceHistory = [];
-    if (this.animationFrameId) {
+    this.yawHistory = [];
+    this.pitchHistory = [];
+    this.centroidHistory = [];
+    this.previousDeskLuminance = null;
+
+    if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
@@ -187,12 +201,22 @@ export class VisionEngine {
       this.analysisIntervalId = null;
     }
     if (this.stream) {
-      this.stream.getTracks().forEach(t => t.stop());
+      this.stream.getTracks().forEach(track => {
+        track.onended = null;
+        track.stop();
+      });
       this.stream = null;
     }
     if (this.videoElement) {
+      this.videoElement.pause();
       this.videoElement.srcObject = null;
     }
+  }
+
+  stop(): void {
+    this.releaseCaptureResources();
+    this.cameraFailureNotified = false;
+    this.consecutiveBlankFrames = 0;
   }
 
   attachPreview(videoTag: HTMLVideoElement): void {
@@ -219,7 +243,21 @@ export class VisionEngine {
   }
 
   private handleCameraFailure(reason: string): void {
-    this.failureCallbacks.forEach(cb => cb(reason));
+    // Previously a persistent black frame notified React on every camera tick,
+    // reopening the modal immediately after clicks. Latch the event and release
+    // the dead stream before notifying subscribers.
+    if (this.cameraFailureNotified) return;
+    this.cameraFailureNotified = true;
+    this.consecutiveBlankFrames = 0;
+    this.releaseCaptureResources();
+
+    this.failureCallbacks.forEach(cb => {
+      try {
+        cb(reason);
+      } catch (error) {
+        console.error('Camera failure callback failed:', error);
+      }
+    });
   }
 
   getStream(): MediaStream | null {
