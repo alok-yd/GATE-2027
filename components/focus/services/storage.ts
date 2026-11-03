@@ -402,7 +402,7 @@ export class StorageService {
   static getTodaySessions(): FocusSession[] {
     const today = getTodayDateString();
     return this.getSessions().filter(s => {
-      const sessionDate = new Date(s.startTime).toISOString().slice(0, 10);
+      const sessionDate = localDateKey(s.startTime);
       return sessionDate === today;
     });
   }
@@ -413,7 +413,7 @@ export class StorageService {
 
     if (Array.isArray(arg1)) {
       const today = getTodayDateString();
-      todaySessions = arg1.filter(s => new Date(s.startTime).toISOString().slice(0, 10) === today);
+      todaySessions = arg1.filter(s => localDateKey(s.startTime) === today);
       targetSeconds = arg2 || 12 * 3600;
     } else {
       todaySessions = this.getTodaySessions();
