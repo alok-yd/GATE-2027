@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Camera, CameraOff, CheckCircle2, Play, Square, UserRound } from 'lucide-react';
 import { TimerTickData } from '../services/timerEngine';
-import { isFocusedState } from '../types';
 import { visionEngine } from '../vision/visionEngine';
 import { formatDigitalClock, formatTimeHoursMins } from '../services/storage';
 
@@ -30,7 +29,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const sessionActive = tickData.state !== 'IDLE' && tickData.state !== 'COMPLETED';
-  const personPresent = sessionActive && isFocusedState(tickData.state);
+  const personPresent = sessionActive && tickData.state === 'FOCUSED';
 
   const activeSessionContribution = sessionActive ? tickData.focusedSeconds : 0;
   const totalVerifiedToday = todayVerifiedSeconds + activeSessionContribution;
@@ -60,24 +59,36 @@ export const Dashboard: React.FC<DashboardProps> = ({
     };
   }, [cameraStatus]);
 
-  const cameraUnavailable = cameraStatus === 'UNAVAILABLE' || tickData.state === 'UNVERIFIED';
+  const cameraUnavailable = cameraStatus === 'UNAVAILABLE';
+  const cameraSignalLost =
+    tickData.state === 'UNVERIFIED' &&
+    (tickData.stateExplanation || '').includes('CAMERA SIGNAL LOST');
+  const waitingForCameraFrame =
+    cameraStatus === 'AVAILABLE' &&
+    tickData.state === 'UNVERIFIED' &&
+    !cameraSignalLost;
+
   const presenceStatus = !sessionActive
     ? tickData.state === 'COMPLETED'
       ? 'SESSION COMPLETED'
       : 'READY'
     : cameraStatus === 'CONNECTING'
-      ? 'CAMERA CONNECTING'
+      ? 'CAMERA CONNECTING — TIMER PAUSED'
       : cameraUnavailable
-        ? 'CAMERA UNAVAILABLE'
-        : personPresent
-          ? 'PRESENT — TIMER RUNNING'
-          : 'ABSENT — TIMER PAUSED';
+        ? 'CAMERA UNAVAILABLE — TIMER PAUSED'
+        : cameraSignalLost
+          ? 'CAMERA SIGNAL LOST — TIMER PAUSED'
+          : waitingForCameraFrame
+            ? 'WAITING FOR CAMERA FRAME — TIMER PAUSED'
+            : personPresent
+              ? 'PRESENT — TIMER RUNNING'
+              : 'ABSENT — TIMER PAUSED';
 
   const statusColour = !sessionActive
     ? tickData.state === 'COMPLETED'
       ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'
       : 'text-zinc-300 border-zinc-700 bg-zinc-800/60'
-    : cameraStatus === 'CONNECTING' || cameraUnavailable
+    : cameraStatus === 'CONNECTING' || cameraUnavailable || cameraSignalLost || waitingForCameraFrame
       ? 'text-amber-300 border-amber-500/30 bg-amber-500/10'
       : personPresent
         ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'
@@ -90,10 +101,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
     : cameraStatus === 'CONNECTING'
       ? 'Connecting to your webcam. The countdown is paused until a person is detected.'
       : cameraUnavailable
-        ? cameraError || 'Webcam verification is unavailable. Reconnect the camera to resume.'
-        : personPresent
-          ? 'A person is detected in front of the webcam. Your countdown is running.'
-          : 'No person is detected in front of the webcam. Your remaining time is preserved.';
+        ? cameraError || 'Camera access is unavailable. Allow camera permission and retry.'
+        : cameraSignalLost
+          ? tickData.stateExplanation || 'No fresh webcam frames are arriving. The countdown is paused.'
+          : waitingForCameraFrame
+            ? 'The webcam is connected. Waiting for the first usable frame; the countdown remains paused.'
+            : personPresent
+              ? 'A person is detected in front of the webcam. Your countdown is running.'
+              : 'No person is detected in front of the webcam. Your remaining time is preserved.';
 
   return (
     <div className="flex-1 w-full max-w-7xl mx-auto space-y-6 overflow-y-auto p-4 lg:p-6">
@@ -250,7 +265,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <p className="text-xs font-bold">{presenceStatus}</p>
             </div>
             <p className="mt-2 text-xs leading-relaxed opacity-90">{statusMessage}</p>
-            {sessionActive && cameraUnavailable && (
+            {sessionActive && (cameraUnavailable || cameraSignalLost || waitingForCameraFrame) && (
               <button
                 type="button"
                 onClick={onRetryCamera}

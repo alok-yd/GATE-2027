@@ -76,6 +76,7 @@ export default function FocusTracker() {
   const [cameraStatus, setCameraStatus] = useState<CameraConnectionStatus>('OFF');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const cameraRetryInProgressRef = useRef(false);
+  const sessionStartGenerationRef = useRef(0);
 
   const todaySummary = useMemo(
     () => StorageService.getTodaySummary(sessions, settings.dailyTargetHours * 3600),
@@ -102,6 +103,7 @@ export default function FocusTracker() {
     });
 
     return () => {
+      sessionStartGenerationRef.current += 1;
       unsubVision();
       unsubFailure();
       unsubTimer();
@@ -111,10 +113,6 @@ export default function FocusTracker() {
       visionEngine.stop();
     };
   }, []);
-
-  useEffect(() => {
-    focusEngine.updateSettings(settings);
-  }, [settings]);
 
   // A completed countdown is saved by TimerEngine. Release the webcam after
   // completion and refresh the stored session list for the daily summary.
@@ -135,6 +133,7 @@ export default function FocusTracker() {
     goal: string,
     medium?: StudyMedium
   ) => {
+    const startGeneration = ++sessionStartGenerationRef.current;
     setActiveTab('dashboard');
     setCameraStatus('CONNECTING');
     setCameraError(null);
@@ -147,6 +146,8 @@ export default function FocusTracker() {
       settings.selectedCameraId || undefined,
       settings.frameRateFps || 4
     );
+
+    if (startGeneration !== sessionStartGenerationRef.current) return;
 
     if (result.success) {
       setCameraStatus('AVAILABLE');
@@ -161,6 +162,7 @@ export default function FocusTracker() {
   const handleRetryCamera = async () => {
     if (cameraRetryInProgressRef.current || tickData.state === 'IDLE' || tickData.state === 'COMPLETED') return;
     cameraRetryInProgressRef.current = true;
+    const retryGeneration = sessionStartGenerationRef.current;
     setCameraStatus('CONNECTING');
     setCameraError(null);
 
@@ -169,6 +171,7 @@ export default function FocusTracker() {
         settings.selectedCameraId || undefined,
         settings.frameRateFps || 4
       );
+      if (retryGeneration !== sessionStartGenerationRef.current) return;
       if (result.success) {
         setCameraStatus('AVAILABLE');
         setCameraError(null);
@@ -183,6 +186,7 @@ export default function FocusTracker() {
   };
 
   const handleStopSession = () => {
+    sessionStartGenerationRef.current += 1;
     timerEngine.stopSession();
     visionEngine.stop();
     setCameraStatus('OFF');
@@ -209,6 +213,7 @@ export default function FocusTracker() {
   };
 
   const handleResetAllData = () => {
+    sessionStartGenerationRef.current += 1;
     if (tickData.state !== 'IDLE' && tickData.state !== 'COMPLETED') {
       timerEngine.stopSession();
     }

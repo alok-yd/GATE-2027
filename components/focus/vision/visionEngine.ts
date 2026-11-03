@@ -9,24 +9,26 @@ interface NativeFaceDetectorLike {
 }
 
 /**
- * Local webcam presence detector.
+ * Local webcam face-presence detector.
  *
- * The only output that can start the timer is whether a face/person is visible.
- * It does not inspect gaze, head pose, posture, hands, desk motion, applications,
- * speaking, phones, sleep, or the number of people. No frames leave this browser.
+ * It returns only PRESENT/ABSENT camera observations. No gaze, head pose,
+ * posture, hands, desk activity, speaking, phone, sleep, browser-tab or
+ * application-activity analysis is performed. Frames stay in this browser.
  */
 export class VisionEngine {
   private videoElement: HTMLVideoElement | null = null;
-  private canvasElement: HTMLCanvasElement;
-  private canvasCtx: CanvasRenderingContext2D | null;
+  private readonly canvasElement: HTMLCanvasElement;
+  private readonly canvasCtx: CanvasRenderingContext2D | null;
   private stream: MediaStream | null = null;
   private analysisIntervalId: number | null = null;
   private isRunning = false;
   private isAnalyzing = false;
+  private lifecycleId = 0;
   private lastFrameTimestamp = 0;
   private consecutiveBlankFrames = 0;
   private cameraFailureNotified = false;
   private faceDetector: NativeFaceDetectorLike | null = null;
+
   private callbacks = new Set<VisionCallback>();
   private failureCallbacks = new Set<CameraFailureCallback>();
 
@@ -64,13 +66,14 @@ export class VisionEngine {
       return { success: true };
     }
 
+    const startId = ++this.lifecycleId;
     this.releaseCaptureResources();
     this.cameraFailureNotified = false;
     this.consecutiveBlankFrames = 0;
 
     if (!navigator.mediaDevices?.getUserMedia) {
       const error = 'Webcam access is not supported in this browser. The timer will remain paused.';
-      this.handleCameraFailure(error);
+      this.handleCameraFailure(error, startId);
       return { success: false, error };
     }
 
@@ -92,13 +95,24 @@ export class VisionEngine {
             },
       };
 
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-      const track = this.stream.getVideoTracks()[0];
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (startId !== this.lifecycleId) {
+        stream.getTracks().forEach((track) => track.stop());
+        return { success: false, error: 'Camera connection attempt was cancelled.' };
+      }
+
+      const track = stream.getVideoTracks()[0];
       if (!track || track.readyState !== 'live') {
+        stream.getTracks().forEach((item) => item.stop());
         throw new Error('The webcam did not provide a live video stream.');
       }
 
-      track.onended = () => this.handleCameraFailure('The webcam disconnected. The timer is paused.');
+      this.stream = stream;
+      track.onended = () => {
+        if (startId === this.lifecycleId) {
+          this.handleCameraFailure('The webcam disconnected. The timer is paused.', startId);
+        }
+      };
 
       if (!this.videoElement) {
         this.videoElement = document.createElement('video');
@@ -108,8 +122,18 @@ export class VisionEngine {
         this.videoElement.autoplay = true;
       }
 
-      this.videoElement.srcObject = this.stream;
+      this.videoElement.srcObject = stream;
       await this.videoElement.play();
+
+      // A user may stop the session while the camera permission prompt or
+      // video.play() is pending. Do not revive the old stream afterward.
+      if (startId !== this.lifecycleId) {
+        stream.getTracks().forEach((item) => {
+          item.onended = null;
+          item.stop();
+        });
+        return { success: false, error: 'Camera connection attempt was cancelled.' };
+      }
 
       this.faceDetector = this.createNativeFaceDetector();
       this.isRunning = true;
@@ -118,13 +142,17 @@ export class VisionEngine {
 
       return { success: true };
     } catch (cause) {
+      if (startId !== this.lifecycleId) {
+        return { success: false, error: 'Camera connection attempt was cancelled.' };
+      }
+
       const message =
         cause instanceof DOMException && cause.name === 'NotAllowedError'
           ? 'Camera permission was denied. Allow camera access and retry; the timer is paused.'
           : cause instanceof Error
             ? `${cause.message} The timer is paused until the webcam reconnects.`
             : 'Could not access the webcam. The timer is paused.';
-      this.handleCameraFailure(message);
+      this.handleCameraFailure(message, startId);
       return { success: false, error: message };
     }
   }
@@ -147,9 +175,9 @@ export class VisionEngine {
       window.clearInterval(this.analysisIntervalId);
     }
 
-    // Keep local webcam analysis alive when a lecture is playing in another tab.
-    // Browsers may throttle hidden-tab timers; the FocusEngine also fails closed
-    // when a fresh camera frame stops arriving.
+    // Do not listen to document visibility or browser-tab changes. The camera
+    // stream continues to determine presence when the student watches lectures
+    // in another tab. The freshness check fails closed if frames truly stop.
     const fps = Math.min(5, Math.max(1, Number.isFinite(requestedFps) ? requestedFps : 4));
     const intervalMs = Math.round(1000 / fps);
 
@@ -161,29 +189,28 @@ export class VisionEngine {
 
   private detectWithSkinRegions(): boolean {
     if (!this.canvasCtx) return false;
-    const width = this.canvasElement.width;
-    const height = this.canvasElement.height;
-    const frame = this.canvasCtx.getImageData(0, 0, width, height);
-    const sampleWidth = Math.ceil(width / 2);
-    const sampleHeight = Math.ceil(height / 2);
+
+    const frame = this.canvasCtx.getImageData(
+      0,
+      0,
+      this.canvasElement.width,
+      this.canvasElement.height
+    );
+    const sampleWidth = Math.ceil(this.canvasElement.width / 2);
+    const sampleHeight = Math.ceil(this.canvasElement.height / 2);
     const skinMask = new Uint8Array(sampleWidth * sampleHeight);
 
-    for (let y = 0; y < height; y += 2) {
-      for (let x = 0; x < width; x += 2) {
-        const index = (y * width + x) * 4;
+    for (let y = 0; y < this.canvasElement.height; y += 2) {
+      for (let x = 0; x < this.canvasElement.width; x += 2) {
+        const index = (y * this.canvasElement.width + x) * 4;
         const red = frame.data[index];
         const green = frame.data[index + 1];
         const blue = frame.data[index + 2];
 
-        // Broad YCbCr skin-colour range; connected-region geometry removes
-        // many isolated skin-like pixels. This fallback runs locally only.
+        // Lightweight local fallback for browsers without native FaceDetector.
         const cb = 128 - 0.168736 * red - 0.331264 * green + 0.5 * blue;
         const cr = 128 + 0.5 * red - 0.418688 * green - 0.081312 * blue;
-        const isSkinLike =
-          cb >=  77 &&
-          cb <= 127 &&
-          cr >= 133 &&
-          cr <= 173;
+        const isSkinLike = cb >= 77 && cb <= 127 && cr >= 133 && cr <= 173;
 
         if (isSkinLike) {
           skinMask[Math.floor(y / 2) * sampleWidth + Math.floor(x / 2)] = 1;
@@ -207,9 +234,8 @@ export class VisionEngine {
       this.canvasElement.height
     );
 
-    // A sustained blank/black frame means the camera is covered or no usable
-    // image is reaching the browser. Treat it as camera failure, never as an
-    // ordinary "person absent" result.
+    // A sustained blank frame indicates camera failure, not a valid absence
+    // observation. It therefore pauses the timer as UNVERIFIED.
     const pixels = this.canvasCtx.getImageData(
       0,
       0,
@@ -218,10 +244,15 @@ export class VisionEngine {
     ).data;
     let luminanceTotal = 0;
     let sampledPixels = 0;
+
     for (let index = 0; index < pixels.length; index += 16) {
-      luminanceTotal += 0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2];
+      luminanceTotal +=
+        0.299 * pixels[index] +
+        0.587 * pixels[index + 1] +
+        0.114 * pixels[index + 2];
       sampledPixels += 1;
     }
+
     const averageLuminance = sampledPixels ? luminanceTotal / sampledPixels : 0;
     if (averageLuminance < 4) {
       this.consecutiveBlankFrames += 1;
@@ -237,8 +268,8 @@ export class VisionEngine {
         const faces = await this.faceDetector.detect(this.videoElement);
         return faces.length > 0;
       } catch {
-        // Some Chromium builds expose FaceDetector but do not implement it.
-        // Switch to the bundled local face-region fallback for this stream.
+        // Native FaceDetector is experimental in some Chromium builds.
+        // Fall back to the bundled local face-region detector.
         this.faceDetector = null;
       }
     }
@@ -258,16 +289,19 @@ export class VisionEngine {
       return;
     }
 
+    const analysisId = this.lifecycleId;
     this.isAnalyzing = true;
+
     try {
       const personPresent = await this.detectPerson();
-      if (!this.isRunning) return;
+      if (!this.isRunning || analysisId !== this.lifecycleId) return;
+
       const now = Date.now();
       this.lastFrameTimestamp = now;
 
       const payload: VisionData = {
         facePresent: personPresent,
-        confidence: personPresent ? 0.95 : 0.05,
+        confidence: personPresent ? 1 : 0,
         personPresenceState: personPresent ? 'PERSON_PRESENT' : 'PERSON_ABSENT',
         headYaw: 0,
         headPitch: 0,
@@ -294,11 +328,14 @@ export class VisionEngine {
         }
       });
     } catch (error) {
-      this.handleCameraFailure(
-        error instanceof Error
-          ? `Webcam frame analysis failed: ${error.message}. The timer is paused.`
-          : 'Webcam frame analysis failed. The timer is paused.'
-      );
+      if (this.isRunning && analysisId === this.lifecycleId) {
+        this.handleCameraFailure(
+          error instanceof Error
+            ? `Webcam frame analysis failed: ${error.message}. The timer is paused.`
+            : 'Webcam frame analysis failed. The timer is paused.',
+          analysisId
+        );
+      }
     } finally {
       this.isAnalyzing = false;
     }
@@ -327,9 +364,16 @@ export class VisionEngine {
     };
   }
 
-  private handleCameraFailure(reason: string): void {
-    if (this.cameraFailureNotified) return;
+  private handleCameraFailure(reason: string, sourceLifecycleId: number): void {
+    if (
+      this.cameraFailureNotified ||
+      sourceLifecycleId !== this.lifecycleId
+    ) {
+      return;
+    }
+
     this.cameraFailureNotified = true;
+    this.lifecycleId += 1;
     this.releaseCaptureResources();
 
     const unavailable = this.createUnavailableFrame();
@@ -352,7 +396,6 @@ export class VisionEngine {
 
   private releaseCaptureResources(): void {
     this.isRunning = false;
-    this.isAnalyzing = false;
     this.lastFrameTimestamp = 0;
     this.consecutiveBlankFrames = 0;
 
@@ -378,6 +421,7 @@ export class VisionEngine {
   }
 
   stop(): void {
+    this.lifecycleId += 1;
     this.releaseCaptureResources();
     this.cameraFailureNotified = false;
   }
