@@ -255,9 +255,17 @@ export class TimerEngine {
     if (!this.activeSessionId) return;
 
     // Close the old state interval before applying the new presence state.
-    this.accrueElapsedTo(Date.now(), this.previousState);
-
+    const now = Date.now();
     const previous = this.previousState;
+    const isLosingCameraWhilePresent =
+      output.state === 'UNVERIFIED' && isFocusedState(previous);
+    const accrualEnd = isLosingCameraWhilePresent
+      ? Math.max(
+          this.lastTickTimestamp,
+          Math.min(now, output.cameraAccrualCutoffTimestamp)
+        )
+      : now;
+    this.accrueElapsedTo(accrualEnd, previous);
     const next = output.state;
     this.currentStateExplanation = output.stateExplanation;
 

@@ -21,6 +21,8 @@ export interface FocusEngineOutput {
   facePresent: boolean;
   personPresenceState: PersonPresenceState;
   cameraAvailable: boolean;
+  /** Last instant at which the most recent camera frame can earn presence time. */
+  cameraAccrualCutoffTimestamp: number;
   visionQualityScore: number;
   activity?: ActivityType;
   confidenceVector?: FocusConfidenceVector;
@@ -316,6 +318,10 @@ export class FocusEngine {
       facePresent: isPersonPresent,
       personPresenceState,
       cameraAvailable,
+      cameraAccrualCutoffTimestamp:
+        this.lastVision.cameraHealthy === true && this.lastVision.isSimulated !== true
+          ? (this.lastVision.timestamp || 0) + CAMERA_STALE_AFTER_MS
+          : (this.lastVision.timestamp || now),
       visionQualityScore: cameraAvailable ? 1 : 0,
       activity,
       distractionReason: isPersonPresent ? undefined : stateExplanation,
