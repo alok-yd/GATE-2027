@@ -219,7 +219,7 @@ const buildStudentSnapshot = () => {
   };
 };
 
-const executeReadOnlyTool = (name: string, args: unknown): unknown => {
+const executeReadOnlyTool = (name: string, args: unknown, latestUserPrompt = ''): unknown => {
   switch (name) {
     case 'get_student_snapshot':
       return buildStudentSnapshot();
@@ -227,8 +227,40 @@ const executeReadOnlyTool = (name: string, args: unknown): unknown => {
     case 'get_ai_analytics_dashboard':
       return getAIAnalyticsMentorContext();
 
-    case 'get_health_tracker_summary':
-      return getHealthTrackerMentorContext();
+    case 'get_health_tracker_summary': {
+      const prompt = latestUserPrompt.toLowerCase();
+      const isRelevantHealthQuestion =
+        /health|wellness|wellbeing|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|fatigue|tired|energy|recovery|supplement|vitamin|omega|magnesium|ashwagandha|sky|sudarshan|meditation|no.?fap|challenge progress/i.test(prompt);
+      if (!isRelevantHealthQuestion) {
+        return {
+          message: 'Health data is only available for a relevant health or wellness question. No health records were returned for this request.',
+        };
+      }
+
+      const asksSky = /sky|sudarshan|meditation/i.test(prompt);
+      const asksNoFap = /no.?fap/i.test(prompt);
+      const asksBothChallenges =
+        !asksSky &&
+        !asksNoFap &&
+        /(both|all).{0,20}(challenge|habit)|challenge progress|habit challenges/i.test(prompt);
+      const includeChallenges = asksSky || asksNoFap || asksBothChallenges;
+      const challengeSelection =
+        asksSky && asksNoFap
+          ? 'both'
+          : asksSky
+            ? 'sky'
+            : asksNoFap
+              ? 'noFap'
+              : 'both';
+      const includeSupplements =
+        /supplement|vitamin|omega|magnesium|ashwagandha/i.test(prompt);
+
+      return getHealthTrackerMentorContext({
+        includeChallenges,
+        challengeSelection,
+        includeSupplements,
+      });
+    }
 
     case 'get_pyq_performance': {
       const profile = getStudentProfile();
@@ -361,6 +393,7 @@ NON-NEGOTIABLE DATA INTEGRITY
 - Use the read-only function tools when the user asks about their preparation, subject completion, PYQs, mock marks, revision, trends, weak areas, AIR Analytics, or uploaded notes.
 - For AI Analytics questions (predicted AIR, expected marks, readiness dimensions, scenarios, historical college compatibility, what-if simulation, or saved prediction history), call get_ai_analytics_dashboard and use its exact returned fields.
 - For Health Tracker questions (sleep, heart rate, SpO2, steps, stress, hydration, mood, symptoms, cognitive readiness, study mode, SKY practice, No-Fap challenge or supplement check-ins), call get_health_tracker_summary. Do not include health data in unrelated academic answers.
+- Do not retrieve SKY or No-Fap challenge details unless the user explicitly asks about that practice/challenge (or asks for all habit challenges). Retrieve supplement check-ins only when supplements are relevant to the question.
 - Treat tool results as the only source of application statistics. Never infer or invent mock marks, streaks, subject completion, PYQ counts, accuracy, test history, dates or pending tasks.
 - If a data field is missing, say "not recorded" or "not available"; never turn missing data into zero.
 - Distinguish measured PYQ accuracy (correct/attempted) from the legacy tracker's derived subject-readiness indicator. The latter is a proxy, not actual test accuracy.
@@ -410,16 +443,31 @@ const buildFallbackContext = (prompt: string) => {
   const memories = listMemories().slice(0, 8);
   const mistakes = listMistakes().slice(0, 8);
   const wantsAnalytics =
-    /analytics|\bair\b|rank|readiness|expected marks|gate score|college compatibility|what.if/i.test(prompt);
+    /analytics|\bair\b|predicted rank|rank|expected marks|gate score|college compatibility|what.if|preparation dimensions/i.test(prompt);
   const wantsHealth =
-    /health|sleep|stress|spo2|oxygen|heart rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|sky meditation|sudarshan|no.?fap|wellness/i.test(prompt);
+    /health|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|wellness|fatigue|tired|energy|recovery/i.test(prompt);
+  const asksSky = /sky|sudarshan|meditation/i.test(prompt);
+  const asksNoFap = /no.?fap/i.test(prompt);
+  const asksBothChallenges =
+    !asksSky &&
+    !asksNoFap &&
+    /(both|all).{0,20}(challenge|habit)|challenge progress|habit challenges/i.test(prompt);
 
   return JSON.stringify(
     {
       note: 'Fallback context assembled from current browser-local app records. Missing fields are unavailable, not zero.',
       snapshot,
       ...(wantsAnalytics ? { aiAnalytics: getAIAnalyticsMentorContext() } : {}),
-      ...(wantsHealth ? { healthTracker: getHealthTrackerMentorContext() } : {}),
+      ...(wantsHealth
+        ? {
+            healthTracker: getHealthTrackerMentorContext({
+              includeChallenges: asksSky || asksNoFap || asksBothChallenges,
+              challengeSelection:
+                asksSky && asksNoFap ? 'both' : asksSky ? 'sky' : asksNoFap ? 'noFap' : 'both',
+              includeSupplements: /supplement|vitamin|omega|magnesium|ashwagandha/i.test(prompt),
+            }),
+          }
+        : {}),
       relevantUploadedKnowledge: knowledge,
       userApprovedMemories: memories,
       recentSavedMistakes: mistakes,
@@ -570,7 +618,8 @@ const callGeminiWithTools = async (
         }
 
         try {
-          const result = executeReadOnlyTool(call.name, call.args);
+          const latestUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
+          const result = executeReadOnlyTool(call.name, call.args, latestUserPrompt);
           return {
             functionResponse: {
               name: call.name,

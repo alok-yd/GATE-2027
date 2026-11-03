@@ -293,9 +293,14 @@ export const getAIAnalyticsMentorContext = () => {
 
 /**
  * Read-only health context from the exact localStorage records used by
- * HealthTracker.tsx. Private free-text challenge notes are deliberately omitted.
+ * HealthTracker.tsx. Sensitive challenge and supplement details are included
+ * only when the current user question asks for those categories.
  */
-export const getHealthTrackerMentorContext = () => {
+export const getHealthTrackerMentorContext = (options: {
+  includeChallenges?: boolean;
+  challengeSelection?: 'sky' | 'noFap' | 'both';
+  includeSupplements?: boolean;
+} = {}) => {
   const entries = readLocalStorage<HealthEntryRecord[]>('gate_health_entries', [])
     .filter((entry) => entry && typeof entry.date === 'string')
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -308,6 +313,10 @@ export const getHealthTrackerMentorContext = () => {
 
   const recentEntries = entries.slice(-7);
   const latestEntry = entries[entries.length - 1] || null;
+  const includeNoFapDetails =
+    options.includeChallenges &&
+    (options.challengeSelection === 'noFap' || options.challengeSelection === 'both');
+  const shouldKeepHealthText = (value: string) => includeNoFapDetails || !/no.?fap/i.test(value);
   const latestAnalysis = analysis
     ? {
         source: analysis.source || 'unknown',
@@ -318,11 +327,15 @@ export const getHealthTrackerMentorContext = () => {
         recommendedStudyMode: analysis.studyMode || null,
         recommendedStudyHours: analysis.recommendedStudyHours ?? null,
         peakWindow: analysis.peakWindow || null,
-        message: analysis.message || null,
-        alerts: analysis.alerts || [],
-        actionItems: analysis.actionItems || [],
-        insights: analysis.insights || [],
-        failureNote: analysis.failureNote || null,
+        message: analysis.message && shouldKeepHealthText(analysis.message) ? analysis.message : null,
+        alerts: (analysis.alerts || []).filter((alert) =>
+          [alert.title, alert.message, alert.action].every(shouldKeepHealthText)
+        ),
+        actionItems: (analysis.actionItems || []).filter(shouldKeepHealthText),
+        insights: (analysis.insights || []).filter(shouldKeepHealthText),
+        failureNote: analysis.failureNote && shouldKeepHealthText(analysis.failureNote)
+          ? analysis.failureNote
+          : null,
       }
     : null;
 
@@ -365,9 +378,7 @@ export const getHealthTrackerMentorContext = () => {
     healthDataAvailability: {
       healthEntryCount: entries.length,
       hasHealthAnalysis: Boolean(analysis),
-      supplementLogCount: supplements.length,
-      skyChallengeStarted: Boolean(sky?.startedAt),
-      noFapChallengeStarted: Boolean(noFap?.startedAt),
+      ...(options.includeSupplements ? { supplementLogCount: supplements.length } : {}),
     },
     latestHealthEntry: latestEntry,
     recentSevenRecordedEntries: recentEntries,
@@ -375,22 +386,34 @@ export const getHealthTrackerMentorContext = () => {
     recentMoodCounts: moodCounts,
     recentSymptomCounts: symptomCounts,
     latestHealthAnalysis: latestAnalysis,
-    supplements: {
-      recentDailyLogs: supplements.slice(-14).map((log) => ({
-        date: log.date,
-        recordedTakenItems: Array.isArray(log.taken) ? log.taken : [],
-      })),
-      latestLog: latestSupplementLog
-        ? {
-            date: latestSupplementLog.date,
-            recordedTakenItems: Array.isArray(latestSupplementLog.taken) ? latestSupplementLog.taken : [],
-          }
-        : null,
-      note: 'These are only user-recorded taken/not-taken logs; they are not prescriptions or medication advice.',
-    },
-    challenges: {
-      skyMeditation90Day: skyProgress,
-      noFap100Day: noFapProgress,
-    },
+    ...(options.includeSupplements
+      ? {
+          supplements: {
+            recentDailyLogs: supplements.slice(-14).map((log) => ({
+              date: log.date,
+              recordedTakenItems: Array.isArray(log.taken) ? log.taken : [],
+            })),
+            latestLog: latestSupplementLog
+              ? {
+                  date: latestSupplementLog.date,
+                  recordedTakenItems: Array.isArray(latestSupplementLog.taken) ? latestSupplementLog.taken : [],
+                }
+              : null,
+            note: 'These are only user-recorded taken/not-taken logs; they are not prescriptions or medication advice.',
+          },
+        }
+      : {}),
+    ...(options.includeChallenges
+      ? {
+          challenges: {
+            ...(options.challengeSelection === 'sky' || options.challengeSelection === 'both'
+              ? { skyMeditation90Day: skyProgress }
+              : {}),
+            ...(options.challengeSelection === 'noFap' || options.challengeSelection === 'both'
+              ? { noFap100Day: noFapProgress }
+              : {}),
+          },
+        }
+      : {}),
   };
 };
