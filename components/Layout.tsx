@@ -53,6 +53,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     if (!restoreActivationFocusRef.current) expandDesktopSidebar();
   };
 
+  const handleSidebarActivationClick = () => {
+    expandDesktopSidebar();
+    window.requestAnimationFrame(() => {
+      firstDesktopNavLinkRef.current?.focus({ preventScroll: true });
+    });
+  };
+
   const handleDesktopSidebarBlur = (event: React.FocusEvent<HTMLDivElement>) => {
     const nextFocusedElement = event.relatedTarget;
     if (!(nextFocusedElement instanceof Node) || !event.currentTarget.contains(nextFocusedElement)) {
@@ -249,7 +256,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           aria-controls="primary-desktop-navigation"
           aria-expanded={false}
           title="Show navigation"
-          onClick={expandDesktopSidebar}
+          onClick={handleSidebarActivationClick}
           onFocus={handleSidebarActivationFocus}
           className="absolute inset-y-0 right-0 z-50 w-4 cursor-pointer bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500"
         />
