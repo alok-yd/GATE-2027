@@ -24,6 +24,7 @@ export class VisionEngine {
   private isRunning = false;
   private isAnalyzing = false;
   private lastFrameTimestamp = 0;
+  private consecutiveBlankFrames = 0;
   private cameraFailureNotified = false;
   private faceDetector: NativeFaceDetectorLike | null = null;
   private callbacks = new Set<VisionCallback>();
@@ -65,6 +66,7 @@ export class VisionEngine {
 
     this.releaseCaptureResources();
     this.cameraFailureNotified = false;
+    this.consecutiveBlankFrames = 0;
 
     if (!navigator.mediaDevices?.getUserMedia) {
       const error = 'Webcam access is not supported in this browser. The timer will remain paused.';
@@ -205,6 +207,31 @@ export class VisionEngine {
       this.canvasElement.height
     );
 
+    // A sustained blank/black frame means the camera is covered or no usable
+    // image is reaching the browser. Treat it as camera failure, never as an
+    // ordinary "person absent" result.
+    const pixels = this.canvasCtx.getImageData(
+      0,
+      0,
+      this.canvasElement.width,
+      this.canvasElement.height
+    ).data;
+    let luminanceTotal = 0;
+    let sampledPixels = 0;
+    for (let index = 0; index < pixels.length; index += 16) {
+      luminanceTotal += 0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2];
+      sampledPixels += 1;
+    }
+    const averageLuminance = sampledPixels ? luminanceTotal / sampledPixels : 0;
+    if (averageLuminance < 4) {
+      this.consecutiveBlankFrames += 1;
+      if (this.consecutiveBlankFrames >= 12) {
+        throw new Error('The camera is covered or producing blank black frames.');
+      }
+    } else {
+      this.consecutiveBlankFrames = 0;
+    }
+
     if (this.faceDetector) {
       try {
         const faces = await this.faceDetector.detect(this.videoElement);
@@ -327,6 +354,7 @@ export class VisionEngine {
     this.isRunning = false;
     this.isAnalyzing = false;
     this.lastFrameTimestamp = 0;
+    this.consecutiveBlankFrames = 0;
 
     if (this.analysisIntervalId !== null) {
       window.clearInterval(this.analysisIntervalId);

@@ -171,8 +171,6 @@ export class StorageService {
       storage.removeItem(STORAGE_KEYS.TIMELINE);
       storage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
       storage.removeItem(STORAGE_KEYS.SUBJECTS);
-      storage.removeItem(STORAGE_KEYS.CALIBRATION);
-      storage.removeItem(STORAGE_KEYS.EVALUATION);
     } catch {}
   }
 
@@ -296,8 +294,6 @@ export class StorageService {
     storage.removeItem(STORAGE_KEYS.SESSIONS);
     storage.removeItem(STORAGE_KEYS.TIMELINE);
     storage.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
-    storage.removeItem(STORAGE_KEYS.CALIBRATION);
-    storage.removeItem(STORAGE_KEYS.EVALUATION);
   }
 
   static exportAsJSON(): string {
@@ -305,7 +301,6 @@ export class StorageService {
       version: '1.2',
       exportedAt: new Date().toISOString(),
       settings: this.getSettings(),
-      calibration: this.getCalibrationProfile(),
       subjects: this.getSubjects(),
       sessions: this.getSessions(),
       timeline: this.getTimelineEvents()
@@ -377,7 +372,6 @@ export class StorageService {
       const parsed = JSON.parse(jsonString);
       const storage = getStorage();
       if (parsed.settings) storage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed.settings));
-      if (parsed.calibration) storage.setItem(STORAGE_KEYS.CALIBRATION, JSON.stringify(parsed.calibration));
       if (parsed.subjects) storage.setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(parsed.subjects));
       if (parsed.sessions) storage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(parsed.sessions));
       if (parsed.timeline) storage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(parsed.timeline));
