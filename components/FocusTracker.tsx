@@ -185,6 +185,16 @@ export default function FocusTracker() {
     }
   };
 
+  const handlePauseSession = () => timerEngine.pauseSession();
+
+  const handleResumeSession = () => timerEngine.resumeSession();
+
+  const handleStartBreak = () => timerEngine.startBreak();
+
+  const handleEndBreak = () => timerEngine.endBreak();
+
+  const handleStudyMediumChange = (medium: StudyMedium) => timerEngine.setStudyMedium(medium);
+
   const handleStopSession = () => {
     sessionStartGenerationRef.current += 1;
     timerEngine.stopSession();
@@ -306,6 +316,11 @@ export default function FocusTracker() {
               onOpenSetup={() => setShowSetupModal(true)}
               onStop={handleStopSession}
               onRetryCamera={handleRetryCamera}
+              onPause={handlePauseSession}
+              onResume={handleResumeSession}
+              onStartBreak={handleStartBreak}
+              onEndBreak={handleEndBreak}
+              onChangeStudyMedium={handleStudyMediumChange}
             />
           )}
 

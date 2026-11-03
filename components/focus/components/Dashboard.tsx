@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import { Camera, CameraOff, CheckCircle2, Play, Square, UserRound } from 'lucide-react';
+import { BookOpen, Camera, CameraOff, CheckCircle2, Coffee, FileText, Monitor, Pause, Play, Square, UserRound } from 'lucide-react';
 import { TimerTickData } from '../services/timerEngine';
+import { StudyMedium } from '../types';
 import { visionEngine } from '../vision/visionEngine';
 import { formatDigitalClock, formatTimeHoursMins } from '../services/storage';
 
@@ -15,6 +16,11 @@ interface DashboardProps {
   onOpenSetup: () => void;
   onStop: () => void;
   onRetryCamera: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onStartBreak: () => void;
+  onEndBreak: () => void;
+  onChangeStudyMedium: (medium: StudyMedium) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
@@ -26,10 +32,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onOpenSetup,
   onStop,
   onRetryCamera,
+  onPause,
+  onResume,
+  onStartBreak,
+  onEndBreak,
+  onChangeStudyMedium,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const sessionActive = tickData.state !== 'IDLE' && tickData.state !== 'COMPLETED';
-  const personPresent = sessionActive && tickData.state === 'FOCUSED';
+  const personPresent = sessionActive && tickData.currentScore > 0;
+  const manuallyPaused = tickData.state === 'PAUSED';
+  const breakActive = tickData.state === 'BREAK';
 
   const activeSessionContribution = sessionActive ? tickData.focusedSeconds : 0;
   const totalVerifiedToday = todayVerifiedSeconds + activeSessionContribution;
@@ -68,26 +81,52 @@ export const Dashboard: React.FC<DashboardProps> = ({
     tickData.state === 'UNVERIFIED' &&
     !cameraSignalLost;
 
-  const presenceStatus = !sessionActive
-    ? tickData.state === 'COMPLETED'
-      ? 'SESSION COMPLETED'
-      : 'READY'
+  const webcamPresenceStatus = !sessionActive
+    ? tickData.state === 'COMPLETED' ? 'SESSION COMPLETED' : 'READY'
     : cameraStatus === 'CONNECTING'
-      ? 'CAMERA CONNECTING — TIMER PAUSED'
+      ? 'CAMERA CONNECTING'
       : cameraUnavailable
-        ? 'CAMERA UNAVAILABLE — TIMER PAUSED'
+        ? 'CAMERA UNAVAILABLE'
         : cameraSignalLost
-          ? 'CAMERA SIGNAL LOST — TIMER PAUSED'
+          ? 'CAMERA SIGNAL LOST'
           : waitingForCameraFrame
-            ? 'WAITING FOR CAMERA FRAME — TIMER PAUSED'
+            ? 'WAITING FOR CAMERA FRAME'
             : personPresent
-              ? 'PRESENT — TIMER RUNNING'
-              : 'ABSENT — TIMER PAUSED';
+              ? 'PRESENT'
+              : 'ABSENT';
+
+  const presenceStatus = !sessionActive
+    ? webcamPresenceStatus
+    : manuallyPaused
+      ? 'MANUALLY PAUSED'
+      : breakActive
+        ? 'ON BREAK'
+        : cameraStatus === 'CONNECTING'
+          ? 'CAMERA CONNECTING — TIMER PAUSED'
+          : cameraUnavailable
+            ? 'CAMERA UNAVAILABLE — TIMER PAUSED'
+            : cameraSignalLost
+              ? 'CAMERA SIGNAL LOST — TIMER PAUSED'
+              : waitingForCameraFrame
+                ? 'WAITING FOR CAMERA FRAME — TIMER PAUSED'
+                : personPresent
+                  ? 'PRESENT — TIMER RUNNING'
+                  : 'ABSENT — TIMER PAUSED';
 
   const statusColour = !sessionActive
     ? tickData.state === 'COMPLETED'
       ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'
       : 'text-zinc-300 border-zinc-700 bg-zinc-800/60'
+    : manuallyPaused || breakActive
+      ? 'text-amber-300 border-amber-500/30 bg-amber-500/10'
+      : cameraStatus === 'CONNECTING' || cameraUnavailable || cameraSignalLost || waitingForCameraFrame
+        ? 'text-amber-300 border-amber-500/30 bg-amber-500/10'
+        : personPresent
+          ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'
+          : 'text-rose-300 border-rose-500/30 bg-rose-500/10';
+
+  const webcamStatusColour = !sessionActive
+    ? statusColour
     : cameraStatus === 'CONNECTING' || cameraUnavailable || cameraSignalLost || waitingForCameraFrame
       ? 'text-amber-300 border-amber-500/30 bg-amber-500/10'
       : personPresent
@@ -98,17 +137,27 @@ export const Dashboard: React.FC<DashboardProps> = ({
     ? tickData.state === 'COMPLETED'
       ? 'Your target study duration has been reached.'
       : 'Start a session to turn on the webcam and begin presence-based timing.'
-    : cameraStatus === 'CONNECTING'
-      ? 'Connecting to your webcam. The countdown is paused until a person is detected.'
-      : cameraUnavailable
-        ? cameraError || 'Camera access is unavailable. Allow camera permission and retry.'
-        : cameraSignalLost
-          ? tickData.stateExplanation || 'No fresh webcam frames are arriving. The countdown is paused.'
-          : waitingForCameraFrame
-            ? 'The webcam is connected. Waiting for the first usable frame; the countdown remains paused.'
-            : personPresent
-              ? 'A person is detected in front of the webcam. Your countdown is running.'
-              : 'No person is detected in front of the webcam. Your remaining time is preserved.';
+    : manuallyPaused
+      ? 'You manually paused this session. Webcam detection continues; resume only when you are ready.'
+      : breakActive
+        ? 'Break is active. The countdown is held while the webcam continues checking your presence.'
+        : cameraStatus === 'CONNECTING'
+          ? 'Connecting to your webcam. The countdown is paused until a person is detected.'
+          : cameraUnavailable
+            ? cameraError || 'Camera access is unavailable. Allow camera permission and retry.'
+            : cameraSignalLost
+              ? tickData.stateExplanation || 'No fresh webcam frames are arriving. The countdown is paused.'
+              : waitingForCameraFrame
+                ? 'The webcam is connected. Waiting for the first usable frame; the countdown remains paused.'
+                : personPresent
+                  ? 'A person is detected in front of the webcam. Your countdown is running.'
+                  : 'No person is detected in front of the webcam. Your remaining time is preserved.';
+
+  const mediumOptions: Array<{ value: StudyMedium; label: string; Icon: typeof Monitor }> = [
+    { value: 'Screen Study', label: 'Screen Study', Icon: Monitor },
+    { value: 'Paper / PYQ Study', label: 'Paper / PYQ Study', Icon: FileText },
+    { value: 'Mixed Study', label: 'Mixed Study', Icon: BookOpen },
+  ];
 
   return (
     <div className="flex-1 w-full max-w-7xl mx-auto space-y-6 overflow-y-auto p-4 lg:p-6">
@@ -185,6 +234,30 @@ export const Dashboard: React.FC<DashboardProps> = ({
             />
           </div>
 
+          {sessionActive && (
+            <div className="mt-6 space-y-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Study mode</p>
+              <div className="flex flex-wrap gap-2">
+                {mediumOptions.map(({ value, label, Icon }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => onChangeStudyMedium(value)}
+                    aria-pressed={tickData.activeMedium === value}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[11px] font-semibold transition ${
+                      tickData.activeMedium === value
+                        ? 'border-indigo-500 bg-indigo-500/20 text-indigo-200'
+                        : 'border-zinc-700 bg-zinc-950 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {sessionActive && tickData.activeGoal && (
             <div className="mt-5 rounded-xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Session goal</p>
@@ -203,14 +276,54 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 START SESSION
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={onStop}
-                className="inline-flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-7 py-3.5 text-sm font-bold text-rose-300 transition hover:bg-rose-500/20"
-              >
-                <Square className="h-4 w-4" />
-                STOP SESSION
-              </button>
+              <>
+                {breakActive ? (
+                  <button
+                    type="button"
+                    onClick={onEndBreak}
+                    className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-600 px-5 py-3 text-xs font-bold text-white transition hover:brightness-110"
+                  >
+                    <Play className="h-4 w-4 fill-current" />
+                    END BREAK
+                  </button>
+                ) : manuallyPaused ? (
+                  <button
+                    type="button"
+                    onClick={onResume}
+                    className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-600 px-5 py-3 text-xs font-bold text-white transition hover:brightness-110"
+                  >
+                    <Play className="h-4 w-4 fill-current" />
+                    RESUME
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={onPause}
+                      className="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-3 text-xs font-bold text-amber-200 transition hover:bg-amber-500/20"
+                    >
+                      <Pause className="h-4 w-4" />
+                      PAUSE
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onStartBreak}
+                      className="inline-flex items-center gap-2 rounded-xl border border-sky-500/30 bg-sky-500/10 px-5 py-3 text-xs font-bold text-sky-200 transition hover:bg-sky-500/20"
+                    >
+                      <Coffee className="h-4 w-4" />
+                      START BREAK
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={onStop}
+                  className="inline-flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-5 py-3 text-xs font-bold text-rose-300 transition hover:bg-rose-500/20"
+                >
+                  <Square className="h-4 w-4" />
+                  STOP SESSION
+                </button>
+              </>
             )}
           </div>
         </section>
@@ -221,8 +334,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <Camera className="h-4 w-4 text-emerald-300" />
               <h3 className="text-sm font-bold text-white">Webcam Presence</h3>
             </div>
-            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusColour}`}>
-              {presenceStatus}
+            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${webcamStatusColour}`}>
+              {webcamPresenceStatus}
             </span>
           </div>
 

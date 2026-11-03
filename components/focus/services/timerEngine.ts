@@ -70,6 +70,8 @@ export class TimerEngine {
   private mixedFocusedMs = 0;
   private unverifiedMs = 0;
   private awayMs = 0;
+  private manualPausedMs = 0;
+  private breakMs = 0;
   private lastTickTimestamp = 0;
 
   private previousState: FocusState = 'IDLE';
@@ -85,6 +87,38 @@ export class TimerEngine {
   subscribe(callback: TimerTickCallback): () => void {
     this.callbacks.add(callback);
     return () => this.callbacks.delete(callback);
+  }
+
+  setStudyMedium(medium: StudyMedium): void {
+    if (medium === this.medium) return;
+    if (this.activeSessionId) {
+      // Attribute time before the selection change to the previous study mode.
+      this.accrueTo(Date.now(), this.previousState);
+    }
+    this.medium = medium;
+    this.emitCurrentTick();
+  }
+
+  pauseSession(): void {
+    if (!this.activeSessionId) return;
+    this.focusEngine.pauseManually();
+  }
+
+  resumeSession(): void {
+    if (!this.activeSessionId) return;
+    // Resume only removes the manual override. Presence is checked again by
+    // FocusEngine, so an absent student stays paused automatically.
+    this.focusEngine.resumeManually();
+  }
+
+  startBreak(): void {
+    if (!this.activeSessionId) return;
+    this.focusEngine.startBreak();
+  }
+
+  endBreak(): void {
+    if (!this.activeSessionId) return;
+    this.focusEngine.endBreak();
   }
 
   startSession(
@@ -115,6 +149,8 @@ export class TimerEngine {
     this.mixedFocusedMs = 0;
     this.unverifiedMs = 0;
     this.awayMs = 0;
+    this.manualPausedMs = 0;
+    this.breakMs = 0;
     this.timelineBuffer = [];
     this.lastTimelineLog = now;
     this.currentStateExplanation = 'Waiting for webcam presence. The countdown is paused.';
@@ -180,6 +216,10 @@ export class TimerEngine {
       this.awayMs += deltaMs;
     } else if (state === 'UNVERIFIED') {
       this.unverifiedMs += deltaMs;
+    } else if (state === 'PAUSED') {
+      this.manualPausedMs += deltaMs;
+    } else if (state === 'BREAK') {
+      this.breakMs += deltaMs;
     }
     // IDLE and COMPLETED never earn time.
   }
@@ -259,14 +299,14 @@ export class TimerEngine {
       thinkingSeconds: 0,
       uncertainSeconds: 0,
       unverifiedSeconds: Math.floor(this.unverifiedMs / 1000),
-      pausedSeconds: 0,
+      pausedSeconds: Math.floor(this.manualPausedMs / 1000),
       warningSeconds: 0,
       distractedSeconds: 0,
       phoneDistractedSeconds: 0,
       conversationSeconds: 0,
       possibleSleepSeconds: 0,
       awaySeconds: Math.floor(this.awayMs / 1000),
-      breakSeconds: 0,
+      breakSeconds: Math.floor(this.breakMs / 1000),
       elapsedSeconds,
       averageFocusScore: focusedSeconds > 0 ? 100 : 0,
       peakFocusScore: focusedSeconds > 0 ? 100 : 0,
@@ -296,6 +336,8 @@ export class TimerEngine {
     const mixedFocusedSeconds = Math.floor(this.mixedFocusedMs / 1000);
     const unverifiedSeconds = Math.floor(this.unverifiedMs / 1000);
     const awaySeconds = Math.floor(this.awayMs / 1000);
+    const pausedSeconds = Math.floor(this.manualPausedMs / 1000);
+    const breakSeconds = Math.floor(this.breakMs / 1000);
 
     const now = Date.now();
     const elapsedSeconds = this.sessionStartTime > 0
@@ -319,14 +361,14 @@ export class TimerEngine {
       thinkingSeconds: 0,
       uncertainSeconds: 0,
       unverifiedSeconds,
-      pausedSeconds: 0,
+      pausedSeconds,
       remainingTargetSeconds,
       distractedSeconds: 0,
       phoneSeconds: 0,
       conversationSeconds: 0,
       sleepSeconds: 0,
       awaySeconds,
-      breakSeconds: 0,
+      breakSeconds,
       efficiency,
       currentScore: output.facePresent ? 100 : 0,
       averageScore: focusedSeconds > 0 ? 100 : 0,

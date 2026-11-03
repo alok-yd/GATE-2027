@@ -36,6 +36,8 @@ export class FocusEngine {
   private currentState: FocusState = 'IDLE';
   private sessionActive = false;
   private completed = false;
+  private manualPauseRequested = false;
+  private breakActive = false;
   private lastVision: VisionData | null = null;
 
   private candidatePresence: boolean | null = null;
@@ -49,6 +51,8 @@ export class FocusEngine {
   beginSession(): void {
     this.sessionActive = true;
     this.completed = false;
+    this.manualPauseRequested = false;
+    this.breakActive = false;
     this.candidatePresence = null;
     this.consecutiveFrames = 0;
     this.confirmedPresence = null;
@@ -59,10 +63,38 @@ export class FocusEngine {
   endSession(completed = false): void {
     this.sessionActive = false;
     this.completed = completed;
+    this.manualPauseRequested = false;
+    this.breakActive = false;
     this.candidatePresence = null;
     this.consecutiveFrames = 0;
     this.confirmedPresence = null;
     this.currentState = completed ? 'COMPLETED' : 'IDLE';
+    this.evaluate(true);
+  }
+
+  pauseManually(): void {
+    if (!this.sessionActive || this.completed) return;
+    this.manualPauseRequested = true;
+    this.breakActive = false;
+    this.evaluate(true);
+  }
+
+  resumeManually(): void {
+    if (!this.sessionActive || this.completed) return;
+    this.manualPauseRequested = false;
+    this.evaluate(true);
+  }
+
+  startBreak(): void {
+    if (!this.sessionActive || this.completed) return;
+    this.manualPauseRequested = false;
+    this.breakActive = true;
+    this.evaluate(true);
+  }
+
+  endBreak(): void {
+    if (!this.sessionActive || this.completed) return;
+    this.breakActive = false;
     this.evaluate(true);
   }
 
@@ -138,7 +170,6 @@ export class FocusEngine {
       : Number.POSITIVE_INFINITY;
     const cameraAvailable =
       this.lastVision?.cameraHealthy === true &&
-      true &&
       frameAge <= CAMERA_STALE_AFTER_MS;
 
     if (this.sessionActive && !cameraAvailable && this.confirmedPresence !== null) {
@@ -160,6 +191,18 @@ export class FocusEngine {
         ? 'SESSION COMPLETED — Target study time reached.'
         : 'READY — Start a session to activate webcam presence detection.';
       personPresenceState = 'VISION_UNCERTAIN';
+    } else if (this.manualPauseRequested) {
+      nextState = 'PAUSED';
+      stateExplanation = 'MANUALLY PAUSED — Resume to continue presence-based timing.';
+      personPresenceState = cameraAvailable
+        ? (isPersonPresent ? 'PERSON_PRESENT' : 'PERSON_ABSENT')
+        : 'VISION_UNCERTAIN';
+    } else if (this.breakActive) {
+      nextState = 'BREAK';
+      stateExplanation = 'BREAK — Countdown is held. End break to resume presence-based timing.';
+      personPresenceState = cameraAvailable
+        ? (isPersonPresent ? 'PERSON_PRESENT' : 'PERSON_ABSENT')
+        : 'VISION_UNCERTAIN';
     } else if (!cameraAvailable) {
       nextState = 'UNVERIFIED';
       stateExplanation = !this.lastVision
