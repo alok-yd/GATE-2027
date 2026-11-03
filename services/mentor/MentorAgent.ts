@@ -49,7 +49,7 @@ const mentorTools: FunctionDeclaration[] = [
   {
     name: 'get_student_snapshot',
     description:
-      'Read the current GATE preparation profile from the tracker. Call this before making claims about syllabus completion, preparation phase, study hours, revision, roadmap, or overall progress.',
+      'Read the current GATE preparation profile from the tracker. Call this for the overall subject/lecture snapshot and general preparation phase. For actual webcam-verified AI Focus hours and sessions, also call get_ai_focus_data; for detailed roadmap phases, daily lecture logs, revision checkboxes, PYQ entries or mock trends, call the matching section-specific tools.',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -535,7 +535,7 @@ export const buildMentorSystemInstruction = (mode: MentorMode): string => {
     problem:
       'PROBLEM MODE: Solve the supplied problem step by step. Restate what is given and asked, identify the tested concept, state formulas/assumptions, show the derivation or algorithm, verify the result, explain traps, and provide the fastest reliable exam method. Never guess unreadable values.',
     strategy:
-      'STRATEGY MODE: Build practical daily/weekly plans using actual tracker records. Check pending work, revision, PYQs, mock history, and recent logs with tools when relevant. Respect realistic available hours; include task duration, priority, and a measurable completion condition. Do not promise a rank.',
+      'STRATEGY MODE: Build practical daily/weekly plans using actual tracker records. Retrieve the relevant Roadmap, AI Focus, Lecture Tracker, PYQ, Revision and Test Performance records before deciding priorities. Respect realistic available hours; include task duration, priority, and a measurable completion condition. If the user explicitly asks you to insert the plan into Lecture Tracker, create the corresponding tasks through create_lecture_tracker_task and report each created/duplicate/failed result. Without that explicit write request, recommend only. Do not promise a rank.',
   };
 
   return `You are Achiever, the user's personalised GATE 2027 AI Mentor.
@@ -551,6 +551,9 @@ ${modeInstructions[mode]}
 
 NON-NEGOTIABLE DATA INTEGRITY
 - Use the section-specific function tools to retrieve current Roadmap, AI Focus, Lecture Tracker, PYQ Execution, Health, Test Performance, Revision, AI Analytics and Strategy & Tips data when relevant.
+- For a broad question such as "How is my GATE preparation going?", "analyse my preparation", or "overall preparation status", combine the Student Snapshot, Roadmap, AI Focus, Lecture Tracker, PYQ Execution, Test Performance, Revision and AI Analytics tools. Include Strategy & Tips when recommending actions. Do not include Health Tracker unless the user explicitly asks for a wellness-inclusive analysis.
+- For "what should I revise?" or "which topics are weak?", use Revision, PYQ Execution, Test Performance, Roadmap and Lecture Tracker evidence. Do not infer that unmarked revision tasks were never studied.
+- When the user explicitly asks you to create a study plan in Lecture Tracker, first analyse the same relevant current sections, then create its individual tasks through create_lecture_tracker_task. Never create tasks for a recommendation-only request.
 - For AI Analytics questions (predicted AIR, expected marks, readiness dimensions, scenarios, historical college compatibility, what-if simulation, or saved prediction history), call get_ai_analytics_dashboard and use its exact returned fields.
 - For Health Tracker questions (sleep, heart rate, SpO2, steps, stress, hydration, mood, symptoms, cognitive readiness, study mode, SKY practice, No-Fap challenge or supplement check-ins), call get_health_tracker_summary. Do not include health data in unrelated academic answers.
 - Do not retrieve SKY or No-Fap challenge details unless the user explicitly asks about that practice/challenge (or asks for all habit challenges). Retrieve supplement check-ins only when supplements are relevant to the question.
@@ -617,7 +620,7 @@ const buildFallbackContext = (prompt: string) => {
   const wantsTests = /mock|test performance|test score|marks|negative marks|test history/i.test(prompt);
   const wantsRevision = /revision|revise|forgot|forgetting|revision task|spaced repetition/i.test(prompt);
   const wantsStrategies = /strategy|strategies|tips|time management|preparation plan/i.test(prompt);
-  const wantsOverallAcademic = /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis/i.test(prompt);
+  const wantsOverallAcademic = /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|how is my (?:gate )?preparation|analyse my preparation|analyze my preparation|preparation status|overall progress/i.test(prompt);
   const wantsHealth =
     /health|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|wellness|fatigue|tired|energy|recovery/i.test(prompt);
   const asksSky = /sky|sudarshan|meditation/i.test(prompt);
