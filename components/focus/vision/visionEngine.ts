@@ -301,22 +301,7 @@ export class VisionEngine {
 
       const payload: VisionData = {
         facePresent: personPresent,
-        confidence: personPresent ? 1 : 0,
-        personPresenceState: personPresent ? 'PERSON_PRESENT' : 'PERSON_ABSENT',
-        headYaw: 0,
-        headPitch: 0,
-        headRoll: 0,
-        eyeOpen: true,
-        gazeScore: 0,
-        handActivity: false,
-        bodyPostureStable: false,
-        deskActivityScore: 0,
-        isLookingDown: false,
-        lightingLevel: 'normal',
-        lightingScore: 1,
-        visionQualityScore: 1,
         cameraHealthy: true,
-        isSimulated: false,
         timestamp: now,
       };
 
@@ -344,22 +329,7 @@ export class VisionEngine {
   private createUnavailableFrame(): VisionData {
     return {
       facePresent: false,
-      confidence: 0,
-      personPresenceState: 'VISION_UNCERTAIN',
-      headYaw: 0,
-      headPitch: 0,
-      headRoll: 0,
-      eyeOpen: false,
-      gazeScore: 0,
-      handActivity: false,
-      bodyPostureStable: false,
-      deskActivityScore: 0,
-      isLookingDown: false,
-      lightingLevel: 'dark',
-      lightingScore: 0,
-      visionQualityScore: 0,
       cameraHealthy: false,
-      isSimulated: false,
       timestamp: Date.now(),
     };
   }

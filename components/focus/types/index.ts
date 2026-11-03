@@ -106,31 +106,11 @@ export type StudyMedium = 'Screen Study' | 'Paper / PYQ Study' | 'Mixed Study';
 export type SensitivityPreset = 'relaxed' | 'balanced' | 'strict';
 
 export interface VisionData {
+  /** True when the local webcam detector finds at least one visible face. */
   facePresent: boolean;
-  confidence: number;
-  personPresenceState?: PersonPresenceState;
-  faceVisibilityCategory?: FaceVisibilityCategory;
-  headYaw: number; // degrees: negative = left, positive = right
-  headPitch: number; // degrees: negative = down, positive = up
-  headRoll: number;
-  eyeOpen: boolean;
-  gazeScore: number; // 0 to 1
-  faceBox?: { x: number; y: number; width: number; height: number };
-  handActivity: boolean; // Estimated writing / hand interaction in desk area
-  bodyPostureStable: boolean; // Seated stably in front of desk
-  deskActivityScore: number; // 0 to 1
-  isLookingDown: boolean; // Natural desk / notebook focus angle
-  inStudyZone?: boolean;
-  mouthMovementScore?: number; // 0 to 1
-  phoneDetectedScore?: number; // 0 to 1
-  phoneDisambiguation?: PhoneDisambiguationResult;
-  lightingLevel?: 'dark' | 'low' | 'normal' | 'bright';
-  lightingScore?: number; // 0 to 1
-  visionQualityScore?: number; // 0 to 1
-  faceCount?: number;
-  cameraHealthy?: boolean;
-  /** Synthetic fallback frames never qualify as camera-verified focus. */
-  isSimulated?: boolean;
+  /** False when the camera is disconnected, blank, or cannot provide frames. */
+  cameraHealthy: boolean;
+  /** Capture time of the camera frame used for this presence observation. */
   timestamp: number;
 }
 

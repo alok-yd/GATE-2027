@@ -40,7 +40,6 @@ export interface TimerTickData {
   activeMedium: StudyMedium;
   isCompleted: boolean;
   stateExplanation?: string;
-  telemetry?: FocusEngineOutput['telemetry'];
 }
 
 export type TimerTickCallback = (data: TimerTickData) => void;
@@ -341,7 +340,6 @@ export class TimerEngine {
       activeMedium: this.medium,
       isCompleted,
       stateExplanation: this.currentStateExplanation || output.stateExplanation,
-      telemetry: output.telemetry,
     };
 
     this.callbacks.forEach((callback) => {

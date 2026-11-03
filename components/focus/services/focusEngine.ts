@@ -11,30 +11,12 @@ const REQUIRED_STABLE_FRAMES = 2;
 
 export interface FocusEngineOutput {
   state: FocusState;
-  score: number;
-  rawScore: number;
   facePresent: boolean;
   personPresenceState: PersonPresenceState;
   cameraAvailable: boolean;
   /** Last point in time that can safely be credited before the camera signal is stale. */
   cameraAccrualCutoffTimestamp: number;
   stateExplanation: string;
-  telemetry: {
-    headPitch: number;
-    headYaw: number;
-    headRoll: number;
-    gazeScore: number;
-    handActivity: boolean;
-    bodyPostureStable: boolean;
-    keyboardActive: boolean;
-    mouseActive: boolean;
-    idleSeconds: number;
-    studyMedium: 'Screen Study' | 'Paper / PYQ Study' | 'Mixed Study';
-    faceCount?: number;
-    personPresenceState: PersonPresenceState;
-    visionQualityScore: number;
-    isPersonPresent: boolean;
-  };
   recentTransitions: StateTransitionLog[];
   activityEvents: ActivityEventLog[];
 }
@@ -93,7 +75,7 @@ export class FocusEngine {
 
     this.lastVision = data;
 
-    if (data.cameraHealthy !== true || data.isSimulated === true || timestamp <= 0) {
+    if (data.cameraHealthy !== true || timestamp <= 0) {
       this.resetPresenceStability();
       this.evaluate();
       return;
@@ -156,7 +138,7 @@ export class FocusEngine {
       : Number.POSITIVE_INFINITY;
     const cameraAvailable =
       this.lastVision?.cameraHealthy === true &&
-      this.lastVision?.isSimulated !== true &&
+      true &&
       frameAge <= CAMERA_STALE_AFTER_MS;
 
     if (this.sessionActive && !cameraAvailable && this.confirmedPresence !== null) {
@@ -220,34 +202,16 @@ export class FocusEngine {
       if (this.transitions.length > 100) this.transitions.shift();
     }
 
-    const quality = cameraAvailable ? 1 : 0;
     const output: FocusEngineOutput = {
       state: this.currentState,
-      score: isPersonPresent ? 100 : 0,
-      rawScore: isPersonPresent ? 100 : 0,
       facePresent: isPersonPresent,
       personPresenceState,
       cameraAvailable,
       cameraAccrualCutoffTimestamp:
-        this.lastVision?.cameraHealthy === true && this.lastVision?.isSimulated !== true
+        this.lastVision?.cameraHealthy === true
           ? lastFrameTimestamp + CAMERA_STALE_AFTER_MS
           : (lastFrameTimestamp || now),
       stateExplanation,
-      telemetry: {
-        headPitch: 0,
-        headYaw: 0,
-        headRoll: 0,
-        gazeScore: 0,
-        handActivity: false,
-        bodyPostureStable: false,
-        keyboardActive: false,
-        mouseActive: false,
-        idleSeconds: 0,
-        studyMedium: 'Screen Study',
-        personPresenceState,
-        visionQualityScore: quality,
-        isPersonPresent,
-      },
       recentTransitions: this.getTransitionLogs().slice(-10),
       activityEvents: [],
     };
