@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
 
@@ -16,9 +16,73 @@ const formatTimerDuration = (seconds: number): string => {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isDesktopSidebarExpanded, setIsDesktopSidebarExpanded] = useState(true);
   const location = useLocation();
+  const sidebarCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const desktopSidebarPanelRef = useRef<HTMLElement | null>(null);
+  const sidebarActivationButtonRef = useRef<HTMLButtonElement | null>(null);
+  const firstDesktopNavLinkRef = useRef<HTMLAnchorElement | null>(null);
+  const restoreActivationFocusRef = useRef(false);
+
+  const clearSidebarCollapseTimer = () => {
+    if (sidebarCollapseTimerRef.current !== null) {
+      window.clearTimeout(sidebarCollapseTimerRef.current);
+      sidebarCollapseTimerRef.current = null;
+    }
+  };
+
+  const expandDesktopSidebar = () => {
+    clearSidebarCollapseTimer();
+    setIsDesktopSidebarExpanded(true);
+  };
+
+  const scheduleDesktopSidebarCollapse = () => {
+    clearSidebarCollapseTimer();
+    sidebarCollapseTimerRef.current = window.setTimeout(() => {
+      sidebarCollapseTimerRef.current = null;
+      restoreActivationFocusRef.current = Boolean(
+        desktopSidebarPanelRef.current?.contains(document.activeElement)
+      );
+      setIsDesktopSidebarExpanded(false);
+    }, 3000);
+  };
+
+  const handleDesktopSidebarFocus = () => {
+    // Do not reopen the sidebar when focus is intentionally restored to the
+    // narrow activation control after an automatic collapse.
+    if (!restoreActivationFocusRef.current) expandDesktopSidebar();
+  };
+
+  const handleDesktopSidebarBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    const nextFocusedElement = event.relatedTarget;
+    if (!(nextFocusedElement instanceof Node) || !event.currentTarget.contains(nextFocusedElement)) {
+      scheduleDesktopSidebarCollapse();
+    }
+  };
+
+  const handleSidebarActivationFocus = () => {
+    // Keep the activation control focused when focus is being restored after
+    // an automatic collapse. A user-initiated focus expands the sidebar.
+    if (restoreActivationFocusRef.current) {
+      restoreActivationFocusRef.current = false;
+      return;
+    }
+
+    expandDesktopSidebar();
+    window.requestAnimationFrame(() => {
+      firstDesktopNavLinkRef.current?.focus({ preventScroll: true });
+    });
+  };
   const [daysTo2027, setDaysTo2027] = useState<number>(0);
   const [focusTick, setFocusTick] = useState<TimerTickData | null>(null);
+
+  useEffect(() => {
+    if (!isDesktopSidebarExpanded && restoreActivationFocusRef.current) {
+      sidebarActivationButtonRef.current?.focus({ preventScroll: true });
+    }
+  }, [isDesktopSidebarExpanded]);
+
+  useEffect(() => () => clearSidebarCollapseTimer(), []);
 
   useEffect(() => {
     const unsub = timerEngine.subscribe((data) => {
@@ -91,8 +155,24 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
-      {/* Sidebar Desktop */}
-      <aside className="hidden md:flex flex-col w-64 bg-slate-900 text-slate-100 border-r border-slate-800">
+      {/* Sidebar Desktop: auto-hide after navigation, reveal on hover/focus. */}
+      <div
+        className="hidden md:block relative h-full shrink-0 transition-[width] duration-300 ease-in-out"
+        style={{ width: isDesktopSidebarExpanded ? '16rem' : '1rem' }}
+        onMouseEnter={expandDesktopSidebar}
+        onMouseLeave={scheduleDesktopSidebarCollapse}
+        onFocusCapture={handleDesktopSidebarFocus}
+        onBlurCapture={handleDesktopSidebarBlur}
+      >
+      <aside
+        id="primary-desktop-navigation"
+        ref={desktopSidebarPanelRef}
+        aria-hidden={!isDesktopSidebarExpanded}
+        className="absolute inset-y-0 left-0 z-40 flex w-64 flex-col bg-slate-900 text-slate-100 border-r border-slate-800 transition-transform duration-300 ease-in-out"
+        style={{
+          transform: isDesktopSidebarExpanded ? 'translateX(0)' : 'translateX(calc(-100% + 1rem))',
+        }}
+      >
         <div className="p-6 flex items-center justify-center border-b border-slate-800">
           <div className="bg-amber-500 text-slate-900 p-2 rounded-lg mr-3">
              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
@@ -104,6 +184,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <NavLink
               key={item.path}
               to={item.path}
+              ref={item.path === '/' ? firstDesktopNavLinkRef : undefined}
+              tabIndex={isDesktopSidebarExpanded ? 0 : -1}
+              onClick={scheduleDesktopSidebarCollapse}
               className={({ isActive }) =>
                 `flex items-center px-4 py-3 rounded-lg transition-colors duration-200 ${
                   isActive
@@ -158,6 +241,20 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </div>
       </aside>
+      {!isDesktopSidebarExpanded && (
+        <button
+          ref={sidebarActivationButtonRef}
+          type="button"
+          aria-label="Expand navigation sidebar"
+          aria-controls="primary-desktop-navigation"
+          aria-expanded={false}
+          title="Show navigation"
+          onClick={expandDesktopSidebar}
+          onFocus={handleSidebarActivationFocus}
+          className="absolute inset-y-0 right-0 z-50 w-4 cursor-pointer bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500"
+        />
+      )}
+      </div>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
