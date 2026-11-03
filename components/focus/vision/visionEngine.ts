@@ -400,6 +400,7 @@ export class VisionEngine {
       this.consecutiveBlankFrames++;
       if (this.consecutiveBlankFrames > 30) { // ~3 seconds at 10 FPS
         this.handleCameraFailure('Camera is blocked, covered, or producing blank black frames');
+        return; // Do not emit a normal/healthy frame after invalidating the stream.
       }
     } else {
       this.consecutiveBlankFrames = 0;
