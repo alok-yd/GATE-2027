@@ -188,6 +188,18 @@ const PYQExecutionTracker: React.FC = () => {
           </button>
         </div>
 
+        <div className="mt-4 flex justify-end">
+          <a
+            href="https://practicepaper.in/gate-cse"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-400/40 bg-slate-900 px-5 py-3 text-xs font-black tracking-widest text-indigo-200 hover:bg-slate-800 transition"
+          >
+            Practice GATE CSE PYQs
+            <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-8">
           <MetricCard title="Today" value={stats.todayTotal} detail="PYQs solved" />
           <MetricCard title="Last 7 Days" value={stats.last7Total} detail={`${stats.last7Average} avg/day`} />
