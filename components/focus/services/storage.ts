@@ -305,6 +305,46 @@ export class StorageService {
     }
   }
 
+  static getVerifiedStudyTimeHistory(limitDays = 30): Array<{
+    date: string;
+    totalSeconds: number;
+    screenStudySeconds: number;
+    paperPyqStudySeconds: number;
+    mixedStudySeconds: number;
+    sessionCount: number;
+  }> {
+    try {
+      const ledger = getVerifiedLedger(getStorage());
+      const validLimit = Number.isFinite(limitDays)
+        ? Math.max(1, Math.min(3650, Math.floor(limitDays)))
+        : 30;
+
+      return Object.entries(ledger.days || {})
+        .filter(([date, sessions]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && sessions && typeof sessions === 'object')
+        .sort(([dateA], [dateB]) => dateA.localeCompare(dateB))
+        .slice(-validLimit)
+        .map(([date, day]) => {
+          const sessions = Object.values(day);
+          const sum = (field: keyof VerifiedStudySessionDay) => sessions.reduce((total, session) => {
+            const value = Number(session?.[field]);
+            return total + (Number.isFinite(value) && value > 0 ? value : 0);
+          }, 0);
+
+          return {
+            date,
+            totalSeconds: Math.floor(sum('totalMilliseconds') / 1000),
+            screenStudySeconds: Math.floor(sum('screenStudyMilliseconds') / 1000),
+            paperPyqStudySeconds: Math.floor(sum('paperPyqStudyMilliseconds') / 1000),
+            mixedStudySeconds: Math.floor(sum('mixedStudyMilliseconds') / 1000),
+            sessionCount: sessions.length,
+          };
+        });
+    } catch (error) {
+      console.error('[AI Focus] Could not read verified study history:', error);
+      return [];
+    }
+  }
+
   static getVerifiedStudyBreakdownForDate(date: string): {
     totalSeconds: number;
     screenStudySeconds: number;

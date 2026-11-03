@@ -788,21 +788,33 @@ You can now ask me to search this material. I’ll include local chunk identifie
             </div>
             <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 p-2.5">
               <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
-                Connected app data · read only
+                Connected app data · read access + scoped task creation
               </p>
               <div className="mt-2 flex flex-wrap gap-1.5">
-                <span className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-800">
-                  AI Analytics · AIR readiness
-                </span>
-                <span className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-800">
-                  Health Tracker · Wellness & challenges
-                </span>
+                {[
+                  'Roadmap',
+                  'AI Focus',
+                  'Lecture Tracker',
+                  'PYQ Execution',
+                  'Health Tracker',
+                  'Test Performance',
+                  'Revision',
+                  'AI Analytics',
+                  'Strategy & Tips',
+                ].map((section) => (
+                  <span
+                    key={section}
+                    className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-800"
+                  >
+                    {section}
+                  </span>
+                ))}
               </div>
               <p className="mt-2 text-[10px] leading-relaxed text-emerald-800/80">
-                Gemini retrieves current records from these sections only when your question needs them. Neither section can be edited by AI Mentor.
+                Gemini retrieves current records from relevant sections when your question needs them. It can create tasks only in Lecture Tracker, and only when you explicitly ask.
               </p>
               <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
-                Health details selected for a health-related question are included in the Gemini request. Private SKY and No-Fap notes are excluded.
+                All other sections are read-only. Health records are included only for relevant wellness questions; private SKY and No-Fap notes remain excluded.
               </p>
             </div>
             {keyTestFeedback && (

@@ -6,12 +6,24 @@ import {
   getHealthTrackerMentorContext,
 } from './MentorDomainData';
 import {
+  createStudyTask,
   getMistakePatterns,
   listMemories,
   listMistakes,
   searchKnowledge,
 } from '../AINativeServices';
+import type { PlannerTaskPreview } from '../AINativeServices';
 import type { StudentProfile } from '../../types';
+import { getTodayDateString } from '../../components/focus/services/storage';
+import {
+  getAIFocusMentorContext,
+  getLectureTrackerMentorContext,
+  getPYQExecutionMentorContext,
+  getRoadmapMentorContext,
+  getRevisionMentorContext,
+  getStrategyTipsMentorContext,
+  getTestPerformanceMentorContext,
+} from './MentorTrackerData';
 
 export type MentorMode = 'chat' | 'concept' | 'problem' | 'strategy';
 
@@ -30,7 +42,7 @@ interface FunctionDeclaration {
   };
 }
 
-const MAX_TOOL_ROUNDS = 4;
+const MAX_TOOL_ROUNDS = 6;
 const REQUEST_TIMEOUT_MS = 45000;
 
 const mentorTools: FunctionDeclaration[] = [
@@ -38,6 +50,29 @@ const mentorTools: FunctionDeclaration[] = [
     name: 'get_student_snapshot',
     description:
       'Read the current GATE preparation profile from the tracker. Call this before making claims about syllabus completion, preparation phase, study hours, revision, roadmap, or overall progress.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_roadmap_data',
+    description:
+      'Read actual Roadmap phase records and current subject-wise syllabus completion. Use for milestones, configured phase statuses, remaining subjects and preparation priorities. Do not infer exact due dates from descriptive periods.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_ai_focus_data',
+    description:
+      'Read actual verified AI Focus time from its persistent ledger: daily totals, recent history, Screen/Paper-PYQ/Mixed breakdown, daily target and finalized session history. This excludes elapsed, absent, manual-pause, break and unverified time.',
+    parameters: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', description: 'Recent daily ledger rows from 1 to 90; defaults to 14.', minimum: 1, maximum: 90 },
+      },
+    },
+  },
+  {
+    name: 'get_lecture_tracker_data',
+    description:
+      'Read actual Lecture Tracker subject completion, remaining lectures, daily logs, daily goal text and weekly targets. Goal-description lines are planning text and have no separate per-line completed/pending status.',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -75,6 +110,26 @@ const mentorTools: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'get_pyq_execution_details',
+    description:
+      'Read detailed PYQ Execution Tracker records by date and subject, logged-question counts and measured accuracy where attempted/correct values exist. Do not invent first-pass, second-pass or difficulty labels if they are not stored.',
+    parameters: {
+      type: 'object',
+      properties: { subject: { type: 'string', description: 'Optional subject filter.' } },
+    },
+  },
+  {
+    name: 'get_test_performance_details',
+    description:
+      'Read saved Test Performance mock records and separate imported/manual test-analysis records. Include only recorded scores, attempts, correct/wrong counts, accuracy and notes; do not invent question-wise analysis.',
+    parameters: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', description: 'Latest saved tests from 1 to 50.', minimum: 1, maximum: 50 },
+      },
+    },
+  },
+  {
     name: 'get_weak_subjects',
     description:
       'Identify subjects requiring attention using recorded PYQ accuracy when available, then lecture completion as a separate signal. Do not label derived indicators as measured test accuracy.',
@@ -84,6 +139,34 @@ const mentorTools: FunctionDeclaration[] = [
     name: 'get_revision_status',
     description: 'Read the tracker revision checklist and roadmap completion values.',
     parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_revision_details',
+    description:
+      'Read the exact Revision checklist and its saved checkbox states. The section does not store individual completion timestamps or spaced-repetition schedules.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_strategy_tips',
+    description:
+      'Read the configured Strategy & Tips cards. These are static guidance records, not a log of strategies the user accepted or completed.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'create_lecture_tracker_task',
+    description:
+      'WRITE ACTION: Create one additional task in the existing Lecture Tracker Daily Study Log. Call ONLY when the latest user message explicitly asks to add/create/insert/save a task in Lecture Tracker, or explicitly asks you to create the requested plan there. Never call for a recommendation-only request. Required: task title and subject. Optional date uses YYYY-MM-DD and defaults to current app-local date; durationMinutes defaults to 30; priority defaults to medium. Put the topic/action in the title. This is the ONLY write permission available to AI Mentor. The result reports created or duplicate; never claim success unless result.status is created.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Clear action-oriented task title including the topic.' },
+        subject: { type: 'string', description: 'GATE subject, e.g. DBMS, COA, Operating Systems.' },
+        date: { type: 'string', description: 'Optional app-local date in YYYY-MM-DD format.' },
+        durationMinutes: { type: 'integer', description: 'Optional estimated duration; defaults to 30 minutes.', minimum: 1, maximum: 720 },
+        priority: { type: 'string', description: 'Optional priority: high, medium or low.' },
+      },
+      required: ['title', 'subject'],
+    },
   },
   {
     name: 'get_recent_mistakes',
@@ -128,11 +211,28 @@ const readStringArg = (args: unknown, key: string, fallback = '') => {
   return typeof value === 'string' ? value.trim().slice(0, 180) : fallback;
 };
 
-const readLimitArg = (args: unknown, fallback: number) => {
+const readLimitArg = (args: unknown, fallback: number, maximum = 20) => {
   if (!isRecord(args)) return fallback;
   const value = Number(args.limit);
   if (!Number.isFinite(value)) return fallback;
-  return Math.max(1, Math.min(20, Math.floor(value)));
+  return Math.max(1, Math.min(maximum, Math.floor(value)));
+};
+
+const readNumberArg = (args: unknown, key: string, fallback: number) => {
+  if (!isRecord(args) || args[key] == null || args[key] === '') return fallback;
+  const value = Number(args[key]);
+  return Number.isFinite(value) ? value : fallback;
+};
+
+const hasExplicitTaskWriteIntent = (prompt: string): boolean => {
+  const text = prompt.toLowerCase();
+  if (/\\b(don't|do not|never|no need to)\\s+(add|create|insert|save|schedule)\\b/i.test(text)) {
+    return false;
+  }
+  const hasActionVerb = /\\b(add|create|insert|save|schedule)\\b/i.test(text);
+  const namesTask = /\\b(task|tasks|study plan|daily plan)\\b/i.test(text);
+  const namesTracker = /\\b(lecture tracker|daily study log|my tracker|the tracker)\\b/i.test(text);
+  return hasActionVerb && (namesTask || namesTracker);
 };
 
 const average = (values: number[]) =>
@@ -219,10 +319,19 @@ const buildStudentSnapshot = () => {
   };
 };
 
-const executeReadOnlyTool = (name: string, args: unknown, latestUserPrompt = ''): unknown => {
+const executeMentorTool = (name: string, args: unknown, latestUserPrompt = ''): unknown => {
   switch (name) {
     case 'get_student_snapshot':
       return buildStudentSnapshot();
+
+    case 'get_roadmap_data':
+      return getRoadmapMentorContext();
+
+    case 'get_ai_focus_data':
+      return getAIFocusMentorContext(readLimitArg(args, 14, 90));
+
+    case 'get_lecture_tracker_data':
+      return getLectureTrackerMentorContext();
 
     case 'get_ai_analytics_dashboard':
       return getAIAnalyticsMentorContext();
@@ -262,27 +371,15 @@ const executeReadOnlyTool = (name: string, args: unknown, latestUserPrompt = '')
       });
     }
 
-    case 'get_pyq_performance': {
-      const profile = getStudentProfile();
-      const subject = readStringArg(args, 'subject').toLowerCase();
-      const rows = getMeasuredPyqRows(profile);
-      return {
-        records: subject
-          ? rows.filter((row) => row.subject.toLowerCase().includes(subject))
-          : rows,
-        source: 'gate_pyq_entries via DataExtractor.getStudentProfile',
-      };
-    }
+    case 'get_pyq_performance':
+      return getPYQExecutionMentorContext(readStringArg(args, 'subject'));
 
-    case 'get_mock_history': {
-      const profile = getStudentProfile();
-      const limit = readLimitArg(args, 10);
-      return {
-        totalRecorded: profile.mocks.length,
-        records: profile.mocks.slice(-limit).reverse(),
-        source: 'gate_mocks via DataExtractor.getStudentProfile',
-      };
-    }
+    case 'get_pyq_execution_details':
+      return getPYQExecutionMentorContext(readStringArg(args, 'subject'));
+
+    case 'get_mock_history':
+    case 'get_test_performance_details':
+      return getTestPerformanceMentorContext(readLimitArg(args, 10, 50));
 
     case 'get_weak_subjects': {
       const profile = getStudentProfile();
@@ -316,13 +413,73 @@ const executeReadOnlyTool = (name: string, args: unknown, latestUserPrompt = '')
       });
     }
 
-    case 'get_revision_status': {
-      const profile = getStudentProfile();
+    case 'get_revision_status':
+    case 'get_revision_details':
+      return getRevisionMentorContext();
+
+    case 'get_strategy_tips':
+      return getStrategyTipsMentorContext();
+
+    case 'create_lecture_tracker_task': {
+      if (!hasExplicitTaskWriteIntent(latestUserPrompt)) {
+        return {
+          status: 'not_authorized',
+          created: false,
+          message: 'No task was created. The latest user message did not explicitly request a Lecture Tracker task insertion.',
+        };
+      }
+
+      const title = readStringArg(args, 'title');
+      const subject = readStringArg(args, 'subject');
+      const missingFields = [
+        ...(!title ? ['title'] : []),
+        ...(!subject ? ['subject'] : []),
+      ];
+      if (missingFields.length) {
+        return {
+          status: 'needs_clarification',
+          missingFields,
+          message: 'No task was created. Ask the user for the missing task title and/or subject.',
+        };
+      }
+
+      const requestedDate = readStringArg(args, 'date') || getTodayDateString();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+        return {
+          status: 'needs_clarification',
+          missingFields: ['date'],
+          message: 'No task was created. Ask for a valid date in YYYY-MM-DD format.',
+        };
+      }
+
+      const durationMinutes = Math.max(1, Math.min(720, Math.floor(readNumberArg(args, 'durationMinutes', 30))));
+      const requestedPriority = readStringArg(args, 'priority').toLowerCase();
+      const priority: PlannerTaskPreview['priority'] =
+        requestedPriority === 'high' || requestedPriority === 'low'
+          ? requestedPriority
+          : 'medium';
+
+      const task: PlannerTaskPreview = {
+        id: `mentor_task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        date: requestedDate,
+        subject,
+        title,
+        durationMinutes,
+        priority,
+        dependencies: [],
+        sourceLine: latestUserPrompt.slice(0, 240),
+      };
+
+      const result = createStudyTask(task);
       return {
-        revisionProgress: profile.revisionProgress,
-        roadmapProgress: profile.roadmapProgress,
-        weeklyTargets: profile.weeklyTargets,
-        source: 'Current tracker revision and roadmap records.',
+        status: result.status,
+        created: result.status === 'created',
+        duplicate: result.status === 'duplicate',
+        destination: 'Lecture Tracker > Daily Study Log > Today\'s Goal / Target',
+        task: result,
+        message: result.status === 'created'
+          ? 'Task was successfully saved to the existing Lecture Tracker daily goal.'
+          : 'An equivalent task already exists for this date. No duplicate was inserted.',
       };
     }
 
@@ -372,7 +529,7 @@ const executeReadOnlyTool = (name: string, args: unknown, latestUserPrompt = '')
 export const buildMentorSystemInstruction = (mode: MentorMode): string => {
   const modeInstructions: Record<MentorMode, string> = {
     chat:
-      'CHAT MODE: Answer the actual question conversationally. Ask one focused follow-up only when a critical detail is missing. When the user asks about their preparation, call the relevant read-only data tools before giving numbers.',
+      'CHAT MODE: Answer the actual question conversationally. Ask one focused follow-up only when a critical detail is missing. When the user asks about their preparation, retrieve relevant current section data before giving numbers. Only create a Lecture Tracker task when the user explicitly asks you to insert one.',
     concept:
       'CONCEPT MODE: Teach as an expert GATE CS/IT/DA professor. Start with intuition, then definitions, assumptions, derivations/formulas, worked examples, edge cases, GATE patterns, common traps, and a compact revision summary. Explain every step at the learner\'s level. Never invent a PYQ year.',
     problem:
@@ -383,6 +540,9 @@ export const buildMentorSystemInstruction = (mode: MentorMode): string => {
 
   return `You are Achiever, the user's personalised GATE 2027 AI Mentor.
 
+CURRENT APP-LOCAL DATE
+${getTodayDateString()} (YYYY-MM-DD). Use this value to interpret today/tomorrow when creating a Lecture Tracker task.
+
 ROLE
 You are an expert GATE Computer Science, Information Technology and Data Science professor, problem-solving coach, preparation analyst, revision mentor and study strategist.
 
@@ -390,7 +550,7 @@ CURRENT MODE
 ${modeInstructions[mode]}
 
 NON-NEGOTIABLE DATA INTEGRITY
-- Use the read-only function tools when the user asks about their preparation, subject completion, PYQs, mock marks, revision, trends, weak areas, AIR Analytics, or uploaded notes.
+- Use the section-specific function tools to retrieve current Roadmap, AI Focus, Lecture Tracker, PYQ Execution, Health, Test Performance, Revision, AI Analytics and Strategy & Tips data when relevant.
 - For AI Analytics questions (predicted AIR, expected marks, readiness dimensions, scenarios, historical college compatibility, what-if simulation, or saved prediction history), call get_ai_analytics_dashboard and use its exact returned fields.
 - For Health Tracker questions (sleep, heart rate, SpO2, steps, stress, hydration, mood, symptoms, cognitive readiness, study mode, SKY practice, No-Fap challenge or supplement check-ins), call get_health_tracker_summary. Do not include health data in unrelated academic answers.
 - Do not retrieve SKY or No-Fap challenge details unless the user explicitly asks about that practice/challenge (or asks for all habit challenges). Retrieve supplement check-ins only when supplements are relevant to the question.
@@ -398,22 +558,28 @@ NON-NEGOTIABLE DATA INTEGRITY
 - If a data field is missing, say "not recorded" or "not available"; never turn missing data into zero.
 - Distinguish measured PYQ accuracy (correct/attempted) from the legacy tracker's derived subject-readiness indicator. The latter is a proxy, not actual test accuracy.
 - A lecture completion percentage is not the same as mastery or PYQ accuracy.
-- For preparation questions, say which tracker data supports your conclusion. If you cannot read a required field, ask the user to update the tracker.
-- Never state that a task, roadmap, test, memory or database record was changed. This mentor currently has read-only tools.
+- For preparation questions, state which tracker sections support your conclusion. If a field or section is unavailable, say so rather than guessing.
+- The ONLY permitted write action is create_lecture_tracker_task, and it may be called only when the latest user message explicitly instructs you to add/create/insert/save a task in Lecture Tracker, or to create the requested study plan directly there.
+- A recommendation-only question such as "what should I study today?" is NOT permission to create tasks. Ask before writing unless the user explicitly requests insertion.
+- Never write to Roadmap, AI Focus, PYQ Execution Tracker, Health Tracker, Test Performance, Revision, AI Analytics or Strategy & Tips. No other write function is permitted.
+- Confirm a task only when create_lecture_tracker_task returns status "created". If it returns "duplicate", say an equivalent task already exists and was not inserted again. If it returns "needs_clarification" or an error, ask for missing information or report failure honestly.
 - Rank predictions are uncertain estimates, never guarantees of AIR-1 or any other result. Present the dashboard's AIR and marks estimates as model projections, not facts or guarantees.
 - Health values are manually entered tracker records, not verified clinical measurements. Offer general wellness information only; never diagnose, prescribe treatment, or imply that a metric or habit caused a GATE score/rank.
 - SKY and No-Fap challenge records are self-reported. Be neutral and non-judgmental about No-Fap; never claim that abstinence causes hormonal, cognitive, medical, or exam-performance benefits. Private free-text challenge notes are intentionally not supplied.
 - Do not invent user history. Use relevant previous chat turns and only user-approved saved memories.
 
 FUNCTION CALLING
-You may call only the listed read-only functions. Use them when needed; validate their returned data and cite it. Never call arbitrary code, SQL, external APIs or a write operation. Multiple read-only functions may be called if useful.
+Use only the listed function tools. Section-reading functions are read-only. The single create_lecture_tracker_task function has a narrow user-authorised write scope. Never call arbitrary code, SQL, external APIs or any other write operation. Multiple read functions may be called when a cross-section analysis requires them.
 
 CONNECTED APPLICATION DATA
-- AI Analytics and Health Tracker are available through dedicated read-only tools.
-- The tools read the current browser-local application records at request time; they do not write to or modify either section.
-- Retrieve only the source relevant to the current user question. Never disclose health information in an unrelated answer.
-- For AI Analytics, distinguish the deterministic dashboard calculation from actual GATE outcomes and preserve its uncertainty caveats.
-- For health questions, clearly label user-entered records and AI-generated/local analysis; do not turn them into a diagnosis.
+- Roadmap, AI Focus, Lecture Tracker, PYQ Execution Tracker, Test Performance, Revision, AI Analytics and Strategy & Tips have read-only access.
+- Health Tracker has read-only access and is queried only for relevant health/wellness requests; do not disclose health data in unrelated academic answers.
+- Lecture Tracker task creation is the only write permission. It uses the existing Daily Study Log goal/target text field; do not claim there are per-task completion fields that the application does not store.
+- Retrieve current browser-local data at request time. Distinguish live verified AI Focus ledger values from finalized session history.
+- Lecture Tracker goal-description lines are planning text, not per-task completion states. Do not label them completed or pending without evidence.
+- Roadmap statuses and periods are the configured values in the existing Roadmap data. Do not invent exact due dates or dynamic task-completion history.
+- For AI Analytics, distinguish dashboard estimates from actual GATE outcomes and preserve uncertainty caveats.
+- For health questions, clearly label user-entered records and local/AI analysis; never turn them into a diagnosis.
 
 KNOWLEDGE RETRIEVAL
 - Use search_uploaded_study_material for questions about uploaded notes or prior stored documents.
@@ -443,7 +609,15 @@ const buildFallbackContext = (prompt: string) => {
   const memories = listMemories().slice(0, 8);
   const mistakes = listMistakes().slice(0, 8);
   const wantsAnalytics =
-    /analytics|\bair\b|predicted rank|rank|expected marks|gate score|college compatibility|what.if|preparation dimensions/i.test(prompt);
+    /analytics|\bair\b|predicted rank|rank|expected marks|gate score|college compatibility|what.if|preparation dimensions|overall preparation|overall gate preparation/i.test(prompt);
+  const wantsRoadmap = /roadmap|milestone|remaining subjects|remaining syllabus|syllabus left/i.test(prompt);
+  const wantsFocus = /focus|focused|study hours|study time|verified hours|study consistency/i.test(prompt);
+  const wantsLecture = /lecture|daily study log|weekly goal|subject completion|pending units|completed lectures/i.test(prompt);
+  const wantsPyq = /pyq|previous year question|accuracy|attempted questions|correct answers/i.test(prompt);
+  const wantsTests = /mock|test performance|test score|marks|negative marks|test history/i.test(prompt);
+  const wantsRevision = /revision|revise|forgot|forgetting|revision task|spaced repetition/i.test(prompt);
+  const wantsStrategies = /strategy|strategies|tips|time management|preparation plan/i.test(prompt);
+  const wantsOverallAcademic = /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis/i.test(prompt);
   const wantsHealth =
     /health|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|wellness|fatigue|tired|energy|recovery/i.test(prompt);
   const asksSky = /sky|sudarshan|meditation/i.test(prompt);
@@ -457,6 +631,13 @@ const buildFallbackContext = (prompt: string) => {
     {
       note: 'Fallback context assembled from current browser-local app records. Missing fields are unavailable, not zero.',
       snapshot,
+      ...(wantsRoadmap || wantsOverallAcademic ? { roadmap: getRoadmapMentorContext() } : {}),
+      ...(wantsFocus || wantsOverallAcademic ? { aiFocus: getAIFocusMentorContext(14) } : {}),
+      ...(wantsLecture || wantsOverallAcademic ? { lectureTracker: getLectureTrackerMentorContext() } : {}),
+      ...(wantsPyq || wantsOverallAcademic ? { pyqExecution: getPYQExecutionMentorContext() } : {}),
+      ...(wantsTests || wantsOverallAcademic ? { testPerformance: getTestPerformanceMentorContext(20) } : {}),
+      ...(wantsRevision || wantsOverallAcademic ? { revision: getRevisionMentorContext() } : {}),
+      ...(wantsStrategies || wantsOverallAcademic ? { strategyTips: getStrategyTipsMentorContext() } : {}),
       ...(wantsAnalytics ? { aiAnalytics: getAIAnalyticsMentorContext() } : {}),
       ...(wantsHealth
         ? {
@@ -472,6 +653,9 @@ const buildFallbackContext = (prompt: string) => {
       userApprovedMemories: memories,
       recentSavedMistakes: mistakes,
       subjectRecordsCount: profile.subjects.length,
+      taskCreation: /\b(add|create|insert|save)\b.{0,60}\b(task|tasks|lecture tracker)\b/i.test(prompt)
+        ? 'Function-calling is unavailable in this fallback path. Do not claim a Lecture Tracker task was created; explain that the write action could not be executed.'
+        : undefined,
     },
     null,
     2
@@ -599,7 +783,7 @@ const callGeminiWithTools = async (
 
     if (functionCalls.length > 0) {
       if (round === MAX_TOOL_ROUNDS) {
-        throw new Error('Mentor reached the read-only tool-call limit. Please narrow the request.');
+        throw new Error('Mentor reached the function-call limit. Please narrow the request.');
       }
 
       // Echo the model content exactly, including Gemini 3 thought signatures.
@@ -619,7 +803,7 @@ const callGeminiWithTools = async (
 
         try {
           const latestUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
-          const result = executeReadOnlyTool(call.name, call.args, latestUserPrompt);
+          const result = executeMentorTool(call.name, call.args, latestUserPrompt);
           return {
             functionResponse: {
               name: call.name,
@@ -691,7 +875,7 @@ ${summary || 'No saved summary yet.'}
 Recent conversation:
 ${messages.slice(-10).map((message) => `${message.role.toUpperCase()}: ${message.content.slice(0, 4500)}`).join('\n\n')}
 
-Current read-only preparation context and relevant knowledge:
+Current preparation context and relevant knowledge (the fallback path cannot execute write actions):
 ${buildFallbackContext(messages[messages.length - 1]?.content || '')}
 
 Answer the latest user message. Do not invent or infer missing statistics. State when evidence is not available.

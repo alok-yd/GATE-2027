@@ -198,7 +198,10 @@ const SUBJECTS = [
   'C Programming',
 ];
 
-const todayKey = () => new Date().toISOString().split('T')[0];
+const todayKey = () => {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+};
 
 const safeParse = <T,>(value: string | null, fallback: T): T => {
   if (!value) return fallback;
@@ -899,25 +902,73 @@ export const saveStudyMaterialAsPYQs = (entries: PYQPracticeEntry[]) => {
   window.dispatchEvent(new Event('storage'));
 };
 
-export const createStudyTask = (task: PlannerTaskPreview) => {
-  const key = `gate_daily_target_${task.date || todayKey()}`;
+export const createStudyTask = (task: PlannerTaskPreview): {
+  status: 'created' | 'duplicate';
+  date: string;
+  subject: string;
+  title: string;
+  durationMinutes: number;
+  priority: PlannerTaskPreview['priority'];
+  line: string;
+} => {
+  const date = String(task.date || todayKey()).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error('Task date must use YYYY-MM-DD.');
+  }
+  const [year, month, day] = date.split('-').map(Number);
+  const dateCheck = new Date(year, month - 1, day);
+  if (
+    dateCheck.getFullYear() !== year ||
+    dateCheck.getMonth() !== month - 1 ||
+    dateCheck.getDate() !== day
+  ) {
+    throw new Error('Task date is not a valid calendar date.');
+  }
+
+  const subject = String(task.subject || '').trim().slice(0, 80);
+  const title = String(task.title || '').trim().slice(0, 180);
+  const durationMinutes = Math.max(1, Math.min(720, Math.floor(Number(task.durationMinutes) || 30)));
+  const priority: PlannerTaskPreview['priority'] =
+    task.priority === 'high' || task.priority === 'low' ? task.priority : 'medium';
+
+  if (!subject || !title) {
+    throw new Error('A task subject and title are required.');
+  }
+
+  const key = `gate_daily_target_${date}`;
   const existing = safeParse<DailyStudyLog>(localStorage.getItem(key), {
-    date: task.date || todayKey(),
+    date,
     subject: '',
     goalDescription: '',
     hoursStudied: 0,
     completionPercentage: 0,
   });
-  const line = `${task.subject}: ${task.title} (${task.durationMinutes} min, ${task.priority})`;
-  localStorage.setItem(
-    key,
-    JSON.stringify({
-      ...existing,
-      subject: existing.subject || task.subject,
-      goalDescription: existing.goalDescription ? `${existing.goalDescription}\n${line}` : line,
-    })
-  );
+  const line = `[AI Mentor] ${subject}: ${title} (${durationMinutes} min, ${priority})`;
+  const legacyLine = `${subject}: ${title} (${durationMinutes} min, ${priority})`;
+  const existingLines = String(existing.goalDescription || '').split(/\r?\n/);
+  const isDuplicate = existingLines.some((existingLine) => {
+    const normalized = normalize(existingLine);
+    return normalized === normalize(line) || normalized === normalize(legacyLine);
+  });
+
+  if (isDuplicate) {
+    return { status: 'duplicate', date, subject, title, durationMinutes, priority, line };
+  }
+
+  const updated: DailyStudyLog = {
+    ...existing,
+    date,
+    subject: existing.subject || subject,
+    goalDescription: existing.goalDescription
+      ? `${existing.goalDescription}\n${line}`
+      : line,
+  };
+
+  // A failed localStorage write throws; the caller must not report success.
+  localStorage.setItem(key, JSON.stringify(updated));
   window.dispatchEvent(new Event('storage'));
+
+  return { status: 'created', date, subject, title, durationMinutes, priority, line };
 };
 
 export const getBehaviorProfile = () => {
