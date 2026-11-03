@@ -2,6 +2,10 @@ import { generateGatewayText, getGeminiApiKey } from '../AIGatewayClient';
 import { AI_MODEL_CONFIG, getModelAttemptChain } from '../ai/modelConfig';
 import { getStudentProfile } from '../DataExtractor';
 import {
+  getAIAnalyticsMentorContext,
+  getHealthTrackerMentorContext,
+} from './MentorDomainData';
+import {
   getMistakePatterns,
   listMemories,
   listMistakes,
@@ -34,6 +38,18 @@ const mentorTools: FunctionDeclaration[] = [
     name: 'get_student_snapshot',
     description:
       'Read the current GATE preparation profile from the tracker. Call this before making claims about syllabus completion, preparation phase, study hours, revision, roadmap, or overall progress.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_ai_analytics_dashboard',
+    description:
+      'Read the same AI Analytics dashboard data: 8 preparation dimensions, subject readiness, AIR prediction and confidence, marks and GATE-score estimate, conservative/expected/high-performance scenarios, historical college compatibility for the selected category, what-if simulation, and saved AIR history. Call this whenever the user asks about AI Analytics, overall AIR readiness, predicted AIR, expected marks, GATE score estimate, prediction scenarios, college compatibility or how a preparation change affects the projection.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_health_tracker_summary',
+    description:
+      'Read Health Tracker data: latest/manual health entries and recent averages, health/cognitive-readiness analysis, study mode, health alerts and action items, supplement check-in logs, 90-day SKY meditation progress and 100-day No-Fap progress. Call only when the user asks about health, sleep, stress, mood, activity, hydration, wellness, study readiness, supplements, SKY practice or No-Fap challenge. Challenge records are self-reported.',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -208,6 +224,12 @@ const executeReadOnlyTool = (name: string, args: unknown): unknown => {
     case 'get_student_snapshot':
       return buildStudentSnapshot();
 
+    case 'get_ai_analytics_dashboard':
+      return getAIAnalyticsMentorContext();
+
+    case 'get_health_tracker_summary':
+      return getHealthTrackerMentorContext();
+
     case 'get_pyq_performance': {
       const profile = getStudentProfile();
       const subject = readStringArg(args, 'subject').toLowerCase();
@@ -336,18 +358,29 @@ CURRENT MODE
 ${modeInstructions[mode]}
 
 NON-NEGOTIABLE DATA INTEGRITY
-- Use the read-only function tools when the user asks about their preparation, subject completion, PYQs, mock marks, revision, trends, weak areas or uploaded notes.
+- Use the read-only function tools when the user asks about their preparation, subject completion, PYQs, mock marks, revision, trends, weak areas, AIR Analytics, or uploaded notes.
+- For AI Analytics questions (predicted AIR, expected marks, readiness dimensions, scenarios, historical college compatibility, what-if simulation, or saved prediction history), call get_ai_analytics_dashboard and use its exact returned fields.
+- For Health Tracker questions (sleep, heart rate, SpO2, steps, stress, hydration, mood, symptoms, cognitive readiness, study mode, SKY practice, No-Fap challenge or supplement check-ins), call get_health_tracker_summary. Do not include health data in unrelated academic answers.
 - Treat tool results as the only source of application statistics. Never infer or invent mock marks, streaks, subject completion, PYQ counts, accuracy, test history, dates or pending tasks.
 - If a data field is missing, say "not recorded" or "not available"; never turn missing data into zero.
 - Distinguish measured PYQ accuracy (correct/attempted) from the legacy tracker's derived subject-readiness indicator. The latter is a proxy, not actual test accuracy.
 - A lecture completion percentage is not the same as mastery or PYQ accuracy.
 - For preparation questions, say which tracker data supports your conclusion. If you cannot read a required field, ask the user to update the tracker.
 - Never state that a task, roadmap, test, memory or database record was changed. This mentor currently has read-only tools.
-- Rank predictions are uncertain estimates, never guarantees of AIR-1 or any other result.
+- Rank predictions are uncertain estimates, never guarantees of AIR-1 or any other result. Present the dashboard's AIR and marks estimates as model projections, not facts or guarantees.
+- Health values are manually entered tracker records, not verified clinical measurements. Offer general wellness information only; never diagnose, prescribe treatment, or imply that a metric or habit caused a GATE score/rank.
+- SKY and No-Fap challenge records are self-reported. Be neutral and non-judgmental about No-Fap; never claim that abstinence causes hormonal, cognitive, medical, or exam-performance benefits. Private free-text challenge notes are intentionally not supplied.
 - Do not invent user history. Use relevant previous chat turns and only user-approved saved memories.
 
 FUNCTION CALLING
 You may call only the listed read-only functions. Use them when needed; validate their returned data and cite it. Never call arbitrary code, SQL, external APIs or a write operation. Multiple read-only functions may be called if useful.
+
+CONNECTED APPLICATION DATA
+- AI Analytics and Health Tracker are available through dedicated read-only tools.
+- The tools read the current browser-local application records at request time; they do not write to or modify either section.
+- Retrieve only the source relevant to the current user question. Never disclose health information in an unrelated answer.
+- For AI Analytics, distinguish the deterministic dashboard calculation from actual GATE outcomes and preserve its uncertainty caveats.
+- For health questions, clearly label user-entered records and AI-generated/local analysis; do not turn them into a diagnosis.
 
 KNOWLEDGE RETRIEVAL
 - Use search_uploaded_study_material for questions about uploaded notes or prior stored documents.
@@ -376,11 +409,17 @@ const buildFallbackContext = (prompt: string) => {
   const knowledge = searchKnowledge(prompt).slice(0, 6);
   const memories = listMemories().slice(0, 8);
   const mistakes = listMistakes().slice(0, 8);
+  const wantsAnalytics =
+    /analytics|\bair\b|rank|readiness|expected marks|gate score|college compatibility|what.if/i.test(prompt);
+  const wantsHealth =
+    /health|sleep|stress|spo2|oxygen|heart rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|sky meditation|sudarshan|no.?fap|wellness/i.test(prompt);
 
   return JSON.stringify(
     {
       note: 'Fallback context assembled from current browser-local app records. Missing fields are unavailable, not zero.',
       snapshot,
+      ...(wantsAnalytics ? { aiAnalytics: getAIAnalyticsMentorContext() } : {}),
+      ...(wantsHealth ? { healthTracker: getHealthTrackerMentorContext() } : {}),
       relevantUploadedKnowledge: knowledge,
       userApprovedMemories: memories,
       recentSavedMistakes: mistakes,

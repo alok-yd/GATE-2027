@@ -720,9 +720,25 @@ You can now ask me to search this material. I’ll include local chunk identifie
               <span className="font-medium text-slate-500">Response Latency</span>
               <span className="font-mono font-semibold text-emerald-700">{geminiLatency ? `${geminiLatency} ms` : '—'}</span>
             </div>
-            <p className="text-[10px] leading-relaxed text-slate-500">
-              Read-only preparation tools · local notes search · saved mentor memories
-            </p>
+            <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 p-2.5">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                Connected app data · read only
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <span className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-800">
+                  AI Analytics · AIR readiness
+                </span>
+                <span className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-800">
+                  Health Tracker · Wellness & challenges
+                </span>
+              </div>
+              <p className="mt-2 text-[10px] leading-relaxed text-emerald-800/80">
+                Gemini retrieves current records from these sections only when your question needs them. Neither section can be edited by AI Mentor.
+              </p>
+              <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                Health details selected for a health-related question are included in the Gemini request. Private SKY and No-Fap notes are excluded.
+              </p>
+            </div>
             {keyTestFeedback && (
               <p className={`rounded p-1.5 text-[11px] ${
                 keyStatus === 'connected' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
