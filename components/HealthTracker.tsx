@@ -87,6 +87,37 @@ interface MeditationChallenge {
   logs: Record<string, MeditationLog>;
 }
 
+interface NoFapLog {
+  date: string;
+  completed: boolean;
+  note: string;
+}
+
+interface NoFapChallenge {
+  startedAt: string | null;
+  targetDays: number;
+  logs: Record<string, NoFapLog>;
+}
+
+interface ChallengeProgressMemory {
+  started: boolean;
+  startedAt: string | null;
+  targetDays: number;
+  challengeDay: number;
+  completedDays: number;
+  missedDays: number;
+  currentStreak: number;
+  bestStreak: number;
+  progressPercent: number;
+  dailyTargetMinutes?: number;
+  recentCheckIns: Array<{ date: string; completed: boolean; minutes?: number }>;
+}
+
+interface ChallengeAIMemory {
+  skyMeditation: ChallengeProgressMemory;
+  noFap: ChallengeProgressMemory;
+}
+
 interface SupplementLog {
   date: string;
   taken: string[];
@@ -115,6 +146,7 @@ const HEALTH_ENTRIES_KEY = 'gate_health_entries';
 const HEALTH_ANALYSIS_KEY = 'gate_health_analysis';
 const HEALTH_SUPPLEMENTS_KEY = 'gate_health_supplements';
 const SKY_CHALLENGE_KEY = 'gate_sky_meditation_challenge';
+const NO_FAP_CHALLENGE_KEY = 'gate_no_fap_100_day_challenge';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const todayKey = () => new Date().toISOString().split('T')[0];
@@ -174,6 +206,29 @@ const getChallenge = () =>
 
 const saveChallenge = (challenge: MeditationChallenge) => {
   localStorage.setItem(SKY_CHALLENGE_KEY, JSON.stringify(challenge));
+};
+
+const createDefaultNoFapChallenge = (): NoFapChallenge => ({
+  startedAt: null,
+  targetDays: 100,
+  logs: {},
+});
+
+const getNoFapChallenge = (): NoFapChallenge => {
+  const parsed = safeParse<Partial<NoFapChallenge>>(
+    localStorage.getItem(NO_FAP_CHALLENGE_KEY),
+    {}
+  );
+  return {
+    ...createDefaultNoFapChallenge(),
+    ...parsed,
+    targetDays: 100,
+    logs: parsed.logs || {},
+  };
+};
+
+const saveNoFapChallenge = (challenge: NoFapChallenge) => {
+  localStorage.setItem(NO_FAP_CHALLENGE_KEY, JSON.stringify(challenge));
 };
 
 const getExistingAppContext = (): ExistingAppContext => {
@@ -412,7 +467,8 @@ const buildLocalAnalysis = (
 const analyzeWithGateway = async (
   entry: HealthEntry,
   history: HealthEntry[],
-  appContext: ExistingAppContext
+  appContext: ExistingAppContext,
+  challengeMemory: ChallengeAIMemory
 ) => {
   const prompt = `
 Return only JSON matching this TypeScript shape:
@@ -437,6 +493,14 @@ Rules:
 - Supplements must include doctor-consult caution.
 - Symptoms should produce rest/hydration/doctor-warning guidance only.
 - Keep recommendations for a GATE 2027 aspirant.
+- Include separate, factual insights about SKY practice and the 100-day No-Fap challenge.
+- Treat all challenge check-ins as self-reported habit records, not independently verified facts.
+- For No-Fap progress, be neutral and non-judgmental. Do not claim that abstinence causes medical, hormonal, cognitive, or exam-performance benefits.
+- Never invent missed days, completed days, or streaks; use only the supplied counts and dates.
+- Mention the current streak and completed-day count for each challenge when available.
+
+Challenge progress and recent check-ins (self-reported):
+${JSON.stringify(challengeMemory, null, 2)}
 
 Latest health entry:
 ${JSON.stringify(entry, null, 2)}
@@ -520,6 +584,8 @@ const HealthTracker: React.FC = () => {
     minutes: '20',
     note: '',
   });
+  const [noFapChallenge, setNoFapChallenge] = useState<NoFapChallenge>(() => getNoFapChallenge());
+  const [noFapNote, setNoFapNote] = useState('');
   const [supplementLogs, setSupplementLogs] = useState<SupplementLog[]>(() => getSupplementLog());
 
   const latestEntry = entries[entries.length - 1] || null;
@@ -578,6 +644,88 @@ const HealthTracker: React.FC = () => {
     };
   }, [challenge, today]);
 
+  const noFapStats = useMemo(() => {
+    if (!noFapChallenge.startedAt) {
+      return {
+        dayNumber: 0,
+        elapsedDays: 0,
+        completedDays: 0,
+        missedDays: 0,
+        currentStreak: 0,
+        bestStreak: 0,
+        progress: 0,
+        todayLog: noFapChallenge.logs[today],
+      };
+    }
+
+    const elapsedDays = Math.min(100, daysBetween(noFapChallenge.startedAt, today) + 1);
+    const completedDays = Object.values(noFapChallenge.logs).filter((log) => log.completed).length;
+
+    let currentStreak = 0;
+    for (let index = 0; index < elapsedDays; index += 1) {
+      const checkDate = new Date(dateToTime(today) - index * DAY_MS).toISOString().split('T')[0];
+      if (noFapChallenge.logs[checkDate]?.completed) currentStreak += 1;
+      else break;
+    }
+
+    let bestStreak = 0;
+    let running = 0;
+    for (let index = 0; index < elapsedDays; index += 1) {
+      const checkDate = new Date(dateToTime(noFapChallenge.startedAt) + index * DAY_MS).toISOString().split('T')[0];
+      if (noFapChallenge.logs[checkDate]?.completed) {
+        running += 1;
+        bestStreak = Math.max(bestStreak, running);
+      } else {
+        running = 0;
+      }
+    }
+
+    return {
+      dayNumber: elapsedDays,
+      elapsedDays,
+      completedDays,
+      missedDays: Math.max(0, elapsedDays - completedDays),
+      currentStreak,
+      bestStreak,
+      progress: Math.round((completedDays / 100) * 100),
+      todayLog: noFapChallenge.logs[today],
+    };
+  }, [noFapChallenge, today]);
+
+  const challengeAIMemory = useMemo<ChallengeAIMemory>(() => ({
+    skyMeditation: {
+      started: Boolean(challenge.startedAt),
+      startedAt: challenge.startedAt,
+      targetDays: challenge.targetDays,
+      challengeDay: challengeStats.dayNumber,
+      completedDays: challengeStats.completedDays,
+      missedDays: challengeStats.missedDays,
+      currentStreak: challengeStats.currentStreak,
+      bestStreak: challengeStats.bestStreak,
+      progressPercent: challengeStats.progress,
+      dailyTargetMinutes: challenge.dailyTargetMinutes,
+      recentCheckIns: Object.values(challenge.logs)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-14)
+        .map((log) => ({ date: log.date, completed: log.completed, minutes: log.minutes })),
+    },
+    noFap: {
+      started: Boolean(noFapChallenge.startedAt),
+      startedAt: noFapChallenge.startedAt,
+      targetDays: 100,
+      challengeDay: noFapStats.dayNumber,
+      completedDays: noFapStats.completedDays,
+      missedDays: noFapStats.missedDays,
+      currentStreak: noFapStats.currentStreak,
+      bestStreak: noFapStats.bestStreak,
+      progressPercent: noFapStats.progress,
+      recentCheckIns: Object.values(noFapChallenge.logs)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-14)
+        .map((log) => ({ date: log.date, completed: log.completed })),
+    },
+  }), [challenge, challengeStats, noFapChallenge, noFapStats]);
+
   const persistAnalysis = (nextAnalysis: HealthAnalysis) => {
     setAnalysis(nextAnalysis);
     localStorage.setItem(HEALTH_ANALYSIS_KEY, JSON.stringify(nextAnalysis));
@@ -596,7 +744,7 @@ const HealthTracker: React.FC = () => {
 
     const context = getExistingAppContext();
     try {
-      const gatewayAnalysis = await analyzeWithGateway(entry, nextEntries, context);
+      const gatewayAnalysis = await analyzeWithGateway(entry, nextEntries, context, challengeAIMemory);
       persistAnalysis(gatewayAnalysis);
     } catch (error) {
       persistAnalysis(buildLocalAnalysis(entry, nextEntries, context, describeAIGatewayError(error)));
@@ -611,7 +759,7 @@ const HealthTracker: React.FC = () => {
     setLoading(true);
     const context = getExistingAppContext();
     try {
-      const gatewayAnalysis = await analyzeWithGateway(latestEntry, entries, context);
+      const gatewayAnalysis = await analyzeWithGateway(latestEntry, entries, context, challengeAIMemory);
       persistAnalysis(gatewayAnalysis);
     } catch (error) {
       persistAnalysis(buildLocalAnalysis(latestEntry, entries, context, describeAIGatewayError(error)));
@@ -647,6 +795,33 @@ const HealthTracker: React.FC = () => {
     };
     saveChallenge(next);
     setChallenge(next);
+  };
+
+  const startNoFapChallenge = () => {
+    const next: NoFapChallenge = {
+      ...createDefaultNoFapChallenge(),
+      startedAt: today,
+    };
+    saveNoFapChallenge(next);
+    setNoFapChallenge(next);
+  };
+
+  const saveNoFapCheckIn = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!noFapChallenge.startedAt) return;
+    const next: NoFapChallenge = {
+      ...noFapChallenge,
+      logs: {
+        ...noFapChallenge.logs,
+        [today]: {
+          date: today,
+          completed: true,
+          note: noFapNote.trim(),
+        },
+      },
+    };
+    saveNoFapChallenge(next);
+    setNoFapChallenge(next);
   };
 
   const toggleSupplement = (name: string) => {
@@ -1013,6 +1188,81 @@ const HealthTracker: React.FC = () => {
                 </form>
               </>
             )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">100-Day Challenge</p>
+                <h3 className="mt-1 text-xl font-bold text-slate-900">No-Fap Tracker</h3>
+              </div>
+              <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">
+                Daily check-in
+              </span>
+            </div>
+
+            {!noFapChallenge.startedAt ? (
+              <div className="mt-5 rounded-xl bg-slate-50 p-5">
+                <p className="text-sm text-slate-600">
+                  Start your 100-day personal habit challenge. Progress is based on your own daily check-ins.
+                </p>
+                <button
+                  type="button"
+                  onClick={startNoFapChallenge}
+                  className="mt-4 w-full rounded-lg bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800"
+                >
+                  Start 100-Day Challenge
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="mt-5">
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="text-4xl font-black text-slate-900">{noFapStats.dayNumber}/100</p>
+                      <p className="text-sm text-slate-500">Current challenge day</p>
+                    </div>
+                    <p className="text-2xl font-black text-indigo-600">{noFapStats.progress}%</p>
+                  </div>
+                  <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-full rounded-full bg-indigo-500" style={{ width: `${noFapStats.progress}%` }} />
+                  </div>
+                </div>
+
+                <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+                  <MiniStat label="Done" value={noFapStats.completedDays} />
+                  <MiniStat label="Streak" value={noFapStats.currentStreak} />
+                  <MiniStat label="Best" value={noFapStats.bestStreak} />
+                </div>
+
+                <form onSubmit={saveNoFapCheckIn} className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+                  <p className="font-bold text-slate-900">
+                    {noFapStats.todayLog?.completed ? 'Today complete' : 'Today’s check-in'}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Mark the day complete when you have followed your personal goal. A missed day breaks the current streak but does not erase earlier completed days.
+                  </p>
+                  <input
+                    value={noFapNote}
+                    onChange={(event) => setNoFapNote(event.target.value)}
+                    placeholder="Optional private note"
+                    className="mt-3 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    className="mt-3 w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-black text-white hover:bg-indigo-700"
+                  >
+                    {noFapStats.todayLog?.completed ? 'Update Today’s Check-In' : 'Save Check-In'}
+                  </button>
+                  <p className="mt-3 text-xs font-semibold text-indigo-800">
+                    Missed days: {noFapStats.missedDays}
+                  </p>
+                </form>
+              </>
+            )}
+            <p className="mt-3 text-xs text-slate-400">
+              Challenge totals and recent check-ins are included in the next Gemini health analysis. Notes stay in this browser.
+            </p>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
