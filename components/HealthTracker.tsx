@@ -1188,6 +1188,9 @@ const HealthTracker: React.FC = () => {
                 </form>
               </>
             )}
+            <p className="mt-3 text-xs text-slate-400">
+              SKY practice totals, streaks, and recent check-ins are included in the next Gemini health analysis.
+            </p>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
