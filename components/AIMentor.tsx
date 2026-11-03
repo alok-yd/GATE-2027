@@ -28,6 +28,7 @@ import {
 } from '../services/mentor/MentorStorage';
 import type { MentorConversation, MentorStoredMessage } from '../services/mentor/MentorStorage';
 import { generateMentorReply, summarizeMentorConversation } from '../services/mentor/MentorAgent';
+import { getAIAnalyticsMentorContext } from '../services/mentor/MentorDomainData';
 import type { MentorHistoryMessage, MentorMode } from '../services/mentor/MentorAgent';
 import { MentorMarkdown } from './mentor/MentorMarkdown';
 import type { StudentProfile } from '../types';
@@ -119,6 +120,71 @@ ${prediction.keyFactors.map((factor) => `- ${factor}`).join('\n')}
 ${prediction.requiredImprovements
     .map((item) => `- **${item.area}:** ${item.from} → ${item.to} (${item.impact})`)
     .join('\n')}`;
+};
+
+const formatDashboardAIRAnalytics = () => {
+  const data = getAIAnalyticsMentorContext();
+  const { preparation, airPrediction, collegeCompatibility, defaultWhatIfSimulation, savedAIRHistory } = data;
+
+  const dimensions = preparation.dimensions
+    .map((dimension) => `- **${dimension.name}:** ${dimension.score}/100 (${dimension.level}) — ${dimension.primaryMetric}`)
+    .join('\n');
+  const subjects = preparation.subjectReadiness
+    .slice()
+    .sort((a, b) => a.compositeScore - b.compositeScore)
+    .slice(0, 6)
+    .map((subject) =>
+      `- **${subject.name}:** ${subject.compositeScore}/100 · ${subject.status} · ${subject.pyqsSolved} PYQs · measured PYQ accuracy: ${subject.pyqAccuracy == null ? 'not recorded' : `${subject.pyqAccuracy}%`}`
+    )
+    .join('\n');
+  const scenarios = Object.values(airPrediction.scenarios)
+    .map((scenario) => `- **${scenario.title}:** ${scenario.airDisplay} · ${scenario.marks} marks · ${scenario.gateScore} GATE score · ${scenario.probability}% scenario weight`)
+    .join('\n');
+  const colleges = collegeCompatibility.topMatches.length
+    ? collegeCompatibility.topMatches
+        .map((match) => `- ${match.record.institute} — ${match.record.program}: ${match.statusText} (historical cutoff score ${match.closingScore})`)
+        .join('\n')
+    : 'No matches in the historically competitive/above categories for the selected category.';
+  const whatIf = defaultWhatIfSimulation.result;
+
+  return `# AI Analytics — AIR Readiness & Performance
+
+> These are dashboard model projections from your current tracker data, not actual GATE results or rank guarantees.
+
+## Current projection
+- **Overall readiness:** ${preparation.overallReadinessPercent}/100
+- **Predicted AIR:** ${airPrediction.airDisplay}
+- **Likely AIR range:** ${airPrediction.likelyRange}
+- **Expected marks:** ${airPrediction.marksEstimation.expectedMarks}/100
+- **Estimated GATE score:** ${airPrediction.marksEstimation.estimatedScore}/1000
+- **Model confidence:** ${airPrediction.confidencePercent}%
+- **Stability:** ${airPrediction.stability}
+- **Data quality:** ${preparation.dataHealth.dataQualityRating}
+
+## Eight readiness dimensions
+${dimensions}
+
+## Subjects needing the closest review
+${subjects}
+
+## AIR scenarios
+${scenarios}
+
+## Historical college compatibility
+Selected category: **${collegeCompatibility.category}**
+${colleges}
+
+## Default what-if scenario
+Assumptions: +${defaultWhatIfSimulation.assumptions.mockMarksDelta} mock marks, +${defaultWhatIfSimulation.assumptions.pyqAccuracyDelta}% PYQ accuracy, ${defaultWhatIfSimulation.assumptions.sillyMistakesSaved} marks recovered from silly mistakes, and ${defaultWhatIfSimulation.assumptions.revisionCyclesComplete} revision cycles.
+- Projected marks: **${whatIf.projectedMarks}**
+- Projected GATE score: **${whatIf.projectedScore}**
+- Projected AIR: **AIR ${whatIf.projectedAIR.toLocaleString()}**
+- Improvement vs current estimate: **${whatIf.airDelta > 0 ? '+' : ''}${whatIf.airDelta} rank positions**
+  
+This is a hypothetical simulator output, not a recorded improvement.
+
+Saved prediction snapshots: **${savedAIRHistory.count}**.
+`;
 };
 
 const AIMentor: React.FC = () => {
@@ -666,7 +732,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
     },
     {
       label: 'Predict my AIR',
-      action: () => aiHub.predictAIR(profile).then(formatPrediction),
+      action: async () => formatDashboardAIRAnalytics(),
     },
     {
       label: 'Explain DBMS normalization',
