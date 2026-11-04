@@ -84,14 +84,21 @@ const Dashboard: React.FC = () => {
                   Syllabus is complete. Now the mission is PYQs, revision cycles, mock analysis, and error-log repair.
                 </p>
              </div>
-             {/* Streak Badge (Hero) */}
-             <div className="hidden md:flex flex-col items-center bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/20">
-                <span className="text-xs font-bold text-blue-200 uppercase tracking-widest mb-1">Current Streak</span>
-                <div className="flex items-center gap-2">
-                   <span className="text-4xl">🔥</span>
-                   <span className="text-4xl font-bold text-white">{streak}</span>
-                </div>
-                <span className="text-xs text-blue-200 mt-1">Days</span>
+             <div className="flex shrink-0 flex-col items-end gap-2">
+               <img
+                 src="/achiever-banner.jpg"
+                 alt="Achiever — AI Learning & Intelligence. Learn • Practice • Achieve."
+                 className="h-auto w-20 rounded-lg object-contain shadow-lg transition-all duration-500 hover:scale-[1.03] hover:drop-shadow-[0_0_12px_rgba(255,197,46,0.22)] sm:w-28 md:w-40"
+               />
+               {/* Streak Badge (Hero) */}
+               <div className="hidden md:flex flex-col items-center bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/20">
+                  <span className="text-xs font-bold text-blue-200 uppercase tracking-widest mb-1">Current Streak</span>
+                  <div className="flex items-center gap-2">
+                     <span className="text-4xl">🔥</span>
+                     <span className="text-4xl font-bold text-white">{streak}</span>
+                  </div>
+                  <span className="text-xs text-blue-200 mt-1">Days</span>
+               </div>
              </div>
           </div>
 

@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
 
 const iitBombayLogo = new URL('../iit-bombay-logo-circle.png', import.meta.url).href;
+const achieverIcon = '/achiever-icon.jpg';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -157,7 +158,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const getTitle = () => {
     const item = navItems.find(i => i.path === location.pathname);
-    return item ? item.name : 'GATE 2027';
+    return item ? item.name : 'Achiever';
   };
 
   return (
@@ -180,11 +181,23 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           transform: isDesktopSidebarExpanded ? 'translateX(0)' : 'translateX(calc(-100% + 1rem))',
         }}
       >
-        <div className="p-6 flex items-center justify-center border-b border-slate-800">
-          <div className="bg-amber-500 text-slate-900 p-2 rounded-lg mr-3">
-             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+        <div className="group flex items-center justify-center border-b border-slate-800 px-4 py-4">
+          <img
+            src={achieverIcon}
+            alt="Achiever logo"
+            className="mr-3 h-10 w-10 shrink-0 rounded-lg object-contain transition-all duration-300 group-hover:scale-105 group-hover:drop-shadow-[0_0_10px_rgba(255,197,46,0.35)]"
+          />
+          <div className="min-w-0">
+            <span className="bg-gradient-to-r from-white to-amber-300 bg-clip-text text-xl font-extrabold tracking-wide text-transparent transition-all duration-300 group-hover:from-amber-200 group-hover:to-blue-200">
+              ACHIEVER
+            </span>
+            <span className="block whitespace-nowrap text-[8px] font-semibold tracking-[0.12em] text-blue-200">
+              AI LEARNING &amp; INTELLIGENCE
+            </span>
+            <span className="block whitespace-nowrap text-[7px] font-semibold tracking-[0.15em] text-amber-400">
+              LEARN • PRACTICE • ACHIEVE
+            </span>
           </div>
-          <span className="text-xl font-bold tracking-tight">GATE <span className="text-amber-500">2027</span></span>
         </div>
         <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
           {navItems.map((item) => (
@@ -267,8 +280,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile Header */}
         <header className="md:hidden flex items-center justify-between p-4 bg-slate-900 text-white shadow-md z-10">
-          <div className="flex items-center font-bold text-lg">
-             <span className="text-amber-500 mr-2">GATE</span> 2027
+          <div className="flex min-w-0 items-center font-bold text-lg">
+            <img
+              src={achieverIcon}
+              alt="Achiever logo"
+              className="mr-2 h-8 w-8 shrink-0 object-contain transition-transform duration-300 hover:scale-105"
+            />
+            <div className="min-w-0">
+              <span className="bg-gradient-to-r from-white to-amber-300 bg-clip-text text-transparent">ACHIEVER</span>
+              <span className="ml-2 hidden text-[8px] font-medium tracking-wide text-blue-200 sm:inline">AI LEARNING &amp; INTELLIGENCE</span>
+            </div>
           </div>
           <button 
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}

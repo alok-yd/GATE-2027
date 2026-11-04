@@ -10,7 +10,8 @@ function createWindow() {
     height: 850,
     minWidth: 1024,
     minHeight: 700,
-    title: 'GATE 2027 Prep Tracker',
+    title: 'Achiever — AI Learning & Intelligence',
+    icon: path.join(__dirname, '../public/achiever-icon.jpg'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -39,7 +40,7 @@ function updateTrayMenu() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Open GATE Tracker',
+      label: 'Open Achiever',
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -51,7 +52,7 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
-      label: 'Quit GATE Tracker',
+      label: 'Quit Achiever',
       click: () => {
         app.quit();
       }
@@ -59,7 +60,7 @@ function updateTrayMenu() {
   ]);
 
   tray.setContextMenu(contextMenu);
-  tray.setToolTip('GATE 2027 Prep Tracker');
+  tray.setToolTip('Achiever — AI Learning & Intelligence');
 }
 
 app.whenReady().then(() => {
@@ -67,9 +68,9 @@ app.whenReady().then(() => {
 
   try {
     // Setup tray
-    const iconPath = path.join(__dirname, '../public/vite.svg');
+    const iconPath = path.join(__dirname, '../public/achiever-icon.jpg');
     tray = new Tray(iconPath);
-    tray.setToolTip('GATE 2027 Prep Tracker');
+    tray.setToolTip('Achiever — AI Learning & Intelligence');
     updateTrayMenu();
 
     tray.on('double-click', () => {

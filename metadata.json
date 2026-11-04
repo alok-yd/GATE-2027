@@ -1,8 +1,9 @@
 {
-  "name": "GATE 2027 Prep Tracker",
-  "description": "A strategic roadmap and progress tracker for GATE CS & IT 2027 targeting AIR < 100.",
+  "name": "Achiever — AI Learning & Intelligence",
+  "description": "LEARN • PRACTICE • ACHIEVE. A personalised learning and intelligence workspace for GATE CS, IT and DA 2027 preparation.",
   "requestFramePermissions": [
     "microphone",
     "camera"
-  ]
+  ],
+  "short_name": "Achiever"
 }

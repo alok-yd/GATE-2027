@@ -1,8 +1,12 @@
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+<img width="480" alt="Achiever — AI Learning & Intelligence | Learn • Practice • Achieve" src="public/achiever-banner.jpg" />
 </div>
 
-# Achiever GATE 2027 Prep Tracker
+# Achiever — AI Learning & Intelligence
+
+**LEARN • PRACTICE • ACHIEVE**
+
+A personalised learning workspace for GATE CS, IT and DA 2027 preparation.
 
 This contains everything you need to run your app locally.
 

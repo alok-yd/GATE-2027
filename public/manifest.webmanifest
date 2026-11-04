@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Achiever — AI Learning & Intelligence",
+  "short_name": "Achiever",
+  "description": "LEARN • PRACTICE • ACHIEVE",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#06152F",
+  "theme_color": "#06152F",
+  "icons": [
+    {
+      "src": "/achiever-icon.jpg",
+      "sizes": "96x96",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}

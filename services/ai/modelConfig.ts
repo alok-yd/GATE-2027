@@ -1,5 +1,5 @@
 /**
- * Central AI Model Configuration (GATE 2027 Prep Tracker)
+ * Central AI Model Configuration (Achiever — AI Learning & Intelligence)
  * Defines primary models, fallback hierarchy, token limits, and capability matrix.
  */
 
