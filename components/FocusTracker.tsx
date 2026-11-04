@@ -17,7 +17,7 @@ import {
   StudyMedium,
 } from './focus/types';
 import { DEFAULT_SETTINGS, GATE_SUBJECTS } from './focus/constants';
-import { StorageService } from './focus/services/storage';
+import { getTodayDateString, StorageService } from './focus/services/storage';
 
 import { focusEngine } from './focus/services/focusEngine';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
@@ -111,6 +111,14 @@ export default function FocusTracker() {
   const todaySummary = useMemo(
     () => StorageService.getTodaySummary(sessions, settings.dailyTargetHours * 3600),
     [sessions, settings.dailyTargetHours]
+  );
+
+  // The persistent verified-time ledger is the single source of truth for
+  // the dashboard total. It is updated by TimerEngine while the webcam
+  // confirms presence, and remains available after STOP saves the session.
+  const todayVerifiedSeconds = useMemo(
+    () => StorageService.getVerifiedStudySecondsForDate(getTodayDateString()),
+    [tickData.focusedSeconds, sessions]
   );
 
   const todaySessions = useMemo(() => {
@@ -341,7 +349,7 @@ export default function FocusTracker() {
             <Dashboard
               tickData={tickData}
               todayTargetHours={settings.dailyTargetHours}
-              todayVerifiedSeconds={todaySummary.focusedSeconds}
+              todayVerifiedSeconds={todayVerifiedSeconds}
               cameraStatus={cameraStatus}
               cameraError={cameraError}
               onOpenSetup={() => setShowSetupModal(true)}

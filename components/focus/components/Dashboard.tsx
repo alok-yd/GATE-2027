@@ -44,8 +44,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const manuallyPaused = tickData.state === 'PAUSED';
   const breakActive = tickData.state === 'BREAK';
 
-  const activeSessionContribution = sessionActive ? tickData.focusedSeconds : 0;
-  const totalVerifiedToday = todayVerifiedSeconds + activeSessionContribution;
+  // todayVerifiedSeconds already includes live and stopped sessions from the
+  // persistent ledger. Do not add the active session a second time.
+  const totalVerifiedToday = todayVerifiedSeconds;
   const todayTargetSeconds = todayTargetHours * 3600;
   const todayRemainingSeconds = Math.max(0, todayTargetSeconds - totalVerifiedToday);
   const todayProgress = todayTargetSeconds > 0
