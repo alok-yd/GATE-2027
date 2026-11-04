@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
 
 const iitBombayLogo = new URL('../iit-bombay-logo-circle.png', import.meta.url).href;
-const achieverIcon = '/achiever-icon.jpg';
+const achieverIcon = `${import.meta.env.BASE_URL}achiever-icon.svg`;
 
 interface LayoutProps {
   children: React.ReactNode;
