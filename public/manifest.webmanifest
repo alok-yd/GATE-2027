@@ -11,7 +11,7 @@
   "icons": [
     {
       "src": "/achiever-icon.jpg",
-      "sizes": "96x96",
+      "sizes": "160x160",
       "type": "image/jpeg",
       "purpose": "any"
     }
