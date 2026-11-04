@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
 
 const iitBombayLogo = new URL('../iit-bombay-logo-circle.png', import.meta.url).href;
-const achieverIcon = `${import.meta.env.BASE_URL}achiever-icon.svg`;
+const achieverLogo = `${import.meta.env.BASE_URL}achiever-logo.svg`;
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -181,23 +181,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           transform: isDesktopSidebarExpanded ? 'translateX(0)' : 'translateX(calc(-100% + 1rem))',
         }}
       >
-        <div className="group flex items-center justify-center border-b border-slate-800 px-4 py-4">
+        <div className="flex items-center justify-center border-b border-slate-800 px-4 py-3">
           <img
-            src={achieverIcon}
-            alt="Achiever logo"
-            className="mr-3 h-10 w-10 shrink-0 rounded-lg object-contain transition-all duration-300 group-hover:scale-105 group-hover:drop-shadow-[0_0_10px_rgba(255,197,46,0.35)]"
+            src={achieverLogo}
+            alt="Achiever — AI Learning & Intelligence. Learn, Practice, Achieve."
+            className="block h-auto w-full max-w-[224px] object-contain"
+            onError={(event) => {
+              console.error('Achiever logo failed to load:', event.currentTarget.src);
+            }}
           />
-          <div className="min-w-0">
-            <span className="bg-gradient-to-r from-white to-amber-300 bg-clip-text text-xl font-extrabold tracking-wide text-transparent transition-all duration-300 group-hover:from-amber-200 group-hover:to-blue-200">
-              ACHIEVER
-            </span>
-            <span className="block whitespace-nowrap text-[8px] font-semibold tracking-[0.12em] text-blue-200">
-              AI LEARNING &amp; INTELLIGENCE
-            </span>
-            <span className="block whitespace-nowrap text-[7px] font-semibold tracking-[0.15em] text-amber-400">
-              LEARN • PRACTICE • ACHIEVE
-            </span>
-          </div>
         </div>
         <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
           {navItems.map((item) => (
@@ -280,16 +272,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile Header */}
         <header className="md:hidden flex items-center justify-between p-4 bg-slate-900 text-white shadow-md z-10">
-          <div className="flex min-w-0 items-center font-bold text-lg">
+          <div className="flex min-w-0 items-center">
             <img
-              src={achieverIcon}
-              alt="Achiever logo"
-              className="mr-2 h-8 w-8 shrink-0 object-contain transition-transform duration-300 hover:scale-105"
+              src={achieverLogo}
+              alt="Achiever — AI Learning & Intelligence"
+              className="block h-auto w-[112px] max-h-[68px] object-contain"
+              onError={(event) => {
+                console.error('Achiever mobile logo failed to load:', event.currentTarget.src);
+              }}
             />
-            <div className="min-w-0">
-              <span className="bg-gradient-to-r from-white to-amber-300 bg-clip-text text-transparent">ACHIEVER</span>
-              <span className="ml-2 hidden text-[8px] font-medium tracking-wide text-blue-200 sm:inline">AI LEARNING &amp; INTELLIGENCE</span>
-            </div>
           </div>
           <button 
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
