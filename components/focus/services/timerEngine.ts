@@ -252,7 +252,9 @@ export class TimerEngine {
 
     const focusedSeconds = Math.floor(this.focusedMs / 1000);
     if (focusedSeconds >= this.targetSeconds) {
-      soundFx.playTargetReached();
+      if (StorageService.getSettings().soundNotifications) {
+        soundFx.playTargetReached();
+      }
       this.finishSession(true);
       return;
     }

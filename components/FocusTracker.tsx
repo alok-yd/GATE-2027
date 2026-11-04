@@ -22,6 +22,7 @@ import { StorageService } from './focus/services/storage';
 import { focusEngine } from './focus/services/focusEngine';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
 import { visionEngine } from './focus/vision/visionEngine';
+import { soundFx } from './focus/services/audio';
 import {
   LayoutDashboard,
   BarChart3,
@@ -160,6 +161,9 @@ export default function FocusTracker() {
     goal: string,
     medium?: StudyMedium
   ) => {
+    // Unlock browser audio from the user's Start Session interaction so the
+    // completion melody can play later when the target is reached.
+    soundFx.unlock();
     const startGeneration = ++sessionStartGenerationRef.current;
     setActiveTab('dashboard');
     setCameraStatus('CONNECTING');

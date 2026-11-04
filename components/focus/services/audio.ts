@@ -3,6 +3,27 @@
 class AudioNotificationService {
   private ctx: AudioContext | null = null;
 
+  /**
+   * Call from the Start Session click so browsers can unlock Web Audio
+   * before the completion sound is needed later.
+   */
+  unlock(): void {
+    const ctx = this.getContext();
+    if (ctx?.state === 'suspended') {
+      void ctx.resume().catch(() => {});
+    }
+
+    // Warm the browser's available voice list while the page has user
+    // interaction. The actual encouragement is spoken when the session ends.
+    try {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.getVoices();
+      }
+    } catch {
+      // Speech synthesis is optional; the musical notification still works.
+    }
+  }
+
   private getContext(): AudioContext | null {
     try {
       if (!this.ctx) {
@@ -51,14 +72,63 @@ class AudioNotificationService {
 
   playTargetReached(): void {
     const ctx = this.getContext();
-    if (!ctx) return;
 
-    const now = ctx.currentTime;
-    // Triumphant arpeggio: C5 -> E5 -> G5 -> C6
-    this.playTone(ctx, 523.25, now, 0.18, 'sine', 0.09);
-    this.playTone(ctx, 659.25, now + 0.15, 0.18, 'sine', 0.09);
-    this.playTone(ctx, 783.99, now + 0.30, 0.18, 'sine', 0.09);
-    this.playTone(ctx, 1046.50, now + 0.45, 0.4, 'sine', 0.1);
+    if (ctx) {
+      const now = ctx.currentTime;
+      // Short, upbeat completion melody: C5 -> E5 -> G5 -> C6 -> G5 -> C6.
+      // The overlapping soft harmony gives the completion cue a fuller,
+      // musical sound without downloading or playing external media.
+      const melody: Array<{ frequency: number; offset: number; duration: number }> = [
+        { frequency: 523.25, offset: 0, duration: 0.22 },
+        { frequency: 659.25, offset: 0.19, duration: 0.22 },
+        { frequency: 783.99, offset: 0.38, duration: 0.26 },
+        { frequency: 1046.50, offset: 0.60, duration: 0.38 },
+        { frequency: 783.99, offset: 0.94, duration: 0.24 },
+        { frequency: 1046.50, offset: 1.15, duration: 0.55 },
+      ];
+
+      melody.forEach((note, index) => {
+        this.playTone(ctx, note.frequency, now + note.offset, note.duration, 'sine', 0.085);
+        if (index === 2 || index === 5) {
+          this.playTone(ctx, note.frequency / 2, now + note.offset, note.duration + 0.08, 'triangle', 0.025);
+        }
+      });
+    }
+
+    // Voice is intentionally independent of AudioContext availability.
+    this.speakCompletionEncouragement();
+  }
+
+  private speakCompletionEncouragement(): void {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    try {
+      const synthesis = window.speechSynthesis;
+      const utterance = new SpeechSynthesisUtterance('Great Job, keep Hustling!');
+      utterance.lang = 'en-IN';
+      utterance.rate = 0.96;
+      utterance.pitch = 1.08;
+      utterance.volume = 1;
+
+      const voices = synthesis.getVoices();
+      const selectedVoice =
+        voices.find((voice) => voice.lang.toLowerCase() === 'en-in') ||
+        voices.find((voice) => voice.lang.toLowerCase().startsWith('en-us')) ||
+        voices.find((voice) => voice.lang.toLowerCase().startsWith('en'));
+
+      if (selectedVoice) utterance.voice = selectedVoice;
+
+      // Let the completion melody finish before the spoken encouragement.
+      window.setTimeout(() => {
+        try {
+          synthesis.speak(utterance);
+        } catch {
+          // Unsupported or unavailable speech output must not affect the timer.
+        }
+      }, 1850);
+    } catch {
+      // Speech synthesis is optional; session completion must always succeed.
+    }
   }
 
   playBreakEnd(): void {
