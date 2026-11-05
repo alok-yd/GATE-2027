@@ -188,7 +188,7 @@ const numberOrDefault = (value: string, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const dateToTime = (date: string) => new Date(`${date}T00:00:00`).getTime();
+const dateToTime = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
 
 const daysBetween = (from: string, to: string) =>
   Math.max(0, Math.floor((dateToTime(to) - dateToTime(from)) / DAY_MS));
