@@ -1238,14 +1238,26 @@ const HealthTracker: React.FC = () => {
 
         <aside className="space-y-6 lg:col-span-2">
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-bold uppercase tracking-widest text-slate-400">90-Day Challenge</p>
                 <h3 className="mt-1 text-xl font-bold text-slate-900">SKY Meditation Practice</h3>
               </div>
-              <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
-                {challenge.dailyTargetMinutes} min/day
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
+                  {challenge.dailyTargetMinutes} min/day
+                </span>
+                {challenge.startedAt && (
+                  <button
+                    type="button"
+                    onClick={resetChallenge}
+                    title="Archive this attempt and start a new 90-day challenge"
+                    className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 transition hover:bg-amber-50"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
             </div>
 
             {!challenge.startedAt ? (
@@ -1310,8 +1322,21 @@ const HealthTracker: React.FC = () => {
                     className="mt-3 w-full rounded-lg border border-amber-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500"
                   />
                   <p className="mt-3 text-xs font-semibold text-amber-800">
-                    Missed days: {challengeStats.missedDays}
+                    Missed days before today: {challengeStats.missedDays}
                   </p>
+                  {challengeStats.missedDays > 0 && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-white/80 p-3">
+                      <p className="text-xs leading-relaxed text-amber-900">
+                        You have {challengeStats.missedDays} earlier missed day(s). Your completed days are preserved; the missed days interrupt the streak, not your ability to continue.
+                      </p>
+                      <NavLink
+                        to="/mentor?ask=Review%20my%20SKY%20Meditation%20Practice%20and%20No-Fap%20Tracker.%20Check%20actual%20missed%20days%20and%20streak%20status%20for%20both%20challenges%2C%20then%20give%20me%20a%20practical%2C%20non-judgmental%20recovery%20plan."
+                        className="mt-2 inline-flex text-xs font-bold text-amber-800 underline underline-offset-2 hover:text-amber-950"
+                      >
+                        Get AI Mentor recovery guidance →
+                      </NavLink>
+                    </div>
+                  )}
                 </form>
               </>
             )}
@@ -1321,14 +1346,26 @@ const HealthTracker: React.FC = () => {
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-bold uppercase tracking-widest text-slate-400">100-Day Challenge</p>
                 <h3 className="mt-1 text-xl font-bold text-slate-900">No-Fap Tracker</h3>
               </div>
-              <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">
-                Daily check-in
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">
+                  Daily check-in
+                </span>
+                {noFapChallenge.startedAt && (
+                  <button
+                    type="button"
+                    onClick={resetNoFapChallenge}
+                    title="Archive this attempt and start a new 100-day challenge"
+                    className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-bold text-indigo-800 transition hover:bg-indigo-50"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
             </div>
 
             {!noFapChallenge.startedAt ? (
@@ -1385,8 +1422,21 @@ const HealthTracker: React.FC = () => {
                     {noFapStats.todayLog?.completed ? 'Update Today’s Check-In' : 'Save Check-In'}
                   </button>
                   <p className="mt-3 text-xs font-semibold text-indigo-800">
-                    Missed days: {noFapStats.missedDays}
+                    Missed days before today: {noFapStats.missedDays}
                   </p>
+                  {noFapStats.missedDays > 0 && (
+                    <div className="mt-3 rounded-lg border border-indigo-200 bg-white/80 p-3">
+                      <p className="text-xs leading-relaxed text-indigo-900">
+                        You have {noFapStats.missedDays} earlier day(s) without a completed check-in. This is a habit-tracking signal, not a judgement; you can continue from today.
+                      </p>
+                      <NavLink
+                        to="/mentor?ask=Review%20my%20SKY%20Meditation%20Practice%20and%20No-Fap%20Tracker.%20Check%20actual%20missed%20days%20and%20streak%20status%20for%20both%20challenges%2C%20then%20give%20me%20a%20practical%2C%20non-judgmental%20recovery%20plan."
+                        className="mt-2 inline-flex text-xs font-bold text-indigo-700 underline underline-offset-2 hover:text-indigo-900"
+                      >
+                        Get AI Mentor recovery guidance →
+                      </NavLink>
+                    </div>
+                  )}
                 </form>
               </>
             )}
