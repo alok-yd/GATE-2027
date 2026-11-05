@@ -185,7 +185,7 @@ const VoiceAssistant: React.FC = () => {
     try {
       const result = await sendJarvisMessage(cleanPrompt, controller.signal);
       setMessages(result.conversation.messages);
-      setActiveModel(result.model);
+      setActiveModel(result.toolCalling ? result.model : `${result.model} · read-only fallback`);
       abortControllerRef.current = null;
 
       if (speakResponse || speakTypedReplies) {
