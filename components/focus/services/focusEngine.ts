@@ -76,6 +76,7 @@ export class FocusEngine {
     this.manualPauseRequested = false;
     this.breakActive = false;
     this.candidatePresence = null;
+    this.candidateSinceTimestamp = 0;
     this.consecutiveFrames = 0;
     this.confirmedPresence = null;
     this.currentState = completed ? 'COMPLETED' : 'IDLE';
@@ -190,6 +191,7 @@ export class FocusEngine {
 
   private resetPresenceStability(): void {
     this.candidatePresence = null;
+    this.candidateSinceTimestamp = 0;
     this.consecutiveFrames = 0;
     this.confirmedPresence = null;
   }
@@ -226,7 +228,7 @@ export class FocusEngine {
     } else if (this.manualPauseRequested) {
       nextState = 'PAUSED';
       stateExplanation = 'MANUALLY PAUSED — Resume to continue presence-based timing.';
-      personPresenceState = cameraAvailable
+      personPresenceState = cameraAvailable && this.confirmedPresence !== null
         ? (isPersonPresent ? 'PERSON_PRESENT' : 'PERSON_ABSENT')
         : 'VISION_UNCERTAIN';
     } else if (this.breakActive) {
