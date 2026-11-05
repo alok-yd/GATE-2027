@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import { describeAIGatewayError, generateGatewayText } from '../services/AIGatewayClient';
 import { safeParseJson } from '../services/ai/jsonRepair';
 
@@ -80,11 +81,21 @@ interface MeditationLog {
   note: string;
 }
 
+interface ChallengeAttemptSummary {
+  startedAt: string;
+  resetAt: string;
+  targetDays: number;
+  completedDays: number;
+  missedDays: number;
+  bestStreak: number;
+}
+
 interface MeditationChallenge {
   startedAt: string | null;
   targetDays: number;
   dailyTargetMinutes: number;
   logs: Record<string, MeditationLog>;
+  archivedAttempts: ChallengeAttemptSummary[];
 }
 
 interface NoFapLog {
@@ -97,6 +108,7 @@ interface NoFapChallenge {
   startedAt: string | null;
   targetDays: number;
   logs: Record<string, NoFapLog>;
+  archivedAttempts: ChallengeAttemptSummary[];
 }
 
 interface ChallengeProgressMemory {
@@ -111,6 +123,10 @@ interface ChallengeProgressMemory {
   progressPercent: number;
   dailyTargetMinutes?: number;
   recentCheckIns: Array<{ date: string; completed: boolean; minutes?: number }>;
+  streakInterrupted: boolean;
+  missedDates: string[];
+  lastMissedDate: string | null;
+  previousAttempts: ChallengeAttemptSummary[];
 }
 
 interface ChallengeAIMemory {
@@ -199,10 +215,23 @@ const createDefaultChallenge = (): MeditationChallenge => ({
   targetDays: 90,
   dailyTargetMinutes: 20,
   logs: {},
+  archivedAttempts: [],
 });
 
-const getChallenge = () =>
-  safeParse<MeditationChallenge>(localStorage.getItem(SKY_CHALLENGE_KEY), createDefaultChallenge());
+const getChallenge = (): MeditationChallenge => {
+  const parsed = safeParse<Partial<MeditationChallenge>>(
+    localStorage.getItem(SKY_CHALLENGE_KEY),
+    {}
+  );
+  return {
+    ...createDefaultChallenge(),
+    ...parsed,
+    targetDays: 90,
+    dailyTargetMinutes: Number(parsed.dailyTargetMinutes || 20),
+    logs: parsed.logs || {},
+    archivedAttempts: parsed.archivedAttempts || [],
+  };
+};
 
 const saveChallenge = (challenge: MeditationChallenge) => {
   localStorage.setItem(SKY_CHALLENGE_KEY, JSON.stringify(challenge));
@@ -212,6 +241,7 @@ const createDefaultNoFapChallenge = (): NoFapChallenge => ({
   startedAt: null,
   targetDays: 100,
   logs: {},
+  archivedAttempts: [],
 });
 
 const getNoFapChallenge = (): NoFapChallenge => {
@@ -224,6 +254,7 @@ const getNoFapChallenge = (): NoFapChallenge => {
     ...parsed,
     targetDays: 100,
     logs: parsed.logs || {},
+    archivedAttempts: parsed.archivedAttempts || [],
   };
 };
 
