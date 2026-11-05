@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
-import VoiceAssistant from './VoiceAssistant';
 import AIInsightWidget from './AIInsightWidget';
 import PredictedAIRWidget from './PredictedAIRWidget';
 import { getCurrentPhaseSummary, getStoredSubjects } from '../services/DataExtractor';
@@ -60,8 +59,6 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-6 relative">
-      {/* Voice Assistant */}
-      <VoiceAssistant />
       <img
         src={mahadevShivShaktiImage}
         alt="Mahadev Shiv Shakti"
