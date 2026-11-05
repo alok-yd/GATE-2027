@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Mic } from 'lucide-react';
 import { sendJarvisMessage } from '../services/assistant/JarvisSession';
-import JarvisOverlay, { JarvisVoiceStatus } from './assistant/JarvisOverlay';
+import JarvisOverlay, { type JarvisVoiceStatus } from './assistant/JarvisOverlay';
 
 type SpeechRecognitionResultLike = {
   isFinal: boolean;
