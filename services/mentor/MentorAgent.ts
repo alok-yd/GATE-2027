@@ -773,8 +773,8 @@ const buildFallbackContext = (prompt: string) => {
   const wantsTests = /mock|test performance|test score|marks|negative marks|test history/i.test(prompt);
   const wantsRevision = /revision|revise|forgot|forgetting|revision task|spaced repetition/i.test(prompt);
   const wantsStrategies = /strategy|strategies|tips|time management|preparation plan/i.test(prompt);
-  const wantsSpeaking = /speaking coach|english speaking|speaking practice|pronunciation|fluency|speaking streak|speaking session|filler words|speech transcript|speaking milestone/i.test(prompt);
-  const wantsAINative = /ai native|uploaded|imported|knowledge base|documents?|study material|saved mistakes|saved memories|memory|evaluation|planner imports?|roadmap imports?/i.test(prompt);
+  const wantsSpeaking = /speaking|spoken english|pronunciation|fluency|filler words?|speech transcript|oral practice/i.test(prompt);
+  const wantsAINative = /ai native|uploaded|imported|imports?|knowledge base|documents?|study material|saved mistakes|saved memories|memory|evaluations?|evals?|planner imports?|roadmap imports?/i.test(prompt);
   const wantsPreviousMentorHistory = /(previous|past|earlier|last).{0,30}(ai mentor|mentor conversation|chat|discussion)|what did we discuss|what did you recommend earlier/i.test(prompt);
   const wantsOverallAcademic = /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|how is my (?:gate )?preparation|analyse my preparation|analyze my preparation|preparation status|overall progress/i.test(prompt);
   const wantsHealth =
