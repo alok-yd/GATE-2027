@@ -8,10 +8,19 @@ import {
 import {
   createStudyTask,
   getMistakePatterns,
+  listDocuments,
+  listEvaluations,
   listMemories,
   listMistakes,
+  listPlannerImports,
+  listRoadmapImports,
+  listTestAnalyses,
   searchKnowledge,
 } from '../AINativeServices';
+import {
+  getActiveMentorConversationId,
+  loadMentorConversations,
+} from './MentorStorage';
 import type { PlannerTaskPreview } from '../AINativeServices';
 import type { StudentProfile } from '../../types';
 import { getTodayDateString } from '../../components/focus/services/storage';
@@ -200,6 +209,24 @@ const mentorTools: FunctionDeclaration[] = [
       },
     },
   },
+  {
+    name: 'get_ai_native_workspace_summary',
+    description:
+      'READ-ONLY AI Native access. Use when the user asks about AI Native, uploaded/imported material, knowledge base, mistakes, memory, evaluation results, planner imports or roadmap imports. Read the existing local AI Native records and report their real status. For the full content of a note, use search_uploaded_study_material with a focused query.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'search_previous_mentor_conversations',
+    description:
+      'READ-ONLY AI Mentor history search. Use when the user asks what was discussed or recommended in an earlier AI Mentor conversation, asks you to recall a previous decision, or wants a historical conversation about a topic. Search saved conversations using the supplied keywords; do not use this tool for the current conversation because its recent messages are already in context.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Topic, subject, concept or decision to find in previous AI Mentor conversations.' },
+      },
+      required: ['query'],
+    },
+  },
 ];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -316,6 +343,114 @@ const buildStudentSnapshot = () => {
         ...(profile.mocks.length === 0 ? ['No mock/test records are stored.'] : []),
       ],
     },
+  };
+};
+
+const buildAINativeWorkspaceSummary = () => {
+  const documents = listDocuments();
+  const plannerImports = listPlannerImports();
+  const roadmapImports = listRoadmapImports();
+  const evaluations = listEvaluations();
+  const testAnalyses = listTestAnalyses();
+  const memories = listMemories();
+  const mistakes = listMistakes();
+  const mistakePatterns = getMistakePatterns();
+
+  return {
+    source: 'AI Native records read from the existing browser-local AI Native storage.',
+    capturedAt: new Date().toISOString(),
+    counts: {
+      documents: documents.length,
+      plannerImports: plannerImports.length,
+      roadmapImports: roadmapImports.length,
+      evaluations: evaluations.length,
+      importedTestAnalyses: testAnalyses.length,
+      savedMemories: memories.length,
+      savedMistakes: mistakes.length,
+      recurringMistakePatterns: mistakePatterns.length,
+    },
+    documents: documents.slice(-30).map((document) => ({
+      id: document.id,
+      name: document.name,
+      kind: document.kind,
+      purpose: document.purpose,
+      createdAt: document.createdAt,
+      summary: document.summary,
+      extractionConfidence: document.extractionConfidence,
+      warnings: document.warnings,
+    })),
+    plannerImports: plannerImports.slice(-10),
+    roadmapImports: roadmapImports.slice(-10),
+    evaluations: evaluations.slice(-20),
+    importedTestAnalyses: testAnalyses.slice(0, 20),
+    recurringMistakePatterns: mistakePatterns.slice(0, 20),
+    recentMistakes: mistakes.slice(0, 20),
+    userApprovedMemories: memories.slice(0, 20).map((memory) => ({
+      id: memory.id,
+      category: memory.category,
+      title: memory.title,
+      content: memory.content,
+      updatedAt: memory.updatedAt,
+    })),
+    dataQuality: [
+      'Document summaries and metadata are shown here; use search_uploaded_study_material to retrieve relevant indexed passages.',
+      'Evaluation rows are existing saved evaluation results; no new evaluation was run by this read-only tool.',
+      'Imported planner and roadmap items are previews/status records; this tool does not accept imports or change trackers.',
+    ],
+  };
+};
+
+const searchPreviousMentorConversations = (query: string) => {
+  const cleanQuery = query.trim().toLowerCase();
+  if (cleanQuery.length < 2) {
+    return {
+      query,
+      matches: [],
+      message: 'Provide a topic or a few keywords to search saved previous AI Mentor conversations.',
+    };
+  }
+
+  const activeConversationId = getActiveMentorConversationId();
+  const terms = cleanQuery.split(/\\s+/).filter((term) => term.length >= 2);
+  const matches = loadMentorConversations()
+    .filter((conversation) => conversation.id !== activeConversationId)
+    .map((conversation) => {
+      const relevantMessages = conversation.messages.filter((message) =>
+        terms.some((term) => message.content.toLowerCase().includes(term))
+      );
+      const haystack = [
+        conversation.title,
+        conversation.summary || '',
+        ...relevantMessages.map((message) => message.content),
+      ].join(' ').toLowerCase();
+      const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
+      return { conversation, relevantMessages, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) =>
+      b.score - a.score ||
+      b.conversation.updatedAt.localeCompare(a.conversation.updatedAt)
+    )
+    .slice(0, 4)
+    .map(({ conversation, relevantMessages }) => ({
+      title: conversation.title,
+      updatedAt: conversation.updatedAt,
+      summary: conversation.summary || '',
+      matchingMessages: relevantMessages.slice(-6).map((message) => ({
+        role: message.role,
+        timestamp: message.timestamp,
+        excerpt: message.content.slice(0, 900),
+      })),
+    }));
+
+  return {
+    query,
+    matches,
+    totalMatches: matches.length,
+    source: 'Saved previous AI Mentor conversations from the shared browser-local conversation store.',
+    message: matches.length
+      ? 'Historical conversation matches found. Treat them as conversation history, not as more recent verified tracker data.'
+      : 'No saved previous AI Mentor conversation matched these keywords.',
   };
 };
 
@@ -516,6 +651,12 @@ const executeMentorTool = (name: string, args: unknown, latestUserPrompt = ''): 
       };
     }
 
+    case 'get_ai_native_workspace_summary':
+      return buildAINativeWorkspaceSummary();
+
+    case 'search_previous_mentor_conversations':
+      return searchPreviousMentorConversations(readStringArg(args, 'query'));
+
     default:
       return { error: `Tool not allowed: ${name}` };
   }
@@ -545,7 +686,9 @@ CURRENT MODE
 ${modeInstructions[mode]}
 
 NON-NEGOTIABLE DATA INTEGRITY
-- Use the section-specific function tools to retrieve current Roadmap, AI Focus, Lecture Tracker, PYQ Execution, Health, Test Performance, Revision, AI Analytics and Strategy & Tips data when relevant.
+- You have READ access to all existing ACHIEVER sections through their section-specific tools: Roadmap, AI Focus, Lecture Tracker, PYQ Execution Tracker, Health Tracker, Test Performance, Revision, AI Mentor history, AI Analytics, AI Native and Strategy & Tips. Choose the relevant section tools for each question, and combine multiple sections when the user asks a cross-section or overall question.
+- For AI Native workspace questions, call get_ai_native_workspace_summary to inspect existing documents, planner/roadmap imports, evaluations, imported test analyses, saved mistakes, recurring mistake patterns and user-approved memories. Use search_uploaded_study_material to retrieve actual relevant note passages rather than relying on document titles alone.
+- For historical AI Mentor questions, call search_previous_mentor_conversations with the relevant keywords. Current tracker data takes precedence over statements in older conversations.
 - For a broad question such as "How is my GATE preparation going?", "analyse my preparation", or "overall preparation status", combine the Student Snapshot, Roadmap, AI Focus, Lecture Tracker, PYQ Execution, Test Performance, Revision and AI Analytics tools. Include Strategy & Tips when recommending actions. Do not include Health Tracker unless the user explicitly asks for a wellness-inclusive analysis.
 - For "what should I revise?" or "which topics are weak?", use Revision, PYQ Execution, Test Performance, Roadmap and Lecture Tracker evidence. Do not infer that unmarked revision tasks were never studied.
 - When the user explicitly asks you to create a study plan in Lecture Tracker, first analyse the same relevant current sections, then create its individual tasks through create_lecture_tracker_task. Never create tasks for a recommendation-only request.
