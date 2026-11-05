@@ -91,7 +91,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         : cameraSignalLost
           ? 'CAMERA SIGNAL LOST'
           : waitingForCameraFrame
-            ? 'WAITING FOR CAMERA FRAME'
+            ? 'CHECKING PRESENCE'
             : personPresent
               ? 'PRESENT'
               : 'ABSENT';
@@ -109,7 +109,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             : cameraSignalLost
               ? 'CAMERA SIGNAL LOST — TIMER PAUSED'
               : waitingForCameraFrame
-                ? 'WAITING FOR CAMERA FRAME — TIMER PAUSED'
+                ? 'CHECKING PRESENCE — TIMER PAUSED'
                 : personPresent
                   ? 'PRESENT — TIMER RUNNING'
                   : 'ABSENT — TIMER PAUSED';
@@ -149,7 +149,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             : cameraSignalLost
               ? tickData.stateExplanation || 'No fresh webcam frames are arriving. The countdown is paused.'
               : waitingForCameraFrame
-                ? 'The webcam is connected. Waiting for the first usable frame; the countdown remains paused.'
+                ? tickData.stateExplanation || 'The camera is connected. Confirming a stable presence signal; the countdown remains paused.'
                 : personPresent
                   ? 'A person is detected in front of the webcam. Your countdown is running.'
                   : 'No person is detected in front of the webcam. Your remaining time is preserved.';
