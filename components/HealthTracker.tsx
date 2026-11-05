@@ -840,6 +840,7 @@ const HealthTracker: React.FC = () => {
     const next = {
       ...createDefaultChallenge(),
       startedAt: today,
+      archivedAttempts: challenge.archivedAttempts,
     };
     saveChallenge(next);
     setChallenge(next);
@@ -899,6 +900,7 @@ const HealthTracker: React.FC = () => {
     const next: NoFapChallenge = {
       ...createDefaultNoFapChallenge(),
       startedAt: today,
+      archivedAttempts: noFapChallenge.archivedAttempts,
     };
     saveNoFapChallenge(next);
     setNoFapChallenge(next);
