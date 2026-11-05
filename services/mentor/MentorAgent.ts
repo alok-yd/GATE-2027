@@ -339,7 +339,7 @@ const executeMentorTool = (name: string, args: unknown, latestUserPrompt = ''): 
     case 'get_health_tracker_summary': {
       const prompt = latestUserPrompt.toLowerCase();
       const isRelevantHealthQuestion =
-        /health|wellness|wellbeing|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|fatigue|tired|energy|recovery|supplement|vitamin|omega|magnesium|ashwagandha|sky|sudarshan|meditation|no.?fap|challenge|habit streak|missed day|broken streak/i.test(prompt);
+        /health|wellness|wellbeing|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|fatigue|tired|energy|recovery|supplement|vitamin|omega|magnesium|ashwagandha|sky|sudarshan|meditation|no.?fap|habit challenge|challenge progress|challenge status|missed.{0,12}days?|days?.{0,12}missed|broken streak|streak.{0,12}(broke|broken|interrupted)/i.test(prompt);
       if (!isRelevantHealthQuestion) {
         return {
           message: 'Health data is only available for a relevant health or wellness question. No health records were returned for this request.',
@@ -351,7 +351,7 @@ const executeMentorTool = (name: string, args: unknown, latestUserPrompt = ''): 
       const asksBothChallenges =
         /(both|all).{0,20}(challenge|habit)|challenge progress|habit challenges/i.test(prompt);
       const asksChallengeRecovery =
-        /(missed day|missed days|broken streak|streak broke|streak interrupted|challenge reset|restart.{0,15}challenge|recover.{0,20}(sky|no.?fap|challenge)|challenge.{0,20}(recover|miss|streak|broken))/i.test(prompt);
+        /(missed.{0,12}days?|days?.{0,12}missed|broken streak|streak.{0,12}(is broken|broke|broken|interrupted)|challenge reset|restart.{0,15}challenge|recover.{0,20}(sky|no.?fap|challenge)|challenge.{0,20}(recover|miss|streak|broken))/i.test(prompt);
       const includeChallenges = asksSky || asksNoFap || asksBothChallenges || asksChallengeRecovery;
       // The two habits are intentionally surfaced together when either one is
       // relevant, so the Mentor can compare status and give a coordinated plan.
@@ -619,13 +619,13 @@ const buildFallbackContext = (prompt: string) => {
   const wantsStrategies = /strategy|strategies|tips|time management|preparation plan/i.test(prompt);
   const wantsOverallAcademic = /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|how is my (?:gate )?preparation|analyse my preparation|analyze my preparation|preparation status|overall progress/i.test(prompt);
   const wantsHealth =
-    /health|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|wellness|fatigue|tired|energy|recovery|missed day|broken streak|challenge/i.test(prompt);
+    /health|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|wellness|fatigue|tired|energy|recovery|missed.{0,12}days?|days?.{0,12}missed|broken streak|streak.{0,12}(broke|broken|interrupted)|habit challenge|challenge progress|challenge status/i.test(prompt);
   const asksSky = /sky|sudarshan|meditation/i.test(prompt);
   const asksNoFap = /no.?fap/i.test(prompt);
   const asksBothChallenges =
     /(both|all).{0,20}(challenge|habit)|challenge progress|habit challenges/i.test(prompt);
   const asksChallengeRecovery =
-    /(missed day|missed days|broken streak|streak broke|streak interrupted|challenge reset|restart.{0,15}challenge|recover.{0,20}(sky|no.?fap|challenge)|challenge.{0,20}(recover|miss|streak|broken))/i.test(prompt);
+    /(missed.{0,12}days?|days?.{0,12}missed|broken streak|streak.{0,12}(is broken|broke|broken|interrupted)|challenge reset|restart.{0,15}challenge|recover.{0,20}(sky|no.?fap|challenge)|challenge.{0,20}(recover|miss|streak|broken))/i.test(prompt);
 
   return JSON.stringify(
     {
