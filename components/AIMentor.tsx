@@ -896,6 +896,17 @@ You can now ask me to search this material. I’ll include local chunk identifie
                 {item.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => void runMentorPrompt(
+                'Review my 90-day SKY Meditation Practice and 100-day No-Fap Tracker. Retrieve both current challenge records, identify any missed dates or interrupted streaks, review previous archived attempts if present, and give me a practical, non-judgmental recovery plan.',
+                mode
+              )}
+              disabled={loading}
+              className="w-full rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2.5 text-left text-sm font-bold text-indigo-800 transition hover:bg-indigo-100 disabled:opacity-60"
+            >
+              Review SKY &amp; No-Fap Challenges
+            </button>
           </div>
         </div>
 
