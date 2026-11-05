@@ -386,10 +386,18 @@ const JarvisOverlay: React.FC<JarvisOverlayProps> = ({
             </span>
             <div>
               <p className="text-[11px] font-semibold text-white">
-                {isCapturing ? 'Microphone is listening' : sessionActive ? 'Listening pauses while I respond' : 'Voice session inactive'}
+                {isCapturing
+                  ? 'Microphone is listening'
+                  : status === 'thinking' || status === 'speaking'
+                    ? 'Microphone pauses while I respond'
+                    : isError
+                      ? 'Microphone or voice service needs attention'
+                      : 'Voice session inactive'}
               </p>
               <p className="mt-0.5 text-[10px] text-slate-400">
-                {reducedMotion ? 'Reduced motion enabled' : 'Secure local microphone interaction'}
+                {reducedMotion
+                  ? 'Reduced motion enabled'
+                  : 'Input level is analysed locally while listening'}
               </p>
             </div>
           </div>
