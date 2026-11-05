@@ -1,8 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Mic } from 'lucide-react';
 import { sendJarvisMessage } from '../services/assistant/JarvisSession';
-
-type VoiceStatus = 'idle' | 'listening' | 'thinking' | 'speaking' | 'unsupported' | 'error';
+import JarvisOverlay, { JarvisVoiceStatus } from './assistant/JarvisOverlay';
 
 type SpeechRecognitionResultLike = {
   isFinal: boolean;
@@ -45,21 +44,36 @@ const cleanForSpeech = (value: string) =>
     .trim();
 
 const VoiceAssistant: React.FC = () => {
-  const [status, setStatus] = useState<VoiceStatus>('idle');
+  const [status, setStatus] = useState<JarvisVoiceStatus>('idle');
   const [sessionActive, setSessionActive] = useState(false);
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [inputLevel, setInputLevel] = useState(0);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [reducedMotion, setReducedMotion] = useState(false);
+
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioFrameRef = useRef<number | null>(null);
   const sessionActiveRef = useRef(false);
   const processingRef = useRef(false);
   const mountedRef = useRef(true);
-  const statusRef = useRef<VoiceStatus>('idle');
+  const statusRef = useRef<JarvisVoiceStatus>('idle');
   const retryDelayRef = useRef(500);
+  const meterGenerationRef = useRef(0);
 
-  const updateStatus = (next: VoiceStatus) => {
+  const updateStatus = (next: JarvisVoiceStatus) => {
     statusRef.current = next;
     if (mountedRef.current) setStatus(next);
+  };
+
+  const setSession = (active: boolean) => {
+    sessionActiveRef.current = active;
+    if (mountedRef.current) setSessionActive(active);
   };
 
   const clearRestartTimer = () => {
@@ -69,81 +83,140 @@ const VoiceAssistant: React.FC = () => {
     }
   };
 
-  const setSession = (active: boolean) => {
-    sessionActiveRef.current = active;
-    if (mountedRef.current) setSessionActive(active);
+  /**
+   * Microphone amplitude is measured locally only while SpeechRecognition is
+   * listening. No audio is recorded, uploaded or retained. If getUserMedia or
+   * Web Audio is unavailable, the orb falls back to state-based animation.
+   */
+  const stopMicrophoneMeter = () => {
+    meterGenerationRef.current += 1;
+
+    if (audioFrameRef.current !== null) {
+      window.cancelAnimationFrame(audioFrameRef.current);
+      audioFrameRef.current = null;
+    }
+
+    audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    audioStreamRef.current = null;
+    analyserRef.current = null;
+
+    const context = audioContextRef.current;
+    audioContextRef.current = null;
+    if (context && context.state !== 'closed') {
+      void context.close().catch(() => undefined);
+    }
+
+    if (mountedRef.current) setInputLevel(0);
   };
 
-  const startListening = () => {
+  const startMicrophoneMeter = async () => {
     if (
       !sessionActiveRef.current ||
-      processingRef.current ||
-      recognitionRef.current
+      statusRef.current !== 'listening' ||
+      audioStreamRef.current
     ) {
       return;
     }
 
-    const SpeechRecognition = getSpeechRecognition();
-    if (!SpeechRecognition) {
-      setSession(false);
-      updateStatus('unsupported');
-      return;
-    }
+    const generation = ++meterGenerationRef.current;
+    if (!navigator.mediaDevices?.getUserMedia) return;
 
-    clearRestartTimer();
+    let stream: MediaStream | null = null;
+    let context: AudioContext | null = null;
 
     try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'en-IN';
-      recognition.interimResults = false;
-      // Keep the browser recognizer open for a conversational session. It is
-      // paused during model generation and speech playback to prevent echo.
-      recognition.continuous = true;
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
 
-      recognition.onresult = (event) => {
-        let transcript = '';
-        for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          const result = event.results[index];
-          if (result?.isFinal) transcript += result[0]?.transcript || '';
-        }
-        const finalText = transcript.trim();
-        if (finalText && !processingRef.current) {
-          retryDelayRef.current = 500;
-          void handleRecognisedSpeech(finalText);
-        }
-      };
+      if (
+        generation !== meterGenerationRef.current ||
+        !sessionActiveRef.current ||
+        statusRef.current !== 'listening'
+      ) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
 
-      recognition.onerror = (event) => {
-        if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
-          setSession(false);
-          updateStatus('error');
+      const AudioContextConstructor =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+      if (!AudioContextConstructor) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      context = new AudioContextConstructor();
+      if (context.state === 'suspended') await context.resume();
+
+      if (
+        generation !== meterGenerationRef.current ||
+        !sessionActiveRef.current ||
+        statusRef.current !== 'listening'
+      ) {
+        stream.getTracks().forEach((track) => track.stop());
+        if (context.state !== 'closed') void context.close();
+        return;
+      }
+
+      const source = context.createMediaStreamSource(stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.78;
+      source.connect(analyser);
+
+      audioStreamRef.current = stream;
+      audioContextRef.current = context;
+      analyserRef.current = analyser;
+
+      const samples = new Uint8Array(analyser.fftSize);
+      let lastUiUpdate = 0;
+
+      const sampleMicrophone = (now: number) => {
+        if (
+          generation !== meterGenerationRef.current ||
+          !sessionActiveRef.current ||
+          statusRef.current !== 'listening' ||
+          !analyserRef.current
+        ) {
           return;
         }
 
-        // no-speech and transient network errors are recoverable. The browser
-        // fires onend afterwards; that handler restarts while the session is on.
-        if (event?.error && event.error !== 'no-speech' && event.error !== 'aborted') {
-          retryDelayRef.current = Math.min(5000, Math.max(800, retryDelayRef.current * 1.5));
-          updateStatus('error');
+        analyserRef.current.getByteTimeDomainData(samples);
+        let sumSquares = 0;
+        for (let index = 0; index < samples.length; index += 1) {
+          const normalized = (samples[index] - 128) / 128;
+          sumSquares += normalized * normalized;
         }
+
+        const rms = Math.sqrt(sumSquares / samples.length);
+        const normalizedLevel = Math.min(1, Math.max(0, rms * 4.2));
+
+        // Cap React updates to approximately 15 per second. The browser's
+        // animation remains smooth through CSS transforms between updates.
+        if (now - lastUiUpdate >= 66) {
+          lastUiUpdate = now;
+          if (mountedRef.current) setInputLevel(normalizedLevel);
+        }
+
+        audioFrameRef.current = window.requestAnimationFrame(sampleMicrophone);
       };
 
-      recognition.onend = () => {
-        if (recognitionRef.current === recognition) recognitionRef.current = null;
-        if (sessionActiveRef.current && !processingRef.current) {
-          scheduleListeningRestart(retryDelayRef.current);
-        }
-      };
-
-      recognitionRef.current = recognition;
-      updateStatus('listening');
-      recognition.start();
+      audioFrameRef.current = window.requestAnimationFrame(sampleMicrophone);
     } catch (error) {
-      recognitionRef.current = null;
-      console.warn('[J.A.R.V.I.S.] Could not start speech recognition.', error);
-      retryDelayRef.current = Math.min(5000, retryDelayRef.current + 700);
-      updateStatus('error');
-      if (sessionActiveRef.current) scheduleListeningRestart(retryDelayRef.current);
+      // The voice-recognition engine remains usable even when an additional
+      // Web Audio analyser cannot be opened. Do not block the conversation.
+      stream?.getTracks().forEach((track) => track.stop());
+      if (context && context.state !== 'closed') void context.close();
+      if (generation === meterGenerationRef.current) {
+        console.info('[J.A.R.V.I.S.] Audio-reactive input meter is unavailable; using state animation.', error);
+      }
     }
   };
 
@@ -157,9 +230,84 @@ const VoiceAssistant: React.FC = () => {
     }, delay);
   };
 
+  const startListening = () => {
+    if (!sessionActiveRef.current || processingRef.current || recognitionRef.current) return;
+
+    const SpeechRecognition = getSpeechRecognition();
+    if (!SpeechRecognition) {
+      setSession(false);
+      stopMicrophoneMeter();
+      setErrorMessage('Speech recognition is not supported in this browser. Try the latest version of Chrome or Edge.');
+      updateStatus('unsupported');
+      return;
+    }
+
+    clearRestartTimer();
+    setErrorMessage('');
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-IN';
+      recognition.interimResults = false;
+      recognition.continuous = true;
+
+      recognition.onresult = (event) => {
+        let transcript = '';
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const result = event.results[index];
+          if (result?.isFinal) transcript += result[0]?.transcript || '';
+        }
+
+        const finalText = transcript.trim();
+        if (finalText && !processingRef.current) {
+          retryDelayRef.current = 500;
+          void handleRecognisedSpeech(finalText);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
+          setSession(false);
+          stopMicrophoneMeter();
+          setErrorMessage('Microphone permission was denied. Allow microphone access in your browser settings, then retry.');
+          updateStatus('error');
+          return;
+        }
+
+        if (event?.error && event.error !== 'no-speech' && event.error !== 'aborted') {
+          retryDelayRef.current = Math.min(5000, Math.max(800, retryDelayRef.current * 1.5));
+          setErrorMessage('The speech service paused unexpectedly. J.A.R.V.I.S. is attempting to reconnect.');
+          updateStatus('error');
+        }
+      };
+
+      recognition.onend = () => {
+        if (recognitionRef.current === recognition) recognitionRef.current = null;
+        stopMicrophoneMeter();
+        if (sessionActiveRef.current && !processingRef.current) {
+          scheduleListeningRestart(retryDelayRef.current);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      updateStatus('listening');
+      recognition.start();
+      void startMicrophoneMeter();
+    } catch (error) {
+      recognitionRef.current = null;
+      stopMicrophoneMeter();
+      console.warn('[J.A.R.V.I.S.] Could not start speech recognition.', error);
+      setErrorMessage('Could not start microphone capture. Check browser permission and try again.');
+      retryDelayRef.current = Math.min(5000, retryDelayRef.current + 700);
+      updateStatus('error');
+      if (sessionActiveRef.current) scheduleListeningRestart(retryDelayRef.current);
+    }
+  };
+
   const finishAssistantTurn = () => {
     utteranceRef.current = null;
     processingRef.current = false;
+
     if (sessionActiveRef.current) {
       scheduleListeningRestart(400);
     } else {
@@ -200,10 +348,12 @@ const VoiceAssistant: React.FC = () => {
     processingRef.current = true;
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
+    stopMicrophoneMeter();
+
     try {
       recognition?.stop();
     } catch {
-      // The recognizer may already have stopped after emitting its final result.
+      // The recognizer may already have stopped after emitting a final result.
     }
 
     window.speechSynthesis?.cancel();
@@ -223,13 +373,13 @@ const VoiceAssistant: React.FC = () => {
       }
 
       if (!result.toolCalling) {
-        console.info(
-          '[J.A.R.V.I.S.] Read-only fallback answered because the tool-calling provider was unavailable.'
-        );
+        console.info('[J.A.R.V.I.S.] Read-only fallback answered because the tool-calling provider was unavailable.');
       }
+
       speakResponse(result.content);
     } catch (error) {
       abortControllerRef.current = null;
+
       if (error instanceof DOMException && error.name === 'AbortError') {
         processingRef.current = false;
         updateStatus('idle');
@@ -238,13 +388,31 @@ const VoiceAssistant: React.FC = () => {
       }
 
       console.error('[J.A.R.V.I.S.] Voice response failed.', error);
+      setErrorMessage('I could not reach the AI service. Check your connection; you can retry the voice session.');
       if (sessionActiveRef.current) {
-        speakResponse('I could not reach my intelligence service just now. Please try asking again.');
+        speakResponse('I could not reach my intelligence service just now. Please check your connection and try again.');
       } else {
         processingRef.current = false;
-        updateStatus('idle');
+        updateStatus('error');
       }
     }
+  };
+
+  const startSession = () => {
+    if (sessionActiveRef.current) return;
+
+    const SpeechRecognition = getSpeechRecognition();
+    if (!SpeechRecognition) {
+      setErrorMessage('Speech recognition is not supported in this browser. Try the latest version of Chrome or Edge.');
+      updateStatus('unsupported');
+      return;
+    }
+
+    retryDelayRef.current = 500;
+    setErrorMessage('');
+    setSession(true);
+    updateStatus('listening');
+    startListening();
   };
 
   const stopSession = () => {
@@ -262,42 +430,54 @@ const VoiceAssistant: React.FC = () => {
 
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
+    stopMicrophoneMeter();
     window.speechSynthesis?.cancel();
     utteranceRef.current = null;
     processingRef.current = false;
+    setErrorMessage('');
     updateStatus('idle');
   };
 
-  const toggleSession = () => {
-    if (sessionActiveRef.current) {
-      stopSession();
-      return;
-    }
+  const handleFloatingMicClick = () => {
+    setOverlayOpen(true);
+    if (!sessionActiveRef.current) startSession();
+  };
 
-    const SpeechRecognition = getSpeechRecognition();
-    if (!SpeechRecognition) {
-      updateStatus('unsupported');
-      return;
-    }
+  const handleMinimize = useCallback(() => {
+    // Hiding the holographic overlay must not end the live voice session.
+    setOverlayOpen(false);
+  }, []);
 
-    retryDelayRef.current = 500;
-    setSession(true);
-    updateStatus('listening');
-    startListening();
+  const handleEndConversation = () => {
+    stopSession();
+  };
+
+  const handleStartConversation = () => {
+    startSession();
   };
 
   useEffect(() => {
     mountedRef.current = true;
+
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updateReducedMotion = () => setReducedMotion(mediaQuery.matches);
+    updateReducedMotion();
+    mediaQuery.addEventListener?.('change', updateReducedMotion);
+
     return () => {
       mountedRef.current = false;
       sessionActiveRef.current = false;
       clearRestartTimer();
+
       recognitionRef.current?.abort?.();
       recognitionRef.current = null;
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
+
+      stopMicrophoneMeter();
       window.speechSynthesis?.cancel();
       utteranceRef.current = null;
+      mediaQuery.removeEventListener?.('change', updateReducedMotion);
     };
   }, []);
 
@@ -312,45 +492,40 @@ const VoiceAssistant: React.FC = () => {
             ? 'bg-rose-600 ring-4 ring-rose-200'
             : 'bg-indigo-600 ring-4 ring-indigo-200 hover:bg-indigo-700';
 
-  const title =
-    status === 'listening'
-      ? 'J.A.R.V.I.S. is listening — click to stop'
-      : status === 'thinking'
-        ? 'J.A.R.V.I.S. is processing — click to stop'
-        : status === 'speaking'
-          ? 'J.A.R.V.I.S. is replying — click to interrupt and stop'
-          : status === 'unsupported'
-            ? 'Speech recognition is not supported in this browser'
-            : status === 'error'
-              ? 'Microphone or speech service needs attention — click to retry'
-              : 'Talk to J.A.R.V.I.S.';
+  const buttonTitle =
+    sessionActive
+      ? 'Open J.A.R.V.I.S. — voice conversation is active'
+      : 'Open J.A.R.V.I.S. and start a voice conversation';
 
   return (
-    <div className="fixed bottom-6 right-6 z-50">
-      <button
-        type="button"
-        onClick={toggleSession}
-        aria-label={sessionActive ? 'Stop J.A.R.V.I.S. voice conversation' : 'Start J.A.R.V.I.S. voice conversation'}
-        aria-pressed={sessionActive}
-        title={title}
-        className={`flex h-14 w-14 items-center justify-center rounded-full border-2 border-white text-white shadow-2xl transition-all duration-300 hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-4 focus-visible:ring-indigo-300 ${buttonStateClass}`}
-      >
-        <Mic className="h-6 w-6" />
-        <span className="sr-only">
-          {status === 'listening'
-            ? 'Listening continuously. Click to stop.'
-            : status === 'thinking'
-              ? 'Processing your request.'
-              : status === 'speaking'
-                ? 'Speaking a response.'
-                : status === 'unsupported'
-                  ? 'Speech recognition is unavailable in this browser.'
-                  : status === 'error'
-                    ? 'Voice assistant needs attention.'
-                    : 'Start voice conversation.'}
-        </span>
-      </button>
-    </div>
+    <>
+      <JarvisOverlay
+        open={overlayOpen}
+        status={status}
+        sessionActive={sessionActive}
+        inputLevel={inputLevel}
+        errorMessage={errorMessage}
+        reducedMotion={reducedMotion}
+        onMinimize={handleMinimize}
+        onEndConversation={handleEndConversation}
+        onStartConversation={handleStartConversation}
+      />
+
+      {!overlayOpen && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <button
+            type="button"
+            onClick={handleFloatingMicClick}
+            aria-label="Open J.A.R.V.I.S. voice assistant"
+            aria-pressed={sessionActive}
+            title={buttonTitle}
+            className={`flex h-14 w-14 items-center justify-center rounded-full border-2 border-white text-white shadow-2xl transition-all duration-300 hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-4 focus-visible:ring-indigo-300 ${buttonStateClass}`}
+          >
+            <Mic className="h-6 w-6" />
+          </button>
+        </div>
+      )}
+    </>
   );
 };
 
