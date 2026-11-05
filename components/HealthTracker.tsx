@@ -845,6 +845,36 @@ const HealthTracker: React.FC = () => {
     setChallenge(next);
   };
 
+  const resetChallenge = () => {
+    if (!window.confirm(
+      'Reset SKY Meditation Practice and start a fresh 90-day run today? Your current attempt summary will be archived; its daily check-ins will no longer count toward the new run.'
+    )) return;
+
+    const archivedAttempts = challenge.startedAt
+      ? [
+          ...challenge.archivedAttempts,
+          {
+            startedAt: challenge.startedAt,
+            resetAt: today,
+            targetDays: challenge.targetDays,
+            completedDays: challengeStats.completedDays,
+            missedDays: challengeStats.missedDays,
+            bestStreak: challengeStats.bestStreak,
+          },
+        ].slice(-10)
+      : challenge.archivedAttempts;
+
+    const freshChallenge: MeditationChallenge = {
+      ...createDefaultChallenge(),
+      startedAt: today,
+      dailyTargetMinutes: challenge.dailyTargetMinutes,
+      archivedAttempts,
+    };
+    saveChallenge(freshChallenge);
+    setChallenge(freshChallenge);
+    setMeditationForm({ minutes: String(freshChallenge.dailyTargetMinutes), note: '' });
+  };
+
   const saveMeditationLog = (event: React.FormEvent) => {
     event.preventDefault();
     const minutes = Math.max(0, Math.round(numberOrDefault(meditationForm.minutes, 0)));
@@ -872,6 +902,35 @@ const HealthTracker: React.FC = () => {
     };
     saveNoFapChallenge(next);
     setNoFapChallenge(next);
+  };
+
+  const resetNoFapChallenge = () => {
+    if (!window.confirm(
+      'Reset the No-Fap Tracker and start a fresh 100-day run today? Your current attempt summary will be archived; its daily check-ins will no longer count toward the new run.'
+    )) return;
+
+    const archivedAttempts = noFapChallenge.startedAt
+      ? [
+          ...noFapChallenge.archivedAttempts,
+          {
+            startedAt: noFapChallenge.startedAt,
+            resetAt: today,
+            targetDays: 100,
+            completedDays: noFapStats.completedDays,
+            missedDays: noFapStats.missedDays,
+            bestStreak: noFapStats.bestStreak,
+          },
+        ].slice(-10)
+      : noFapChallenge.archivedAttempts;
+
+    const freshChallenge: NoFapChallenge = {
+      ...createDefaultNoFapChallenge(),
+      startedAt: today,
+      archivedAttempts,
+    };
+    saveNoFapChallenge(freshChallenge);
+    setNoFapChallenge(freshChallenge);
+    setNoFapNote('');
   };
 
   const saveNoFapCheckIn = (event: React.FormEvent) => {
