@@ -85,8 +85,9 @@ const VoiceAssistant: React.FC = () => {
 
   /**
    * Microphone amplitude is measured locally only while SpeechRecognition is
-   * listening. No audio is recorded, uploaded or retained. If getUserMedia or
-   * Web Audio is unavailable, the orb falls back to state-based animation.
+   * listening. The analyser does not record or store audio. Speech transcription
+   * continues to use the existing browser SpeechRecognition implementation.
+   * If getUserMedia or Web Audio is unavailable, animation falls back to state.
    */
   const stopMicrophoneMeter = () => {
     meterGenerationRef.current += 1;
