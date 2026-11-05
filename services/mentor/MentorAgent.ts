@@ -84,7 +84,7 @@ const mentorTools: FunctionDeclaration[] = [
   {
     name: 'get_health_tracker_summary',
     description:
-      'Read Health Tracker data: latest/manual health entries and recent averages, health/cognitive-readiness analysis, study mode, health alerts and action items, supplement check-in logs, 90-day SKY meditation progress and 100-day No-Fap progress. Call only when the user asks about health, sleep, stress, mood, activity, hydration, wellness, study readiness, supplements, SKY practice or No-Fap challenge. Challenge records are self-reported.',
+      'Read Health Tracker data: latest/manual health entries and recent averages, health/cognitive-readiness analysis, study mode, health alerts and action items, supplement check-in logs, 90-day SKY meditation progress and 100-day No-Fap progress. Call when the user asks about health/wellness or either habit challenge, including missed days, broken streaks, resets or recovery. When either challenge is relevant, retrieve BOTH challenge records so you can compare their current status, exact missed dates, streak interruption and archived attempt summaries. Challenge records are self-reported; private free-text notes are excluded.',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -339,7 +339,7 @@ const executeMentorTool = (name: string, args: unknown, latestUserPrompt = ''): 
     case 'get_health_tracker_summary': {
       const prompt = latestUserPrompt.toLowerCase();
       const isRelevantHealthQuestion =
-        /health|wellness|wellbeing|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|fatigue|tired|energy|recovery|supplement|vitamin|omega|magnesium|ashwagandha|sky|sudarshan|meditation|no.?fap|challenge progress/i.test(prompt);
+        /health|wellness|wellbeing|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|fatigue|tired|energy|recovery|supplement|vitamin|omega|magnesium|ashwagandha|sky|sudarshan|meditation|no.?fap|challenge|habit streak|missed day|broken streak/i.test(prompt);
       if (!isRelevantHealthQuestion) {
         return {
           message: 'Health data is only available for a relevant health or wellness question. No health records were returned for this request.',
@@ -349,18 +349,13 @@ const executeMentorTool = (name: string, args: unknown, latestUserPrompt = ''): 
       const asksSky = /sky|sudarshan|meditation/i.test(prompt);
       const asksNoFap = /no.?fap/i.test(prompt);
       const asksBothChallenges =
-        !asksSky &&
-        !asksNoFap &&
         /(both|all).{0,20}(challenge|habit)|challenge progress|habit challenges/i.test(prompt);
-      const includeChallenges = asksSky || asksNoFap || asksBothChallenges;
-      const challengeSelection =
-        asksSky && asksNoFap
-          ? 'both'
-          : asksSky
-            ? 'sky'
-            : asksNoFap
-              ? 'noFap'
-              : 'both';
+      const asksChallengeRecovery =
+        /(missed day|missed days|broken streak|streak broke|streak interrupted|challenge reset|restart.{0,15}challenge|recover.{0,20}(sky|no.?fap|challenge)|challenge.{0,20}(recover|miss|streak|broken))/i.test(prompt);
+      const includeChallenges = asksSky || asksNoFap || asksBothChallenges || asksChallengeRecovery;
+      // The two habits are intentionally surfaced together when either one is
+      // relevant, so the Mentor can compare status and give a coordinated plan.
+      const challengeSelection = 'both';
       const includeSupplements =
         /supplement|vitamin|omega|magnesium|ashwagandha/i.test(prompt);
 
@@ -555,8 +550,10 @@ NON-NEGOTIABLE DATA INTEGRITY
 - For "what should I revise?" or "which topics are weak?", use Revision, PYQ Execution, Test Performance, Roadmap and Lecture Tracker evidence. Do not infer that unmarked revision tasks were never studied.
 - When the user explicitly asks you to create a study plan in Lecture Tracker, first analyse the same relevant current sections, then create its individual tasks through create_lecture_tracker_task. Never create tasks for a recommendation-only request.
 - For AI Analytics questions (predicted AIR, expected marks, readiness dimensions, scenarios, historical college compatibility, what-if simulation, or saved prediction history), call get_ai_analytics_dashboard and use its exact returned fields.
-- For Health Tracker questions (sleep, heart rate, SpO2, steps, stress, hydration, mood, symptoms, cognitive readiness, study mode, SKY practice, No-Fap challenge or supplement check-ins), call get_health_tracker_summary. Do not include health data in unrelated academic answers.
-- Do not retrieve SKY or No-Fap challenge details unless the user explicitly asks about that practice/challenge (or asks for all habit challenges). Retrieve supplement check-ins only when supplements are relevant to the question.
+- For Health Tracker questions (sleep, heart rate, SpO2, steps, stress, hydration, mood, symptoms, cognitive readiness, study mode, SKY practice, No-Fap challenge, missed days, broken streaks or supplement check-ins), call get_health_tracker_summary. Do not include health data in unrelated academic answers.
+- When the user asks about either SKY or No-Fap, a missed day, an interrupted streak, or challenge recovery, retrieve BOTH challenge records. Use the returned missedDates, missedDays, lastMissedDate, streakInterrupted, currentStreak and previousAttempts fields; never infer a missed date that is not recorded by the tool.
+- If missed days or an interrupted streak are recorded, explain the exact tracker status in a calm, non-judgmental way. Preserve earlier completions in your explanation, give a small next-day recovery action, and remind the user that the current challenge can continue. Do not tell the user to falsify/backfill a check-in. Only recommend a reset when the user asks about restarting or resetting.
+- Do not retrieve challenge details for unrelated academic questions. Retrieve supplement check-ins only when supplements are relevant to the question.
 - Treat tool results as the only source of application statistics. Never infer or invent mock marks, streaks, subject completion, PYQ counts, accuracy, test history, dates or pending tasks.
 - If a data field is missing, say "not recorded" or "not available"; never turn missing data into zero.
 - Distinguish measured PYQ accuracy (correct/attempted) from the legacy tracker's derived subject-readiness indicator. The latter is a proxy, not actual test accuracy.
@@ -622,13 +619,13 @@ const buildFallbackContext = (prompt: string) => {
   const wantsStrategies = /strategy|strategies|tips|time management|preparation plan/i.test(prompt);
   const wantsOverallAcademic = /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|how is my (?:gate )?preparation|analyse my preparation|analyze my preparation|preparation status|overall progress/i.test(prompt);
   const wantsHealth =
-    /health|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|wellness|fatigue|tired|energy|recovery/i.test(prompt);
+    /health|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|wellness|fatigue|tired|energy|recovery|missed day|broken streak|challenge/i.test(prompt);
   const asksSky = /sky|sudarshan|meditation/i.test(prompt);
   const asksNoFap = /no.?fap/i.test(prompt);
   const asksBothChallenges =
-    !asksSky &&
-    !asksNoFap &&
     /(both|all).{0,20}(challenge|habit)|challenge progress|habit challenges/i.test(prompt);
+  const asksChallengeRecovery =
+    /(missed day|missed days|broken streak|streak broke|streak interrupted|challenge reset|restart.{0,15}challenge|recover.{0,20}(sky|no.?fap|challenge)|challenge.{0,20}(recover|miss|streak|broken))/i.test(prompt);
 
   return JSON.stringify(
     {
@@ -645,9 +642,8 @@ const buildFallbackContext = (prompt: string) => {
       ...(wantsHealth
         ? {
             healthTracker: getHealthTrackerMentorContext({
-              includeChallenges: asksSky || asksNoFap || asksBothChallenges,
-              challengeSelection:
-                asksSky && asksNoFap ? 'both' : asksSky ? 'sky' : asksNoFap ? 'noFap' : 'both',
+              includeChallenges: asksSky || asksNoFap || asksBothChallenges || asksChallengeRecovery,
+              challengeSelection: 'both',
               includeSupplements: /supplement|vitamin|omega|magnesium|ashwagandha/i.test(prompt),
             }),
           }
