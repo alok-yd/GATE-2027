@@ -49,11 +49,21 @@ interface MeditationLogRecord {
   minutes: number;
 }
 
+interface ChallengeAttemptRecord {
+  startedAt: string;
+  resetAt: string;
+  targetDays: number;
+  completedDays: number;
+  missedDays: number;
+  bestStreak: number;
+}
+
 interface ChallengeRecord {
   startedAt: string | null;
   targetDays?: number;
   dailyTargetMinutes?: number;
   logs?: Record<string, MeditationLogRecord | { date: string; completed: boolean; note?: string }>;
+  archivedAttempts?: ChallengeAttemptRecord[];
 }
 
 interface SupplementLogRecord {
@@ -99,6 +109,7 @@ const getChallengeProgress = (
 ) => {
   const logs = challenge?.logs || {};
   const startedAt = typeof challenge?.startedAt === 'string' ? challenge.startedAt : null;
+  const previousAttempts = challenge?.archivedAttempts?.slice(-5) || [];
   const target = targetDays;
   if (!startedAt) {
     return {
@@ -109,26 +120,46 @@ const getChallengeProgress = (
       challengeDay: 0,
       completedDays: 0,
       missedDays: 0,
+      missedDates: [],
+      lastMissedDate: null,
+      streakInterrupted: false,
       currentStreak: 0,
       bestStreak: 0,
       progressPercent: 0,
       ...(includeMinutes ? { dailyTargetMinutes: Number(challenge?.dailyTargetMinutes || 20) } : {}),
       recentCheckIns: [],
       todayCheckIn: null,
+      previousAttempts,
+      recordBasis: 'Self-reported daily check-ins stored in this browser; not independently verified.',
     };
   }
 
   const today = getTodayKey();
   const elapsedDays = Math.min(target, daysBetween(startedAt, today) + 1);
   const completedDates = Object.values(logs)
-    .filter((log) => Boolean(log?.completed) && typeof log.date === 'string')
+    .filter((log) => Boolean(log?.completed) && typeof log.date === 'string' && log.date >= startedAt && log.date <= today)
     .map((log) => log.date)
     .sort();
   const completedDays = completedDates.length;
 
+  // A day is counted as missed only after it has ended. An unchecked current
+  // day is still in progress and must not be reported as a missed day.
+  const pastDaysElapsed = Math.max(0, Math.min(target, daysBetween(startedAt, today)));
+  const missedDates = Array.from({ length: pastDaysElapsed }, (_, index) =>
+    dayKey(dateTime(startedAt) + index * 86400000)
+  ).filter((date) => !logs[date]?.completed);
+
+  // Until today's check-in is complete, preserve yesterday's streak. This
+  // avoids labelling an unsubmitted current day as a broken streak.
+  const todayLog = logs[today];
+  const streakAnchor = todayLog?.completed ? today : dayKey(dateTime(today) - 86400000);
+  const anchorElapsedDays =
+    streakAnchor >= startedAt
+      ? Math.min(elapsedDays, daysBetween(startedAt, streakAnchor) + 1)
+      : 0;
   let currentStreak = 0;
-  for (let index = 0; index < elapsedDays; index += 1) {
-    const checkDate = dayKey(dateTime(today) - index * 86400000);
+  for (let index = 0; index < anchorElapsedDays; index += 1) {
+    const checkDate = dayKey(dateTime(streakAnchor) - index * 86400000);
     if (logs[checkDate]?.completed) currentStreak += 1;
     else break;
   }
@@ -146,7 +177,7 @@ const getChallengeProgress = (
   }
 
   const recentCheckIns = Object.values(logs)
-    .filter((log) => typeof log.date === 'string')
+    .filter((log) => typeof log.date === 'string' && log.date >= startedAt && log.date <= today)
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-14)
     .map((log) => ({
@@ -155,15 +186,23 @@ const getChallengeProgress = (
       ...(includeMinutes ? { minutes: Number((log as MeditationLogRecord).minutes || 0) } : {}),
     }));
 
-  const todayLog = logs[today];
+  const status =
+    elapsedDays >= target
+      ? 'Challenge window completed'
+      : missedDates.length > 0
+        ? 'Missed days recorded — recovery recommended'
+        : 'On track';
   return {
     started: true,
-    status: elapsedDays >= target ? 'Challenge window completed' : 'In progress',
+    status,
     startedAt,
     targetDays: target,
     challengeDay: elapsedDays,
     completedDays,
-    missedDays: Math.max(0, elapsedDays - completedDays),
+    missedDays: missedDates.length,
+    missedDates: missedDates.slice(-14),
+    lastMissedDate: missedDates[missedDates.length - 1] || null,
+    streakInterrupted: missedDates.length > 0,
     currentStreak,
     bestStreak,
     progressPercent: Math.round((completedDays / target) * 100),
@@ -176,6 +215,7 @@ const getChallengeProgress = (
           ...(includeMinutes ? { minutes: Number((todayLog as MeditationLogRecord).minutes || 0) } : {}),
         }
       : null,
+    previousAttempts,
     recordBasis: 'Self-reported daily check-ins stored in this browser; not independently verified.',
   };
 };
