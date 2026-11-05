@@ -85,7 +85,6 @@ const VoiceAssistant: React.FC = () => {
   const panelOpenRef = useRef(false);
   const continuousRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const draftRef = useRef<HTMLInputElement | null>(null);
 
   const updateStatus = (next: VoiceStatus) => {
     statusRef.current = next;
@@ -442,7 +441,6 @@ const VoiceAssistant: React.FC = () => {
 
             <form onSubmit={handleSubmit} className="flex items-center gap-2">
               <input
-                ref={draftRef}
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 placeholder="Ask J.A.R.V.I.S. anything…"
