@@ -418,7 +418,7 @@ const searchPreviousMentorConversations = (query: string) => {
   }
 
   const activeConversationId = getActiveMentorConversationId();
-  const terms = cleanQuery.split(/\\s+/).filter((term) => term.length >= 2);
+  const terms = cleanQuery.split(/\s+/).filter((term) => term.length >= 2);
   const matches = loadMentorConversations()
     .filter((conversation) => conversation.id !== activeConversationId)
     .map((conversation) => {
