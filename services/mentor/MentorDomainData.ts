@@ -97,7 +97,7 @@ const average = (values: number[]): number | null => {
 };
 
 const getTodayKey = () => new Date().toISOString().slice(0, 10);
-const dateTime = (date: string) => new Date(`${date}T00:00:00`).getTime();
+const dateTime = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
 const dayKey = (time: number) => new Date(time).toISOString().slice(0, 10);
 const daysBetween = (from: string, to: string) =>
   Math.max(0, Math.floor((dateTime(to) - dateTime(from)) / 86400000));
