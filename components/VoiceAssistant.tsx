@@ -60,6 +60,7 @@ const VoiceAssistant: React.FC = () => {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioFrameRef = useRef<number | null>(null);
   const sessionActiveRef = useRef(false);
+  const overlayOpenRef = useRef(false);
   const processingRef = useRef(false);
   const mountedRef = useRef(true);
   const statusRef = useRef<JarvisVoiceStatus>('idle');
@@ -293,7 +294,10 @@ const VoiceAssistant: React.FC = () => {
       recognitionRef.current = recognition;
       updateStatus('listening');
       recognition.start();
-      void startMicrophoneMeter();
+      // Run the visual meter only while the orb is visible. If the user
+      // minimizes the overlay, SpeechRecognition continues but the analyser
+      // stream and animation sampling are released.
+      if (overlayOpenRef.current) void startMicrophoneMeter();
     } catch (error) {
       recognitionRef.current = null;
       stopMicrophoneMeter();
@@ -440,12 +444,21 @@ const VoiceAssistant: React.FC = () => {
   };
 
   const handleFloatingMicClick = () => {
+    overlayOpenRef.current = true;
     setOverlayOpen(true);
-    if (!sessionActiveRef.current) startSession();
+    if (!sessionActiveRef.current) {
+      startSession();
+    } else if (statusRef.current === 'listening') {
+      void startMicrophoneMeter();
+    }
   };
 
   const handleMinimize = useCallback(() => {
     // Hiding the holographic overlay must not end the live voice session.
+    // Only the visual analyser is released while the browser recognizer keeps
+    // listening, so no expensive visual sampling runs behind the app.
+    overlayOpenRef.current = false;
+    stopMicrophoneMeter();
     setOverlayOpen(false);
   }, []);
 
@@ -468,6 +481,7 @@ const VoiceAssistant: React.FC = () => {
     return () => {
       mountedRef.current = false;
       sessionActiveRef.current = false;
+      overlayOpenRef.current = false;
       clearRestartTimer();
 
       recognitionRef.current?.abort?.();
