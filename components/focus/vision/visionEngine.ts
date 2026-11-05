@@ -260,6 +260,9 @@ export class VisionEngine {
         'MediaPipe face model'
       );
     } catch (error) {
+      // Clear a failed or timed-out module promise so a later camera retry can
+      // attempt to load the model again instead of reusing a rejected promise.
+      mediaPipeModulePromise = null;
       console.warn(
         '[AI Focus] MediaPipe could not be initialised. Falling back to another local detector.',
         error
