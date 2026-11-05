@@ -8,6 +8,47 @@ interface NativeFaceDetectorLike {
   detect(source: CanvasImageSource): Promise<unknown[]>;
 }
 
+interface MediaPipeDetection {
+  categories?: Array<{ score?: number }>;
+  score?: number;
+}
+
+interface MediaPipeDetectionResult {
+  detections?: MediaPipeDetection[];
+}
+
+interface MediaPipeFaceDetectorLike {
+  detectForVideo(source: CanvasImageSource, timestampMs: number): MediaPipeDetectionResult;
+  close?: () => void;
+}
+
+interface MediaPipeVisionModule {
+  FilesetResolver: {
+    forVisionTasks(wasmRoot: string): Promise<unknown>;
+  };
+  FaceDetector: {
+    createFromOptions(
+      vision: unknown,
+      options: {
+        baseOptions: { modelAssetPath: string; delegate: 'CPU' };
+        runningMode: 'VIDEO';
+        minDetectionConfidence: number;
+        minSuppressionThreshold: number;
+      }
+    ): Promise<MediaPipeFaceDetectorLike>;
+  };
+}
+
+const MEDIAPIPE_VERSION = '1.2.2';
+const MEDIAPIPE_MODULE_URL =
+  `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/vision_bundle.mjs`;
+const MEDIAPIPE_WASM_URL =
+  `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
+const MEDIAPIPE_FACE_MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite';
+
+let mediaPipeModulePromise: Promise<MediaPipeVisionModule> | null = null;
+
 /**
  * Local webcam face-presence detector.
  *
@@ -28,6 +69,8 @@ export class VisionEngine {
   private consecutiveBlankFrames = 0;
   private cameraFailureNotified = false;
   private faceDetector: NativeFaceDetectorLike | null = null;
+  private mediaPipeFaceDetector: MediaPipeFaceDetectorLike | null = null;
+  private lastMediaPipeTimestamp = 0;
 
   private callbacks = new Set<VisionCallback>();
   private failureCallbacks = new Set<CameraFailureCallback>();
@@ -83,14 +126,14 @@ export class VisionEngine {
         video: deviceId
           ? {
               deviceId: { exact: deviceId },
-              width: { ideal: 320 },
-              height: { ideal: 240 },
+              width: { ideal: 640 },
+              height: { ideal: 480 },
               frameRate: { ideal: 5, max: 10 },
             }
           : {
               facingMode: 'user',
-              width: { ideal: 320 },
-              height: { ideal: 240 },
+              width: { ideal: 640 },
+              height: { ideal: 480 },
               frameRate: { ideal: 5, max: 10 },
             },
       };
@@ -135,9 +178,33 @@ export class VisionEngine {
         return { success: false, error: 'Camera connection attempt was cancelled.' };
       }
 
-      this.faceDetector = this.createNativeFaceDetector();
+      // Initialise a proper on-device ML face detector before starting the
+      // timer gate. The previous skin-colour-only fallback was too sensitive
+      // to lighting, skin tone, camera white balance and image compression.
+      // MediaPipe analyses frames locally; only its model/WASM assets are
+      // downloaded. Webcam frames are not sent to a server.
+      const mediaPipeDetector = await this.createMediaPipeFaceDetector();
+      if (startId !== this.lifecycleId) {
+        mediaPipeDetector?.close?.();
+        stream.getTracks().forEach((item) => {
+          item.onended = null;
+          item.stop();
+        });
+        return { success: false, error: 'Camera connection attempt was cancelled.' };
+      }
+
+      this.mediaPipeFaceDetector = mediaPipeDetector;
+      this.faceDetector = mediaPipeDetector ? null : this.createNativeFaceDetector();
+      this.lastMediaPipeTimestamp = 0;
       this.isRunning = true;
       this.cameraFailureNotified = false;
+      if (mediaPipeDetector) {
+        console.info('[AI Focus] MediaPipe local face detector is ready.');
+      } else if (this.faceDetector) {
+        console.warn('[AI Focus] Using native browser face detection fallback.');
+      } else {
+        console.warn('[AI Focus] ML face detector unavailable; using lightweight local fallback.');
+      }
       this.startFrameLoop(requestedFps);
 
       return { success: true };
@@ -155,6 +222,63 @@ export class VisionEngine {
       this.handleCameraFailure(message, startId);
       return { success: false, error: message };
     }
+  }
+
+  private async createMediaPipeFaceDetector(): Promise<MediaPipeFaceDetectorLike | null> {
+    try {
+      if (!mediaPipeModulePromise) {
+        // Use a runtime ESM import so the large vision bundle is lazy-loaded
+        // only when a user starts an AI Focus session.
+        const importModule = new Function('url', 'return import(url)') as (
+          url: string
+        ) => Promise<MediaPipeVisionModule>;
+        mediaPipeModulePromise = importModule(MEDIAPIPE_MODULE_URL);
+      }
+
+      const mediaPipe = await this.withTimeout(
+        mediaPipeModulePromise,
+        15000,
+        'MediaPipe vision library'
+      );
+      const visionFileset = await this.withTimeout(
+        mediaPipe.FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_URL),
+        15000,
+        'MediaPipe WebAssembly runtime'
+      );
+
+      return await this.withTimeout(
+        mediaPipe.FaceDetector.createFromOptions(visionFileset, {
+          baseOptions: {
+            modelAssetPath: MEDIAPIPE_FACE_MODEL_URL,
+            delegate: 'CPU',
+          },
+          runningMode: 'VIDEO',
+          minDetectionConfidence: 0.45,
+          minSuppressionThreshold: 0.3,
+        }),
+        20000,
+        'MediaPipe face model'
+      );
+    } catch (error) {
+      console.warn(
+        '[AI Focus] MediaPipe could not be initialised. Falling back to another local detector.',
+        error
+      );
+      return null;
+    }
+  }
+
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<T>((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`)),
+        timeoutMs
+      );
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timeoutId) clearTimeout(timeoutId);
+    });
   }
 
   private createNativeFaceDetector(): NativeFaceDetectorLike | null {
@@ -261,6 +385,29 @@ export class VisionEngine {
       }
     } else {
       this.consecutiveBlankFrames = 0;
+    }
+
+    if (this.mediaPipeFaceDetector) {
+      try {
+        // MediaPipe VIDEO timestamps must be monotonic even if a browser
+        // briefly reports the same performance clock value for two frames.
+        const timestamp = Math.max(performance.now(), this.lastMediaPipeTimestamp + 1);
+        this.lastMediaPipeTimestamp = timestamp;
+        const result = this.mediaPipeFaceDetector.detectForVideo(this.videoElement, timestamp);
+        const detections = Array.isArray(result?.detections) ? result.detections : [];
+        return detections.some((detection) => {
+          const categoryScore = Array.isArray(detection.categories)
+            ? Math.max(0, ...detection.categories.map((category) => Number(category.score) || 0))
+            : 0;
+          const score = Math.max(categoryScore, Number(detection.score) || 0);
+          return score >= 0.45;
+        });
+      } catch (error) {
+        console.warn('[AI Focus] MediaPipe frame detection failed; switching to local fallback.', error);
+        this.mediaPipeFaceDetector.close?.();
+        this.mediaPipeFaceDetector = null;
+        this.faceDetector = this.createNativeFaceDetector();
+      }
     }
 
     if (this.faceDetector) {
@@ -388,6 +535,9 @@ export class VisionEngine {
     }
 
     this.faceDetector = null;
+    this.mediaPipeFaceDetector?.close?.();
+    this.mediaPipeFaceDetector = null;
+    this.lastMediaPipeTimestamp = 0;
   }
 
   stop(): void {
