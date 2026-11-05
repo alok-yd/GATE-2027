@@ -37,13 +37,15 @@ const createWelcomeMessage = (): MentorStoredMessage => ({
   id: 'welcome',
   role: 'assistant',
   content:
-    `# GATE 2027 AI Mentor
+    `# J.A.R.V.I.S. — Personal AI Learning & Intelligence
 
-I’m your personalised GATE CS/IT/DA mentor, powered by Google Gemini.
+**Just A Rather Very Intelligent System**, integrated with ACHIEVER.
 
-I can explain concepts, solve PYQs step by step, analyse your recorded mock and PYQ performance, build realistic revision plans, and search notes you upload here.
+I can explain GATE CS/IT/DA concepts, solve PYQs step by step, analyse your recorded mock and PYQ performance, review your Roadmap and revision status, build realistic study plans, and search notes you upload here.
 
-**Ask me about a topic or your current preparation.** I’ll use the tracker’s available records rather than guessing your statistics.`,
+Your voice assistant and this full AI Mentor workspace share the same conversation history and user-approved memories. I use the tracker’s available records rather than guessing your statistics.
+
+**Tell me what you want to learn, analyse, plan or improve.**`,
   timestamp: new Date().toISOString(),
 });
 
@@ -749,7 +751,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
       <aside className="space-y-4 lg:col-span-1">
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Mentor status</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">J.A.R.V.I.S. status</p>
             <span
               className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-semibold ${
                 keyStatus === 'connected'
@@ -1003,8 +1005,8 @@ You can now ask me to search this material. I’ll include local chunk identifie
       <section className="flex min-h-[720px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-3">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="font-bold text-slate-800">AI Mentor</h2>
-            <p className="text-sm capitalize text-slate-500">{mode} mode · {documentsCount} locally indexed document(s)</p>
+            <h2 className="font-bold text-slate-800">J.A.R.V.I.S.</h2>
+            <p className="text-sm text-slate-500">Personal AI Learning &amp; Intelligence · {mode} mode · {documentsCount} locally indexed document(s)</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
