@@ -227,12 +227,10 @@ export class VisionEngine {
   private async createMediaPipeFaceDetector(): Promise<MediaPipeFaceDetectorLike | null> {
     try {
       if (!mediaPipeModulePromise) {
-        // Use a runtime ESM import so the large vision bundle is lazy-loaded
-        // only when a user starts an AI Focus session.
-        const importModule = new Function('url', 'return import(url)') as (
-          url: string
-        ) => Promise<MediaPipeVisionModule>;
-        mediaPipeModulePromise = importModule(MEDIAPIPE_MODULE_URL);
+        // Use a Vite-ignored runtime ESM import so the large vision bundle
+        // is lazy-loaded only when a user starts an AI Focus session. This
+        // avoids eval/new Function and is friendlier to strict CSP settings.
+        mediaPipeModulePromise = import(/* @vite-ignore */ MEDIAPIPE_MODULE_URL) as Promise<MediaPipeVisionModule>;
       }
 
       const mediaPipe = await this.withTimeout(
