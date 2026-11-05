@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
+import VoiceAssistant from './VoiceAssistant';
 
 const iitBombayLogo = new URL('../iit-bombay-logo-circle.png', import.meta.url).href;
 const achieverLogo = `${import.meta.env.BASE_URL}achiever-logo.svg`;
@@ -346,6 +347,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 {children}
             </div>
         </main>
+        {/* J.A.R.V.I.S. voice control stays available across every ACHIEVER section. */}
+        <VoiceAssistant />
       </div>
     </div>
   );
