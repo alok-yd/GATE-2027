@@ -234,7 +234,7 @@ export class FocusEngine {
     } else if (this.breakActive) {
       nextState = 'BREAK';
       stateExplanation = 'BREAK — Countdown is held. End break to resume presence-based timing.';
-      personPresenceState = cameraAvailable
+      personPresenceState = cameraAvailable && this.confirmedPresence !== null
         ? (isPersonPresent ? 'PERSON_PRESENT' : 'PERSON_ABSENT')
         : 'VISION_UNCERTAIN';
     } else if (!cameraAvailable) {
