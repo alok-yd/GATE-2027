@@ -631,6 +631,7 @@ const HealthTracker: React.FC = () => {
         elapsedDays: 0,
         completedDays: 0,
         missedDays: 0,
+        missedDates: [] as string[],
         currentStreak: 0,
         bestStreak: 0,
         progress: 0,
@@ -640,13 +641,26 @@ const HealthTracker: React.FC = () => {
 
     const elapsedDays = Math.min(challenge.targetDays, daysBetween(challenge.startedAt, today) + 1);
     const completedDates = (Object.values(challenge.logs) as MeditationLog[])
-      .filter((log) => log.completed)
+      .filter((log) => log.completed && log.date >= challenge.startedAt! && log.date <= today)
       .map((log) => log.date)
       .sort();
     const completedDays = completedDates.length;
+    const pastDaysElapsed = Math.max(0, Math.min(challenge.targetDays, daysBetween(challenge.startedAt, today)));
+    const missedDates = Array.from({ length: pastDaysElapsed }, (_, index) =>
+      new Date(dateToTime(challenge.startedAt!) + index * DAY_MS).toISOString().split('T')[0]
+    ).filter((date) => !challenge.logs[date]?.completed);
+
+    // Today is still in progress until the user finishes the day. Preserve
+    // yesterday's streak until today's check-in is submitted.
+    const streakAnchor = challenge.logs[today]?.completed
+      ? today
+      : new Date(dateToTime(today) - DAY_MS).toISOString().split('T')[0];
+    const anchorElapsedDays = streakAnchor >= challenge.startedAt
+      ? Math.min(elapsedDays, daysBetween(challenge.startedAt, streakAnchor) + 1)
+      : 0;
     let currentStreak = 0;
-    for (let index = 0; index < elapsedDays; index += 1) {
-      const checkDate = new Date(dateToTime(today) - index * DAY_MS).toISOString().split('T')[0];
+    for (let index = 0; index < anchorElapsedDays; index += 1) {
+      const checkDate = new Date(dateToTime(streakAnchor) - index * DAY_MS).toISOString().split('T')[0];
       if (challenge.logs[checkDate]?.completed) currentStreak += 1;
       else break;
     }
@@ -667,7 +681,8 @@ const HealthTracker: React.FC = () => {
       dayNumber: elapsedDays,
       elapsedDays,
       completedDays,
-      missedDays: Math.max(0, elapsedDays - completedDays),
+      missedDays: missedDates.length,
+      missedDates,
       currentStreak,
       bestStreak,
       progress: Math.round((completedDays / challenge.targetDays) * 100),
@@ -682,6 +697,7 @@ const HealthTracker: React.FC = () => {
         elapsedDays: 0,
         completedDays: 0,
         missedDays: 0,
+        missedDates: [] as string[],
         currentStreak: 0,
         bestStreak: 0,
         progress: 0,
@@ -690,11 +706,23 @@ const HealthTracker: React.FC = () => {
     }
 
     const elapsedDays = Math.min(100, daysBetween(noFapChallenge.startedAt, today) + 1);
-    const completedDays = Object.values(noFapChallenge.logs).filter((log) => log.completed).length;
+    const completedDays = Object.values(noFapChallenge.logs)
+      .filter((log) => log.completed && log.date >= noFapChallenge.startedAt! && log.date <= today)
+      .length;
+    const pastDaysElapsed = Math.max(0, Math.min(100, daysBetween(noFapChallenge.startedAt, today)));
+    const missedDates = Array.from({ length: pastDaysElapsed }, (_, index) =>
+      new Date(dateToTime(noFapChallenge.startedAt!) + index * DAY_MS).toISOString().split('T')[0]
+    ).filter((date) => !noFapChallenge.logs[date]?.completed);
 
+    const streakAnchor = noFapChallenge.logs[today]?.completed
+      ? today
+      : new Date(dateToTime(today) - DAY_MS).toISOString().split('T')[0];
+    const anchorElapsedDays = streakAnchor >= noFapChallenge.startedAt
+      ? Math.min(elapsedDays, daysBetween(noFapChallenge.startedAt, streakAnchor) + 1)
+      : 0;
     let currentStreak = 0;
-    for (let index = 0; index < elapsedDays; index += 1) {
-      const checkDate = new Date(dateToTime(today) - index * DAY_MS).toISOString().split('T')[0];
+    for (let index = 0; index < anchorElapsedDays; index += 1) {
+      const checkDate = new Date(dateToTime(streakAnchor) - index * DAY_MS).toISOString().split('T')[0];
       if (noFapChallenge.logs[checkDate]?.completed) currentStreak += 1;
       else break;
     }
@@ -715,7 +743,8 @@ const HealthTracker: React.FC = () => {
       dayNumber: elapsedDays,
       elapsedDays,
       completedDays,
-      missedDays: Math.max(0, elapsedDays - completedDays),
+      missedDays: missedDates.length,
+      missedDates,
       currentStreak,
       bestStreak,
       progress: Math.round((completedDays / 100) * 100),
@@ -739,6 +768,10 @@ const HealthTracker: React.FC = () => {
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(-14)
         .map((log) => ({ date: log.date, completed: log.completed, minutes: log.minutes })),
+      streakInterrupted: challengeStats.missedDays > 0,
+      missedDates: challengeStats.missedDates.slice(-14),
+      lastMissedDate: challengeStats.missedDates[challengeStats.missedDates.length - 1] || null,
+      previousAttempts: challenge.archivedAttempts.slice(-5),
     },
     noFap: {
       started: Boolean(noFapChallenge.startedAt),
@@ -754,6 +787,10 @@ const HealthTracker: React.FC = () => {
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(-14)
         .map((log) => ({ date: log.date, completed: log.completed })),
+      streakInterrupted: noFapStats.missedDays > 0,
+      missedDates: noFapStats.missedDates.slice(-14),
+      lastMissedDate: noFapStats.missedDates[noFapStats.missedDates.length - 1] || null,
+      previousAttempts: noFapChallenge.archivedAttempts.slice(-5),
     },
   }), [challenge, challengeStats, noFapChallenge, noFapStats]);
 
