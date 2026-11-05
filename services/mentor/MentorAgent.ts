@@ -700,7 +700,7 @@ NON-NEGOTIABLE DATA INTEGRITY
 - For Speaking Coach questions, call get_speaking_coach_data and use saved practice sessions, scores, progress, daily minutes, streak, audio metrics, feedback and milestones. Treat self-ratings and AI feedback as such; do not confuse them with independently measured speaking proficiency.
 - For AI Native workspace questions, call get_ai_native_workspace_summary to inspect existing documents, planner/roadmap imports, evaluations, imported test analyses, saved mistakes, recurring mistake patterns and user-approved memories. Use search_uploaded_study_material to retrieve actual relevant note passages rather than relying on document titles alone.
 - For historical AI Mentor questions, call search_previous_mentor_conversations with the relevant keywords. Current tracker data takes precedence over statements in older conversations.
-- For a broad question such as "How is my GATE preparation going?", "analyse my preparation", or "overall preparation status", combine the Student Snapshot, Roadmap, AI Focus, Lecture Tracker, PYQ Execution, Test Performance, Revision and AI Analytics tools. Include Strategy & Tips when recommending actions. Do not include Health Tracker unless the user explicitly asks for a wellness-inclusive analysis.
+- For a broad question such as "How is my GATE preparation going?", "analyse my preparation", "overall preparation status", or an explicit request for "all sections"/a "full workspace snapshot", combine the Student Snapshot, Roadmap, AI Focus, Lecture Tracker, Speaking Coach, PYQ Execution, Test Performance, Revision, AI Analytics and AI Native tools. Include Strategy & Tips when recommending actions. Do not include Health Tracker unless the user explicitly asks for a wellness-inclusive analysis.
 - For "what should I revise?" or "which topics are weak?", use Revision, PYQ Execution, Test Performance, Roadmap and Lecture Tracker evidence. Do not infer that unmarked revision tasks were never studied.
 - When the user explicitly asks you to create a study plan in Lecture Tracker, first analyse the same relevant current sections, then create its individual tasks through create_lecture_tracker_task. Never create tasks for a recommendation-only request.
 - For AI Analytics questions (predicted AIR, expected marks, readiness dimensions, scenarios, historical college compatibility, what-if simulation, or saved prediction history), call get_ai_analytics_dashboard and use its exact returned fields.
@@ -776,7 +776,11 @@ const buildFallbackContext = (prompt: string) => {
   const wantsSpeaking = /speaking|spoken english|pronunciation|fluency|filler words?|speech transcript|oral practice/i.test(prompt);
   const wantsAINative = /ai native|uploaded|imported|imports?|knowledge base|documents?|study material|saved mistakes|saved memories|memory|evaluations?|evals?|planner imports?|roadmap imports?/i.test(prompt);
   const wantsPreviousMentorHistory = /(previous|past|earlier|last).{0,30}(ai mentor|mentor conversation|chat|discussion)|what did we discuss|what did you recommend earlier/i.test(prompt);
-  const wantsOverallAcademic = /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|how is my (?:gate )?preparation|analyse my preparation|analyze my preparation|preparation status|overall progress/i.test(prompt);
+  const wantsAllReadSections =
+    /all sections|all my data|all tracker data|all tracker sections|full workspace|complete workspace|entire achiever|everything in achiever|complete app snapshot/i.test(prompt);
+  const wantsOverallAcademic =
+    wantsAllReadSections ||
+    /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|how is my (?:gate )?preparation|analyse my preparation|analyze my preparation|preparation status|overall progress/i.test(prompt);
   const wantsHealth =
     /health|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|wellness|fatigue|tired|energy|recovery|missed.{0,12}days?|days?.{0,12}missed|broken streak|streak.{0,12}(broke|broken|interrupted)|habit challenge|challenge progress|challenge status/i.test(prompt);
   const asksSky = /sky|sudarshan|meditation/i.test(prompt);
@@ -790,16 +794,16 @@ const buildFallbackContext = (prompt: string) => {
     {
       note: 'Fallback context assembled from current browser-local app records. Missing fields are unavailable, not zero.',
       snapshot,
-      ...(wantsRoadmap || wantsOverallAcademic ? { roadmap: getRoadmapMentorContext() } : {}),
-      ...(wantsFocus || wantsOverallAcademic ? { aiFocus: getAIFocusMentorContext(14) } : {}),
-      ...(wantsLecture || wantsOverallAcademic ? { lectureTracker: getLectureTrackerMentorContext() } : {}),
-      ...(wantsPyq || wantsOverallAcademic ? { pyqExecution: getPYQExecutionMentorContext() } : {}),
-      ...(wantsTests || wantsOverallAcademic ? { testPerformance: getTestPerformanceMentorContext(20) } : {}),
-      ...(wantsRevision || wantsOverallAcademic ? { revision: getRevisionMentorContext() } : {}),
-      ...(wantsStrategies || wantsOverallAcademic ? { strategyTips: getStrategyTipsMentorContext() } : {}),
-      ...(wantsSpeaking ? { speakingCoach: getSpeakingCoachMentorContext() } : {}),
-      ...(wantsAnalytics ? { aiAnalytics: getAIAnalyticsMentorContext() } : {}),
-      ...(wantsAINative ? { aiNativeWorkspace: buildAINativeWorkspaceSummary() } : {}),
+      ...(wantsRoadmap || wantsOverallAcademic || wantsAllReadSections ? { roadmap: getRoadmapMentorContext() } : {}),
+      ...(wantsFocus || wantsOverallAcademic || wantsAllReadSections ? { aiFocus: getAIFocusMentorContext(14) } : {}),
+      ...(wantsLecture || wantsOverallAcademic || wantsAllReadSections ? { lectureTracker: getLectureTrackerMentorContext() } : {}),
+      ...(wantsPyq || wantsOverallAcademic || wantsAllReadSections ? { pyqExecution: getPYQExecutionMentorContext() } : {}),
+      ...(wantsTests || wantsOverallAcademic || wantsAllReadSections ? { testPerformance: getTestPerformanceMentorContext(20) } : {}),
+      ...(wantsRevision || wantsOverallAcademic || wantsAllReadSections ? { revision: getRevisionMentorContext() } : {}),
+      ...(wantsStrategies || wantsOverallAcademic || wantsAllReadSections ? { strategyTips: getStrategyTipsMentorContext() } : {}),
+      ...(wantsSpeaking || wantsAllReadSections ? { speakingCoach: getSpeakingCoachMentorContext() } : {}),
+      ...(wantsAnalytics || wantsAllReadSections ? { aiAnalytics: getAIAnalyticsMentorContext() } : {}),
+      ...(wantsAINative || wantsAllReadSections ? { aiNativeWorkspace: buildAINativeWorkspaceSummary() } : {}),
       ...(wantsPreviousMentorHistory ? { previousMentorConversations: searchPreviousMentorConversations(prompt) } : {}),
       ...(wantsHealth
         ? {
