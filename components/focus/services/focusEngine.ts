@@ -7,7 +7,15 @@ import {
 } from '../types';
 
 const CAMERA_STALE_AFTER_MS = 8000;
-const REQUIRED_STABLE_FRAMES = 2;
+const REQUIRED_PRESENT_FRAMES = 2;
+// Ignore short detector dropouts (blink, motion blur, autofocus/white-balance
+// changes) before pausing a person who is still sitting at the desk.
+const REQUIRED_ABSENT_FRAMES = 6;
+const ABSENCE_CONFIRMATION_MS = 2000;
+// At session start, wait briefly for the first reliable observation rather
+// than immediately declaring the user absent from one or two weak frames.
+const INITIAL_ABSENCE_CONFIRMATION_FRAMES = 4;
+const INITIAL_ABSENCE_CONFIRMATION_MS = 700;
 
 export interface FocusEngineOutput {
   state: FocusState;
@@ -41,6 +49,7 @@ export class FocusEngine {
   private lastVision: VisionData | null = null;
 
   private candidatePresence: boolean | null = null;
+  private candidateSinceTimestamp = 0;
   private consecutiveFrames = 0;
   private confirmedPresence: boolean | null = null;
 
@@ -54,6 +63,7 @@ export class FocusEngine {
     this.manualPauseRequested = false;
     this.breakActive = false;
     this.candidatePresence = null;
+    this.candidateSinceTimestamp = 0;
     this.consecutiveFrames = 0;
     this.confirmedPresence = null;
     this.currentState = 'UNVERIFIED';
@@ -118,11 +128,33 @@ export class FocusEngine {
       this.consecutiveFrames += 1;
     } else {
       this.candidatePresence = detected;
+      this.candidateSinceTimestamp = timestamp;
       this.consecutiveFrames = 1;
     }
 
-    if (this.consecutiveFrames >= REQUIRED_STABLE_FRAMES) {
-      this.confirmedPresence = detected;
+    if (detected) {
+      // Confirm presence quickly, then require a sustained absence before
+      // pausing. One or several dropped face detections must not make the UI
+      // flicker between PRESENT and ABSENT.
+      if (this.consecutiveFrames >= REQUIRED_PRESENT_FRAMES) {
+        this.confirmedPresence = true;
+      }
+    } else if (this.confirmedPresence === true) {
+      const absenceDuration = Math.max(0, timestamp - this.candidateSinceTimestamp);
+      if (
+        this.consecutiveFrames >= REQUIRED_ABSENT_FRAMES &&
+        absenceDuration >= ABSENCE_CONFIRMATION_MS
+      ) {
+        this.confirmedPresence = false;
+      }
+    } else {
+      const initialAbsenceDuration = Math.max(0, timestamp - this.candidateSinceTimestamp);
+      if (
+        this.consecutiveFrames >= INITIAL_ABSENCE_CONFIRMATION_FRAMES &&
+        initialAbsenceDuration >= INITIAL_ABSENCE_CONFIRMATION_MS
+      ) {
+        this.confirmedPresence = false;
+      }
     }
 
     this.evaluate();
@@ -215,12 +247,14 @@ export class FocusEngine {
       nextState = 'FOCUSED';
       stateExplanation = 'PRESENT — TIMER RUNNING.';
       personPresenceState = 'PERSON_PRESENT';
-    } else {
+    } else if (hasConfirmedAbsence) {
       nextState = 'AWAY';
-      stateExplanation = hasConfirmedAbsence
-        ? 'ABSENT — TIMER PAUSED. Return in front of the webcam to resume.'
-        : 'WAITING FOR PERSON DETECTION — Timer paused.';
+      stateExplanation = 'ABSENT — TIMER PAUSED. Return in front of the webcam to resume.';
       personPresenceState = 'PERSON_ABSENT';
+    } else {
+      nextState = 'UNVERIFIED';
+      stateExplanation = 'CHECKING PRESENCE — Waiting for a stable face signal. Timer paused.';
+      personPresenceState = 'VISION_UNCERTAIN';
     }
 
     const previousOutput = this.lastEvaluationOutput;
