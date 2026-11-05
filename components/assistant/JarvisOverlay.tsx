@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { AlertTriangle, AudioLines, Mic, MicOff, Power, X } from 'lucide-react';
-import JarvisOrb, { JarvisOrbState } from './JarvisOrb';
+import JarvisOrb, { type JarvisOrbState } from './JarvisOrb';
 
 export type JarvisVoiceStatus =
   | 'idle'
@@ -72,7 +72,7 @@ const JarvisOverlay: React.FC<JarvisOverlayProps> = ({
   const isError = status === 'error' || status === 'unsupported';
 
   return (
-    <div className="jarvis-overlay fixed inset-0 z-[100] flex items-center justify-center overflow-hidden px-4 py-6 sm:px-8">
+    <div role="dialog" aria-modal="true" aria-label="J.A.R.V.I.S. voice assistant" className="jarvis-overlay fixed inset-0 z-[100] flex items-center justify-center overflow-hidden px-4 py-6 sm:px-8">
       <style>{`
         .jarvis-overlay {
           background:
@@ -368,12 +368,12 @@ const JarvisOverlay: React.FC<JarvisOverlayProps> = ({
               {statusText[status]}
             </p>
             <p className="mt-2 min-h-5 text-xs text-slate-300/70">
-              {isError ? (errorMessage || statusCaption[status]) : statusCaption[status]}
+              {errorMessage || statusCaption[status]}
             </p>
-            {isError && (
+            {(isError || Boolean(errorMessage)) && (
               <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-rose-300/20 bg-rose-400/10 px-3 py-1.5 text-[10px] text-rose-100">
                 <AlertTriangle className="h-3.5 w-3.5" />
-                Voice service needs attention
+                {isError ? 'Voice service needs attention' : 'AI connection issue'}
               </div>
             )}
           </div>
