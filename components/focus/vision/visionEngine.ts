@@ -181,8 +181,9 @@ export class VisionEngine {
       // Initialise a proper on-device ML face detector before starting the
       // timer gate. The previous skin-colour-only fallback was too sensitive
       // to lighting, skin tone, camera white balance and image compression.
-      // MediaPipe analyses frames locally; only its model/WASM assets are
-      // downloaded. Webcam frames are not sent to a server.
+      // MediaPipe analyses webcam frames on-device; the model/WASM are
+      // downloaded separately. The library may send usage/performance
+      // telemetry, but webcam frames are not sent to a server.
       const mediaPipeDetector = await this.createMediaPipeFaceDetector();
       if (startId !== this.lifecycleId) {
         mediaPipeDetector?.close?.();
