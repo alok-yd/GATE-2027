@@ -33,6 +33,7 @@ import {
   getStrategyTipsMentorContext,
   getTestPerformanceMentorContext,
 } from './MentorTrackerData';
+import { getSpeakingCoachMentorContext } from './MentorSpeakingData';
 
 export type MentorMode = 'chat' | 'concept' | 'problem' | 'strategy';
 
@@ -82,6 +83,12 @@ const mentorTools: FunctionDeclaration[] = [
     name: 'get_lecture_tracker_data',
     description:
       'Read actual Lecture Tracker subject completion, remaining lectures, daily logs, daily goal text and weekly targets. Goal-description lines are planning text and have no separate per-line completed/pending status.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_speaking_coach_data',
+    description:
+      'READ-ONLY Speaking Coach access. Use when the user asks about English speaking practice, speaking streak, practice minutes, saved session scores, transcripts, AI feedback, audio metrics or speaking milestones. Read the existing Speaking Coach session and milestone records; do not create or update practice sessions.',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -468,6 +475,9 @@ const executeMentorTool = (name: string, args: unknown, latestUserPrompt = ''): 
     case 'get_lecture_tracker_data':
       return getLectureTrackerMentorContext();
 
+    case 'get_speaking_coach_data':
+      return getSpeakingCoachMentorContext();
+
     case 'get_ai_analytics_dashboard':
       return getAIAnalyticsMentorContext();
 
@@ -686,7 +696,8 @@ CURRENT MODE
 ${modeInstructions[mode]}
 
 NON-NEGOTIABLE DATA INTEGRITY
-- You have READ access to all existing ACHIEVER sections through their section-specific tools: Roadmap, AI Focus, Lecture Tracker, PYQ Execution Tracker, Health Tracker, Test Performance, Revision, AI Mentor history, AI Analytics, AI Native and Strategy & Tips. Choose the relevant section tools for each question, and combine multiple sections when the user asks a cross-section or overall question.
+- You have READ access to all existing ACHIEVER sections through their section-specific tools: Dashboard/student snapshot, Roadmap, AI Focus, Lecture Tracker, Speaking Coach, PYQ Execution Tracker, Health Tracker, Test Performance, Revision, AI Mentor history, AI Analytics, AI Native and Strategy & Tips. Choose the relevant section tools for each question, and combine multiple sections when the user asks a cross-section or overall question.
+- For Speaking Coach questions, call get_speaking_coach_data and use saved practice sessions, scores, progress, daily minutes, streak, audio metrics, feedback and milestones. Treat self-ratings and AI feedback as such; do not confuse them with independently measured speaking proficiency.
 - For AI Native workspace questions, call get_ai_native_workspace_summary to inspect existing documents, planner/roadmap imports, evaluations, imported test analyses, saved mistakes, recurring mistake patterns and user-approved memories. Use search_uploaded_study_material to retrieve actual relevant note passages rather than relying on document titles alone.
 - For historical AI Mentor questions, call search_previous_mentor_conversations with the relevant keywords. Current tracker data takes precedence over statements in older conversations.
 - For a broad question such as "How is my GATE preparation going?", "analyse my preparation", or "overall preparation status", combine the Student Snapshot, Roadmap, AI Focus, Lecture Tracker, PYQ Execution, Test Performance, Revision and AI Analytics tools. Include Strategy & Tips when recommending actions. Do not include Health Tracker unless the user explicitly asks for a wellness-inclusive analysis.
@@ -762,6 +773,9 @@ const buildFallbackContext = (prompt: string) => {
   const wantsTests = /mock|test performance|test score|marks|negative marks|test history/i.test(prompt);
   const wantsRevision = /revision|revise|forgot|forgetting|revision task|spaced repetition/i.test(prompt);
   const wantsStrategies = /strategy|strategies|tips|time management|preparation plan/i.test(prompt);
+  const wantsSpeaking = /speaking coach|english speaking|speaking practice|pronunciation|fluency|speaking streak|speaking session|filler words|speech transcript|speaking milestone/i.test(prompt);
+  const wantsAINative = /ai native|uploaded|imported|knowledge base|documents?|study material|saved mistakes|saved memories|memory|evaluation|planner imports?|roadmap imports?/i.test(prompt);
+  const wantsPreviousMentorHistory = /(previous|past|earlier|last).{0,30}(ai mentor|mentor conversation|chat|discussion)|what did we discuss|what did you recommend earlier/i.test(prompt);
   const wantsOverallAcademic = /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|how is my (?:gate )?preparation|analyse my preparation|analyze my preparation|preparation status|overall progress/i.test(prompt);
   const wantsHealth =
     /health|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|cognitive readiness|study mode|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|wellness|fatigue|tired|energy|recovery|missed.{0,12}days?|days?.{0,12}missed|broken streak|streak.{0,12}(broke|broken|interrupted)|habit challenge|challenge progress|challenge status/i.test(prompt);
@@ -783,7 +797,10 @@ const buildFallbackContext = (prompt: string) => {
       ...(wantsTests || wantsOverallAcademic ? { testPerformance: getTestPerformanceMentorContext(20) } : {}),
       ...(wantsRevision || wantsOverallAcademic ? { revision: getRevisionMentorContext() } : {}),
       ...(wantsStrategies || wantsOverallAcademic ? { strategyTips: getStrategyTipsMentorContext() } : {}),
+      ...(wantsSpeaking ? { speakingCoach: getSpeakingCoachMentorContext() } : {}),
       ...(wantsAnalytics ? { aiAnalytics: getAIAnalyticsMentorContext() } : {}),
+      ...(wantsAINative ? { aiNativeWorkspace: buildAINativeWorkspaceSummary() } : {}),
+      ...(wantsPreviousMentorHistory ? { previousMentorConversations: searchPreviousMentorConversations(prompt) } : {}),
       ...(wantsHealth
         ? {
             healthTracker: getHealthTrackerMentorContext({
