@@ -120,6 +120,7 @@ export const sendJarvisMessage = async (
     }
   }
 
+  if (signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
   return { ...result, conversation: updated };
 };
 
