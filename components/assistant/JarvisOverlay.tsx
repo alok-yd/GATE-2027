@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { AlertTriangle, AudioLines, Mic, MicOff, Power, X } from 'lucide-react';
 import JarvisOrb, { type JarvisOrbState } from './JarvisOrb';
 
+const krishnaDivineBackground = `${import.meta.env.BASE_URL}jarvis-krishna-divine-background.webp`;
+
 export type JarvisVoiceStatus =
   | 'idle'
   | 'listening'
@@ -102,6 +104,26 @@ const JarvisOverlay: React.FC<JarvisOverlayProps> = ({
           transform: rotate(28deg) scale(1.2);
           animation-duration: 58s;
           animation-direction: reverse;
+        }
+        .jarvis-divine-background {
+          position: absolute;
+          inset: 0;
+          z-index: 0;
+          pointer-events: none;
+          opacity: .10;
+          background-repeat: no-repeat;
+          background-position: center center;
+          background-size: cover;
+          filter: saturate(.78) contrast(1.06) brightness(.92);
+        }
+        .jarvis-divine-vignette {
+          position: absolute;
+          inset: 0;
+          z-index: 1;
+          pointer-events: none;
+          background:
+            radial-gradient(ellipse at center, rgba(9, 14, 43, .05) 0%, rgba(2, 6, 23, .22) 100%),
+            linear-gradient(90deg, rgba(2, 6, 23, .12), transparent 28%, transparent 72%, rgba(2, 6, 23, .12));
         }
         .jarvis-glass {
           background: linear-gradient(145deg, rgba(15, 23, 55, .78), rgba(8, 15, 39, .54));
@@ -328,6 +350,13 @@ const JarvisOverlay: React.FC<JarvisOverlayProps> = ({
           }
         }
       `}</style>
+
+      <div
+        aria-hidden="true"
+        className="jarvis-divine-background"
+        style={{ backgroundImage: `url("${krishnaDivineBackground}")` }}
+      />
+      <div aria-hidden="true" className="jarvis-divine-vignette" />
 
       <div className="relative z-10 flex h-full w-full max-w-5xl flex-col">
         <header className="jarvis-glass flex items-center justify-between rounded-2xl px-4 py-3 sm:px-6">
