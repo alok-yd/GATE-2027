@@ -319,7 +319,7 @@ export const DEFAULT_TEST_SERIES: TestSeriesItem[] = [
     provider: 'GO Classes',
     targetExam: 'GATE 2027 (CS & IT)',
     url: 'https://www.goclasses.in/s/pages/gate-cse-test-series',
-    description: 'GO Classes GATE CSE-2027 test series for focused topic-wise, subject-wise and full-length practice.',
+    description: 'GO Classes test series for GATE CSE-2027. Record test-wise scores and track progress independently.',
     status: 'active',
     badge: '⭐⭐⭐ TOP PRIORITY',
     enrolledDate: '2026',
