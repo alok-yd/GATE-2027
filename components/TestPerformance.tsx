@@ -37,7 +37,7 @@ import {
   BarChart3,
 } from 'lucide-react';
 
-type Filter = 'ALL' | 'ACE_OTS' | 'FULL' | 'SECTIONAL' | 'TOPIC';
+type Filter = 'ALL' | 'GO_CLASSES' | 'ACE_OTS' | 'FULL' | 'SECTIONAL' | 'TOPIC';
 
 const todayKey = () => new Date().toISOString().split('T')[0];
 
@@ -46,6 +46,8 @@ const percent = (score: number, total: number) => Math.round((score / Math.max(t
 const getScore = (mock: MockResult) => percent(mock.score, mock.totalMarks);
 
 const ACE_OTS_URL = 'https://ots.aceenggacademy.com/#/user-app/userSubscriptions/userSubView/8021f68f-c9c1-4a19-b235-84b144bf78da/userSubscriptions';
+const GO_CLASSES_URL = 'https://www.goclasses.in/s/pages/gate-cse-test-series';
+const GO_CLASSES_SERIES_ID = 'go-classes-cse-2027';
 
 const TestPerformance: React.FC = () => {
   const [tests, setTests] = useState<MockResult[]>(() => getMockResults());
@@ -95,8 +97,13 @@ const TestPerformance: React.FC = () => {
     test.seriesName?.toLowerCase().includes('ace') ||
     test.sheet?.toLowerCase().includes('ace');
 
+  const isGoClassesTest = (test: MockResult) =>
+    test.seriesId === GO_CLASSES_SERIES_ID ||
+    test.seriesName?.toLowerCase().includes('go classes cse-2027');
+
   const filteredTests = useMemo(() => {
     if (filter === 'ALL') return tests;
+    if (filter === 'GO_CLASSES') return tests.filter(isGoClassesTest);
     if (filter === 'ACE_OTS') return tests.filter(isAceTest);
     return tests.filter((test) => test.testType === filter);
   }, [filter, tests]);
@@ -115,6 +122,17 @@ const TestPerformance: React.FC = () => {
     ? Math.round((aceTests.reduce((acc, t) => acc + getScore(t), 0) / aceTestsCount) * 10) / 10
     : 0;
 
+  // GO Classes metrics are computed only from records linked to its own series ID.
+  const goClassesTests = useMemo(() => tests.filter(isGoClassesTest), [tests]);
+  const goClassesTestsCount = goClassesTests.length;
+  const goClassesLatestTest = goClassesTests[goClassesTests.length - 1];
+  const goClassesPeakScore = goClassesTestsCount
+    ? Math.max(...goClassesTests.map((test) => getScore(test)))
+    : null;
+  const goClassesAvgScore = goClassesTestsCount
+    ? Math.round((goClassesTests.reduce((sum, test) => sum + getScore(test), 0) / goClassesTestsCount) * 10) / 10
+    : null;
+
   const chartData = filteredTests.map((test, index) => ({
     index: index + 1,
     date: test.date,
@@ -125,6 +143,7 @@ const TestPerformance: React.FC = () => {
         : Math.round(getScore(test)),
     label: test.sheet || test.testType || 'Test',
     isAce: isAceTest(test),
+    isGoClasses: isGoClassesTest(test),
   }));
 
   const handleTypeChange = (testType: MockResult['testType']) => {
@@ -143,7 +162,9 @@ const TestPerformance: React.FC = () => {
         ...prev,
         seriesId: selected.id,
         seriesName: selected.name,
-        sheet: prev.sheet.startsWith('ACE OTS') && selected.id !== 'ace-ots-gate-2027' ? '' : prev.sheet,
+        sheet: prev.sheet.startsWith('ACE OTS') || prev.sheet.startsWith('GO Classes CSE-2027')
+          ? `${selected.name} - `
+          : prev.sheet,
       }));
     } else {
       setForm((prev) => ({
@@ -195,7 +216,12 @@ const TestPerformance: React.FC = () => {
       sheet: form.sheet.trim() || `${form.testType} Test`,
       seriesId: form.seriesId,
       seriesName: form.seriesName,
-      testLink: form.seriesId === 'ace-ots-gate-2027' ? ACE_OTS_URL : undefined,
+      testLink:
+        form.seriesId === 'ace-ots-gate-2027'
+          ? ACE_OTS_URL
+          : form.seriesId === GO_CLASSES_SERIES_ID
+            ? GO_CLASSES_URL
+            : undefined,
       score,
       totalMarks,
       rightQuestions: form.rightQuestions ? Number(form.rightQuestions) : undefined,
@@ -512,21 +538,25 @@ const TestPerformance: React.FC = () => {
           </div>
         )}
 
-        {/* Primary ACE Test Series Card */}
+        {/* Enrolled test series — GO Classes is pinned first by the existing series store. */}
         {testSeries.map((series) => {
           const isAce = series.id === 'ace-ots-gate-2027';
+          const isGoClasses = series.id === GO_CLASSES_SERIES_ID;
+          const isFeatured = isAce || isGoClasses;
+          const cardTheme = isGoClasses
+            ? 'bg-gradient-to-br from-slate-900 via-blue-950 to-slate-950 text-white border-amber-300/40 ring-1 ring-amber-300/20'
+            : isAce
+              ? 'bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 text-white border-indigo-500/30'
+              : 'bg-white border-slate-200 text-slate-800';
+
           return (
             <div
               key={series.id}
-              className={`rounded-2xl border p-6 transition-all relative overflow-hidden shadow-lg ${
-                isAce
-                  ? 'bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 text-white border-indigo-500/30'
-                  : 'bg-white border-slate-200 text-slate-800'
-              }`}
+              className={`rounded-2xl border p-6 transition-all relative overflow-hidden shadow-lg ${cardTheme}`}
             >
-              {isAce && (
+              {isFeatured && (
                 <>
-                  <div className="absolute -right-16 -top-16 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+                  <div className={`absolute -right-16 -top-16 w-64 h-64 rounded-full blur-3xl pointer-events-none ${isGoClasses ? 'bg-amber-400/10' : 'bg-indigo-500/10'}`} />
                   <div className="absolute -left-16 -bottom-16 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
                 </>
               )}
@@ -536,7 +566,7 @@ const TestPerformance: React.FC = () => {
                   <div className="flex flex-wrap items-center gap-2">
                     <span
                       className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold tracking-wide ${
-                        isAce
+                        isFeatured
                           ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
                           : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                       }`}
@@ -546,7 +576,7 @@ const TestPerformance: React.FC = () => {
                     </span>
                     <span
                       className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold ${
-                        isAce
+                        isFeatured
                           ? 'bg-indigo-500/20 border border-indigo-400/30 text-indigo-300'
                           : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                       }`}
@@ -555,8 +585,12 @@ const TestPerformance: React.FC = () => {
                     </span>
                     {series.badge && (
                       <span
-                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                          isAce ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-100 text-slate-600'
+                        className={`px-2.5 py-0.5 rounded-full border text-[11px] font-bold tracking-wide ${
+                          isGoClasses
+                            ? 'bg-amber-400/20 border-amber-300/50 text-amber-200 shadow-[0_0_16px_rgba(251,191,36,0.14)]'
+                            : isAce
+                              ? 'bg-amber-500/20 border-transparent text-amber-300'
+                              : 'bg-slate-100 border-slate-200 text-slate-600'
                         }`}
                       >
                         {series.badge}
@@ -567,9 +601,11 @@ const TestPerformance: React.FC = () => {
                   <div className="flex items-center gap-3">
                     <div
                       className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-md ${
-                        isAce
-                          ? 'bg-gradient-to-tr from-amber-500 to-indigo-600 text-white'
-                          : 'bg-indigo-600 text-white'
+                        isGoClasses
+                          ? 'bg-gradient-to-tr from-amber-400 to-cyan-500 text-slate-950'
+                          : isAce
+                            ? 'bg-gradient-to-tr from-amber-500 to-indigo-600 text-white'
+                            : 'bg-indigo-600 text-white'
                       }`}
                     >
                       <Award className="w-6 h-6" />
@@ -577,12 +613,12 @@ const TestPerformance: React.FC = () => {
                     <div>
                       <h4
                         className={`text-xl sm:text-2xl font-black tracking-tight ${
-                          isAce ? 'text-white' : 'text-slate-900'
+                          isFeatured ? 'text-white' : 'text-slate-900'
                         }`}
                       >
                         {series.name}
                       </h4>
-                      <p className={`text-xs font-semibold ${isAce ? 'text-indigo-300' : 'text-indigo-600'}`}>
+                      <p className={`text-xs font-semibold ${isFeatured ? 'text-indigo-300' : 'text-indigo-600'}`}>
                         {series.provider}
                       </p>
                     </div>
@@ -590,13 +626,12 @@ const TestPerformance: React.FC = () => {
 
                   <p
                     className={`text-xs sm:text-sm leading-relaxed ${
-                      isAce ? 'text-slate-300' : 'text-slate-600'
+                      isFeatured ? 'text-slate-300' : 'text-slate-600'
                     }`}
                   >
                     {series.description}
                   </p>
 
-                  {/* Quick stats for this series */}
                   {isAce && (
                     <div className="flex flex-wrap items-center gap-5 text-xs pt-1 font-mono">
                       <span className="flex items-center gap-1.5 text-slate-300">
@@ -613,14 +648,34 @@ const TestPerformance: React.FC = () => {
                       </span>
                     </div>
                   )}
+
+                  {isGoClasses && (
+                    <div className="flex flex-wrap items-center gap-4 text-xs pt-1 font-mono">
+                      <span className="flex items-center gap-1.5 text-slate-300">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        Tests Logged: <strong className="text-white text-sm">{goClassesTestsCount}</strong>
+                      </span>
+                      <span className="flex items-center gap-1.5 text-slate-300">
+                        <Target className="w-4 h-4 text-cyan-300" />
+                        Avg GO Score: <strong className="text-white text-sm">{goClassesAvgScore === null ? 'No data' : `${goClassesAvgScore.toFixed(1)}%`}</strong>
+                      </span>
+                      <span className="flex items-center gap-1.5 text-slate-300">
+                        <TrendingUp className="w-4 h-4 text-amber-300" />
+                        Peak GO Score: <strong className="text-white text-sm">{goClassesPeakScore === null ? 'No data' : `${goClassesPeakScore.toFixed(1)}%`}</strong>
+                      </span>
+                      <span className="flex items-center gap-1.5 text-slate-300">
+                        <Clock className="w-4 h-4 text-violet-300" />
+                        Latest GO Score: <strong className="text-white text-sm">{goClassesLatestTest ? `${getScore(goClassesLatestTest).toFixed(1)}%` : 'No data'}</strong>
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Direct Launch & Action Controls */}
                 <div className="flex flex-col sm:flex-row lg:flex-col items-stretch sm:items-center lg:items-end gap-3 w-full sm:w-auto shrink-0">
                   <a
-                    href={series.url}
+                    href={isGoClasses ? GO_CLASSES_URL : series.url}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-indigo-600/30 transition-all cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0 text-center"
                   >
                     <span>Open Test Series Portal</span>
@@ -634,13 +689,13 @@ const TestPerformance: React.FC = () => {
                           ...prev,
                           seriesId: series.id,
                           seriesName: series.name,
-                          sheet: isAce ? 'ACE OTS - ' : `${series.name} - `,
+                          sheet: `${series.name} - `,
                         }));
                         setIsFormOpen(true);
                         window.scrollTo({ top: 0, behavior: 'smooth' });
                       }}
                       className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                        isAce
+                        isFeatured
                           ? 'bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-slate-200'
                           : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
                       }`}
@@ -650,9 +705,9 @@ const TestPerformance: React.FC = () => {
                     </button>
 
                     <button
-                      onClick={() => handleCopy(series.url, series.id)}
+                      onClick={() => handleCopy(isGoClasses ? GO_CLASSES_URL : series.url, series.id)}
                       className={`inline-flex items-center justify-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
-                        isAce
+                        isFeatured
                           ? 'bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-slate-300'
                           : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200'
                       }`}
@@ -666,7 +721,7 @@ const TestPerformance: React.FC = () => {
                       <span>{copiedLink === series.id ? 'Copied' : 'Copy'}</span>
                     </button>
 
-                    {!isAce && (
+                    {!isAce && !isGoClasses && (
                       <button
                         onClick={() => {
                           if (confirm(`Remove ${series.name}?`)) {
@@ -727,6 +782,7 @@ const TestPerformance: React.FC = () => {
             <div className="flex flex-wrap gap-2 mt-4">
               {[
                 { key: 'ALL', label: 'All Tests' },
+                { key: 'GO_CLASSES', label: `GO Classes Only (${goClassesTestsCount})` },
                 { key: 'ACE_OTS', label: `ACE OTS Only (${aceTestsCount})` },
                 { key: 'FULL', label: 'Full Mocks (100M)' },
                 { key: 'SECTIONAL', label: 'Sectional' },
