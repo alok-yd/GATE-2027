@@ -93,9 +93,13 @@ const TestPerformance: React.FC = () => {
   };
 
   const isAceTest = (test: MockResult) =>
-    test.seriesId === 'ace-ots-gate-2027' ||
-    test.seriesName?.toLowerCase().includes('ace') ||
-    test.sheet?.toLowerCase().includes('ace');
+    test.seriesId !== GO_CLASSES_SERIES_ID &&
+    !test.seriesName?.toLowerCase().includes('go classes cse-2027') &&
+    (
+      test.seriesId === 'ace-ots-gate-2027' ||
+      test.seriesName?.toLowerCase().includes('ace') ||
+      test.sheet?.toLowerCase().includes('ace')
+    );
 
   const isGoClassesTest = (test: MockResult) =>
     test.seriesId === GO_CLASSES_SERIES_ID ||
@@ -224,8 +228,17 @@ const TestPerformance: React.FC = () => {
             : undefined,
       score,
       totalMarks,
-      rightQuestions: form.rightQuestions ? Number(form.rightQuestions) : undefined,
-      wrongQuestions: form.wrongQuestions ? Number(form.wrongQuestions) : undefined,
+      rightQuestions: form.rightQuestions !== '' ? Number(form.rightQuestions) : undefined,
+      wrongQuestions: form.wrongQuestions !== '' ? Number(form.wrongQuestions) : undefined,
+      accuracy:
+        form.rightQuestions !== '' &&
+        form.wrongQuestions !== '' &&
+        Number(form.rightQuestions) + Number(form.wrongQuestions) > 0
+          ? Math.round(
+              (Number(form.rightQuestions) /
+                (Number(form.rightQuestions) + Number(form.wrongQuestions))) * 1000
+            ) / 10
+          : undefined,
       durationMinutes: Number(form.durationMinutes) || undefined,
       notes: form.notes.trim(),
     });
