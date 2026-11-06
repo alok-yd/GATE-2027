@@ -7,6 +7,7 @@ import { getCurrentPhaseSummary, getStoredSubjects } from '../services/DataExtra
 
 const mahaMrityunjayImage = new URL('../MAHA MRITYUNJAY MANTRA.jpg', import.meta.url).href;
 const mahadevShivShaktiImage = new URL('../Mahadev-shiv shakti.jpg', import.meta.url).href;
+const krishnaAlokAvatar = `${import.meta.env.BASE_URL}achiever-krishna-avatar.webp`;
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -82,11 +83,52 @@ const Dashboard: React.FC = () => {
                 </p>
              </div>
              <div className="flex shrink-0 flex-col items-end gap-2">
-               <img
-                 src="/achiever-banner.jpg"
-                 alt="Achiever — AI Learning & Intelligence. Learn • Practice • Achieve."
-                 className="h-auto w-20 rounded-lg object-contain shadow-lg transition-all duration-500 hover:scale-[1.03] hover:drop-shadow-[0_0_12px_rgba(255,197,46,0.22)] sm:w-28 md:w-40"
-               />
+               <style>{`
+                 @keyframes krishna-avatar-ring-rotate {
+                   to { transform: rotate(360deg); }
+                 }
+                 @keyframes krishna-avatar-halo-pulse {
+                   0%, 100% { opacity: .42; transform: scale(.96); }
+                   50% { opacity: .88; transform: scale(1.07); }
+                 }
+                 @keyframes krishna-avatar-jewel-glow {
+                   0%, 100% { box-shadow: 0 0 5px rgba(103,232,249,.7), 0 0 10px rgba(250,204,21,.25); }
+                   50% { box-shadow: 0 0 9px rgba(103,232,249,1), 0 0 18px rgba(250,204,21,.7); }
+                 }
+                 .krishna-avatar-halo {
+                   position: absolute;
+                   inset: -12px;
+                   border-radius: 9999px;
+                   background: radial-gradient(circle, rgba(250,204,21,.22), rgba(34,211,238,.12) 48%, transparent 72%);
+                   filter: blur(7px);
+                   animation: krishna-avatar-halo-pulse 4.5s ease-in-out infinite;
+                   pointer-events: none;
+                 }
+                 .krishna-avatar-ring {
+                   position: absolute;
+                   inset: -4px;
+                   border-radius: 9999px;
+                   background: conic-gradient(from 0deg, transparent 0deg, rgba(253,224,71,.95) 54deg, rgba(103,232,249,.95) 118deg, rgba(167,139,250,.9) 190deg, transparent 258deg, rgba(250,204,21,.9) 320deg, transparent 360deg);
+                   animation: krishna-avatar-ring-rotate 12s linear infinite;
+                   filter: drop-shadow(0 0 6px rgba(250,204,21,.55)) drop-shadow(0 0 11px rgba(34,211,238,.32));
+                 }
+                 .krishna-avatar-jewel {
+                   animation: krishna-avatar-jewel-glow 3s ease-in-out infinite;
+                 }
+                 @media (prefers-reduced-motion: reduce) {
+                   .krishna-avatar-halo, .krishna-avatar-ring, .krishna-avatar-jewel { animation: none !important; }
+                 }
+               `}</style>
+               <div className="relative mr-1 mt-1 flex h-[76px] w-[76px] shrink-0 items-center justify-center sm:h-[88px] sm:w-[88px] md:h-[104px] md:w-[104px]" title="Alok — walking in Krishna's grace">
+                 <div className="krishna-avatar-halo" />
+                 <div className="krishna-avatar-ring" />
+                 <img
+                   src={krishnaAlokAvatar}
+                   alt="Alok's portrait from his devotional Krishna artwork"
+                   className="relative z-10 h-full w-full rounded-full border-[3px] border-amber-100/90 bg-slate-950 object-cover shadow-[0_0_18px_rgba(250,204,21,0.28)]"
+                 />
+                 <span className="krishna-avatar-jewel absolute -right-1 top-2 z-20 h-3 w-3 rounded-full border border-amber-100 bg-cyan-300 shadow-[0_0_8px_rgba(103,232,249,0.9)]" aria-hidden="true" />
+               </div>
                {/* Streak Badge (Hero) */}
                <div className="hidden md:flex flex-col items-center bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/20">
                   <span className="text-xs font-bold text-blue-200 uppercase tracking-widest mb-1">Current Streak</span>
