@@ -339,13 +339,15 @@ export const DEFAULT_TEST_SERIES: TestSeriesItem[] = [
 
 export const getTestSeriesList = (): TestSeriesItem[] => {
   const stored = safeParse<TestSeriesItem[]>(localStorage.getItem('gate_test_series'), []);
-  const existing = Array.isArray(stored) && stored.length > 0 ? stored : DEFAULT_TEST_SERIES;
+  const hasStoredSeries = Array.isArray(stored) && stored.length > 0;
+  const existing = hasStoredSeries ? stored : DEFAULT_TEST_SERIES;
   const goClassesDefault = DEFAULT_TEST_SERIES.find((series) => series.id === 'go-classes-cse-2027')!;
   const aceDefault = DEFAULT_TEST_SERIES.find((series) => series.id === 'ace-ots-gate-2027')!;
 
   // Add GO Classes to existing installations without replacing or resetting
   // any previously stored custom series or ACE test data.
   const goClassesExists = existing.some((series) => series.id === goClassesDefault.id);
+  const originalAceUrl = existing.find((series) => series.id === aceDefault.id)?.url;
   const merged = goClassesExists
     ? existing.map((series) => series.id === goClassesDefault.id ? goClassesDefault : series)
     : [...existing, goClassesDefault];
@@ -360,12 +362,9 @@ export const getTestSeriesList = (): TestSeriesItem[] => {
     ...merged.filter((series) => series.id !== goClassesDefault.id),
   ];
 
-  if (
-    !goClassesExists ||
-    ordered.some((series, index) => series.id !== existing[index]?.id) ||
-    (ace !== undefined && ace.url !== safeParse<TestSeriesItem[]>(localStorage.getItem('gate_test_series'), [])
-      .find((series) => series.id === aceDefault.id)?.url)
-  ) {
+  const orderChanged = ordered.some((series, index) => series.id !== existing[index]?.id);
+  const aceUrlChanged = Boolean(ace && originalAceUrl !== aceDefault.url);
+  if (!hasStoredSeries || !goClassesExists || orderChanged || aceUrlChanged) {
     localStorage.setItem('gate_test_series', JSON.stringify(ordered));
   }
 
