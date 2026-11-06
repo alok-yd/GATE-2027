@@ -598,12 +598,12 @@ const TestPerformance: React.FC = () => {
                     </span>
                     {series.badge && (
                       <span
-                        className={`px-2.5 py-0.5 rounded-full border text-[11px] font-bold tracking-wide ${
+                        className={`px-2.5 py-0.5 rounded-full text-[11px] ${
                           isGoClasses
-                            ? 'bg-amber-400/20 border-amber-300/50 text-amber-200 shadow-[0_0_16px_rgba(251,191,36,0.14)]'
+                            ? 'border border-amber-300/50 bg-amber-400/20 font-bold tracking-wide text-amber-200 shadow-[0_0_16px_rgba(251,191,36,0.14)]'
                             : isAce
-                              ? 'bg-amber-500/20 border-transparent text-amber-300'
-                              : 'bg-slate-100 border-slate-200 text-slate-600'
+                              ? 'font-semibold bg-amber-500/20 text-amber-300'
+                              : 'font-semibold bg-slate-100 text-slate-600 border border-slate-200'
                         }`}
                       >
                         {series.badge}
@@ -702,7 +702,7 @@ const TestPerformance: React.FC = () => {
                           ...prev,
                           seriesId: series.id,
                           seriesName: series.name,
-                          sheet: `${series.name} - `,
+                          sheet: isAce ? 'ACE OTS - ' : `${series.name} - `,
                         }));
                         setIsFormOpen(true);
                         window.scrollTo({ top: 0, behavior: 'smooth' });
