@@ -110,7 +110,7 @@ const JarvisOverlay: React.FC<JarvisOverlayProps> = ({
           inset: 0;
           z-index: 0;
           pointer-events: none;
-          opacity: .10;
+          opacity: .30;
           background-repeat: no-repeat;
           background-position: center center;
           background-size: cover;
