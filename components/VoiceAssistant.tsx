@@ -89,24 +89,59 @@ const selectIndianMentorVoice = (
   voices: SpeechSynthesisVoice[],
   preferredLanguage: 'hi-IN' | 'en-IN'
 ): SpeechSynthesisVoice | null => {
-  const indianVoices = voices.filter((voice) =>
-    /^(hi|en)-in$/i.test(voice.lang.replace('_', '-'))
+  // The Web Speech API does not expose a reliable gender property. Only
+  // select known Indian male voice identities; never fall back to an unknown
+  // or female voice just because it matches the language locale.
+  const maleVoiceIdentities = [
+    'hemant',
+    'ravi',
+    'madhur',
+    'prabhat',
+    'aarav',
+    'arjun',
+    'kunal',
+    'rehaan',
+    'dhruv',
+  ];
+  const femaleVoiceIdentities = [
+    'heera',
+    'kalpana',
+    'swara',
+    'kavya',
+    'neerja',
+    'aarti',
+    'diya',
+    'meera',
+    'ananya',
+    'aashi',
+    'lavanya',
+    'priya',
+  ];
+
+  const normalizedVoices = voices.map((voice) => ({
+    voice,
+    name: voice.name.toLowerCase().replace(/[^a-z]/g, ''),
+    language: voice.lang.replace('_', '-').toLowerCase(),
+  }));
+
+  const isFemaleVoice = (name: string) =>
+    femaleVoiceIdentities.some((identity) => name.includes(identity));
+  const maleMatches = normalizedVoices.filter(({ name, language }) =>
+    /^(hi|en)-in$/.test(language) &&
+    maleVoiceIdentities.some((identity) => name.includes(identity)) &&
+    !isFemaleVoice(name)
   );
-  const languageVoices = indianVoices.filter((voice) =>
-    voice.lang.replace('_', '-').toLowerCase() === preferredLanguage.toLowerCase()
-  );
-  const preferredNames = /hemant|madhur|prabhat|ravi|amit|rohit|rahul|aarav|male/i;
-  // Prefer a clearly named Indian male voice when the device has one.
-  // Otherwise prefer a matching Indian-language voice over a random accent.
-  return (
-    languageVoices.find((voice) => preferredNames.test(voice.name)) ||
-    languageVoices[0] ||
-    indianVoices.find((voice) => preferredNames.test(voice.name)) ||
-    indianVoices[0] ||
-    voices.find((voice) => voice.default) ||
-    voices[0] ||
-    null
-  );
+
+  const preferredNames = preferredLanguage === 'hi-IN'
+    ? ['hemant', 'madhur', 'kunal', 'rehaan', 'arjun', 'aarav', 'dhruv', 'ravi', 'prabhat']
+    : ['ravi', 'prabhat', 'aarav', 'arjun', 'kunal', 'rehaan', 'hemant', 'madhur', 'dhruv'];
+
+  for (const identity of preferredNames) {
+    const match = maleMatches.find(({ name }) => name.includes(identity));
+    if (match) return match.voice;
+  }
+
+  return null;
 };
 
 const VoiceAssistant: React.FC = () => {
@@ -423,13 +458,25 @@ const VoiceAssistant: React.FC = () => {
         return;
       }
       const preferredVoice = selectIndianMentorVoice(availableVoices, language);
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
-        utterance.lang = preferredVoice.lang || language;
-        console.info('[J.A.R.V.I.S.] Using local speech voice:', preferredVoice.name, preferredVoice.lang);
-      } else {
-        console.info('[J.A.R.V.I.S.] No Indian voice is installed; using the browser default voice.');
+      if (!preferredVoice) {
+        const availableNames = availableVoices.map((voice) => `${voice.name} [${voice.lang}]`);
+        console.warn(
+          '[J.A.R.V.I.S.] No recognised Indian male TTS voice is installed. Available voices:',
+          availableNames
+        );
+        setErrorMessage(
+          'No supported Indian male voice is installed. In Windows, open Settings > Time & language > Speech > Manage voices > Add voices, then install Hindi (India) Hemant and/or English (India) Ravi. Reopen ACHIEVER after installation.'
+        );
+        utteranceRef.current = null;
+        processingRef.current = false;
+        updateStatus('error');
+        if (sessionActiveRef.current) scheduleListeningRestart(900);
+        return;
       }
+
+      utterance.voice = preferredVoice;
+      utterance.lang = preferredVoice.lang || language;
+      console.info('[J.A.R.V.I.S.] Using verified male voice:', preferredVoice.name, preferredVoice.lang);
     } catch (error) {
       console.warn('[J.A.R.V.I.S.] Could not enumerate installed speech voices.', error);
     }
