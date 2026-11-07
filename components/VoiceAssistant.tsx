@@ -118,13 +118,15 @@ const VoiceAssistant: React.FC = () => {
   const [reducedMotion, setReducedMotion] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const recognitionLanguageRef = useRef<'hi-IN' | 'en-IN'>(() => {
-    try {
-      return localStorage.getItem('achiever_jarvis_speech_language') === 'hi-IN' ? 'hi-IN' : 'en-IN';
-    } catch {
-      return 'en-IN';
-    }
-  });
+  const recognitionLanguageRef = useRef<'hi-IN' | 'en-IN'>(
+    (() => {
+      try {
+        return localStorage.getItem('achiever_jarvis_speech_language') === 'hi-IN' ? 'hi-IN' : 'en-IN';
+      } catch {
+        return 'en-IN';
+      }
+    })()
+  );
   const abortControllerRef = useRef<AbortController | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
