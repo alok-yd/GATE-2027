@@ -34,6 +34,7 @@ import {
   getTestPerformanceMentorContext,
 } from './MentorTrackerData';
 import { getSpeakingCoachMentorContext } from './MentorSpeakingData';
+import { getContextualGitaShloka } from './GitaWisdom';
 
 export type MentorMode = 'chat' | 'concept' | 'problem' | 'strategy';
 
@@ -111,6 +112,40 @@ const mentorTools: FunctionDeclaration[] = [
       type: 'object',
       properties: {
         subject: { type: 'string', description: 'Optional subject name. Leave empty for all subjects.' },
+      },
+    },
+  },
+  {
+    name: 'analyse_recent_test_performance',
+    description:
+      'ANALYTICAL TOOL — use this first whenever the user asks to analyse recent tests, identify weak subjects/topics, compare scores, explain improvement/decline, accuracy or test strategy. Default window is the latest 10 saved completed tests from the previous 30 days. Returns normalized score trends, recorded question accuracy, explicitly labelled subject hints, recurring saved mistake patterns, imported analysis evidence and exact schema gaps. It deliberately returns an aggregate analysis, not a transcript of every test. Never read raw test rows aloud.',
+    parameters: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', description: 'Look-back window in days; defaults to 30, maximum 365.', minimum: 1, maximum: 365 },
+        limit: { type: 'integer', description: 'Maximum number of latest tests in the window; defaults to 10.', minimum: 1, maximum: 50 },
+      },
+    },
+  },
+  {
+    name: 'get_daily_goal_digest',
+    description:
+      'ANALYTICAL DAILY-PLAN TOOL — use when asked what to study today, the selected day’s targets, remaining tasks, daily goal or weekly goals. Returns a concise subject-wise grouping of actual Lecture Tracker goal lines, explicit durations only, tracker completion percent, verified AI Focus study time and weekly targets. Goal lines are planned text only; per-line completion status is not stored, so do not call them completed or pending without evidence.',
+    parameters: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: 'Optional app-local calendar date in YYYY-MM-DD. Defaults to today.' },
+      },
+    },
+  },
+  {
+    name: 'get_contextual_gita_shloka',
+    description:
+      'Read-only curated Bhagavad Gita wisdom tool. Use only when the user asks for a shloka/spiritual guidance or when a meaningful moment calls for one (mock setback, anxiety about rank/results, procrastination, consistency, self-doubt/distraction, or comparison). Returns the authentic Sanskrit text, chapter/verse, a clear Hindi interpretation, a relevant practical application and canonical IIT Kanpur text link. Do not insert verses into ordinary technical answers.',
+    parameters: {
+      type: 'object',
+      properties: {
+        situation: { type: 'string', description: 'The user situation or emotional context; may be the latest user message.' },
       },
     },
   },
@@ -517,9 +552,26 @@ const executeMentorTool = (name: string, args: unknown, latestUserPrompt = ''): 
     case 'get_pyq_execution_details':
       return getPYQExecutionMentorContext(readStringArg(args, 'subject'));
 
+    case 'analyse_recent_test_performance':
+      return getTestPerformanceMentorContext(
+        readLimitArg(args, 10, 50),
+        readNumberArg(args, 'days', 30)
+      );
+
     case 'get_mock_history':
     case 'get_test_performance_details':
-      return getTestPerformanceMentorContext(readLimitArg(args, 10, 50));
+      return getTestPerformanceMentorContext(
+        readLimitArg(args, 10, 50),
+        readNumberArg(args, 'days', 30)
+      );
+
+    case 'get_daily_goal_digest': {
+      const requestedDate = readStringArg(args, 'date') || getTodayDateString();
+      return getLectureTrackerMentorContext(requestedDate).todayGoalDigest;
+    }
+
+    case 'get_contextual_gita_shloka':
+      return getContextualGitaShloka(readStringArg(args, 'situation') || latestUserPrompt);
 
     case 'get_weak_subjects': {
       const profile = getStudentProfile();
