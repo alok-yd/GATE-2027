@@ -478,7 +478,15 @@ const VoiceAssistant: React.FC = () => {
       utterance.lang = preferredVoice.lang || language;
       console.info('[J.A.R.V.I.S.] Using verified male voice:', preferredVoice.name, preferredVoice.lang);
     } catch (error) {
-      console.warn('[J.A.R.V.I.S.] Could not enumerate installed speech voices.', error);
+      console.warn('[J.A.R.V.I.S.] Could not verify an installed Indian male speech voice.', error);
+      setErrorMessage(
+        'J.A.R.V.I.S. could not verify an Indian male voice on this device. Install the Windows Hindi (India) Hemant or English (India) Ravi voice, then reopen ACHIEVER.'
+      );
+      utteranceRef.current = null;
+      processingRef.current = false;
+      updateStatus('error');
+      if (sessionActiveRef.current) scheduleListeningRestart(900);
+      return;
     }
 
     utterance.onend = finishAssistantTurn;
