@@ -103,6 +103,7 @@ export class TimerEngine {
       this.accrueTo(Date.now(), this.previousState);
     }
     this.medium = medium;
+    this.focusEngine.setStudyMedium(medium);
     this.emitCurrentTick();
   }
 
@@ -146,6 +147,7 @@ export class TimerEngine {
     this.goal = goal || 'Study session';
     this.mode = mode;
     this.medium = medium || 'Screen Study';
+    this.focusEngine.setStudyMedium(this.medium);
     this.targetSeconds = Math.max(1, Math.floor(targetSeconds));
     this.sessionStartTime = now;
     this.lastTickTimestamp = now;
