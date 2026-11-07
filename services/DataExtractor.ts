@@ -159,12 +159,13 @@ export const getCurrentPhaseSummary = () => {
 
   if (now < feb2027) {
     return {
-      title: 'Full Mock Blitz + Final Sharpening',
-      period: 'November 2026 - February 2027',
+      title: 'Phase 3: Test Analysis + Final Revision',
+      period: 'November 2026 - GATE 2027',
       checkpoints: [
-        ['Full mocks', '3/week'],
-        ['Mock target', '70+/100'],
-        ['Final 10 days', 'No new mocks'],
+        ['Test analysis', 'Every completed test'],
+        ['Question reattempts', 'Within 24-48 hours + 1 week'],
+        ['Weekly focus', 'Top 3 weaknesses'],
+        ['Final revision', 'From 11 January 2027'],
       ],
     };
   }
