@@ -3,7 +3,8 @@ import { ROADMAP_PHASE_1, ROADMAP_PHASE_2_WEEKLY, ROADMAP_PHASE_3_MASTERY } from
 import { WeeklyPlanItem } from '../types';
 
 const Timeline: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'phase1' | 'phase2' | 'phase3'>('phase2');
+  // Phase 3 is the active preparation plan and therefore opens by default.
+  const [activeTab, setActiveTab] = useState<'phase1' | 'phase2' | 'phase3'>('phase3');
 
   const getActiveData = (): WeeklyPlanItem[] => {
     switch (activeTab) {
@@ -46,7 +47,7 @@ const Timeline: React.FC = () => {
               : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
           }`}
         >
-          Phase 3: Mock Blitz + Final Sharpening
+          Phase 3: Test Analysis + Final Revision
         </button>
       </div>
 
@@ -60,9 +61,21 @@ const Timeline: React.FC = () => {
               
               <div className="flex flex-col md:flex-row md:justify-between md:items-start group">
                 <div className="flex-1">
-                  <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 mb-2">
-                    {item.period}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700">
+                      {item.period}
+                    </span>
+                    {activeTab === 'phase3' && item.status === 'in-progress' && (
+                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        CURRENT
+                      </span>
+                    )}
+                    {activeTab === 'phase3' && item.status === 'pending' && (
+                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-slate-100 text-slate-500 border border-slate-200">
+                        UPCOMING
+                      </span>
+                    )}
+                  </div>
                   <h3 className="text-lg font-bold text-slate-800 mb-2">{item.title}</h3>
                   <p className="text-slate-600 mb-4 font-medium italic border-l-4 border-amber-400 pl-3">
                     Goal: {item.goal}
