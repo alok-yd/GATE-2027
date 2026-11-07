@@ -152,7 +152,7 @@ const mentorTools: FunctionDeclaration[] = [
   {
     name: 'get_mock_history',
     description:
-      'Read actual mock and test records stored by the tracker. Use this before reporting marks, mock count, trends, correct or wrong answers.',
+      'Read a compact aggregate view of saved recent mock/test records. Prefer analyse_recent_test_performance for weaknesses, trends and strategy; use this compatibility tool only when the user explicitly asks for a test-history summary or aggregate metrics. Never narrate rows one by one.',
     parameters: {
       type: 'object',
       properties: {
@@ -172,7 +172,7 @@ const mentorTools: FunctionDeclaration[] = [
   {
     name: 'get_test_performance_details',
     description:
-      'Read saved Test Performance mock records and separate imported/manual test-analysis records. Include only recorded scores, attempts, correct/wrong counts, accuracy and notes; do not invent question-wise analysis.',
+      'Read the aggregated Test Performance analysis for the latest saved tests, with separate imported/manual analysis evidence, normalized scores, recorded accuracy, and data gaps. Use analyse_recent_test_performance when the user asks for weakness identification or performance trends. Do not read or narrate every test record; do not invent question-wise analysis.',
     parameters: {
       type: 'object',
       properties: {
