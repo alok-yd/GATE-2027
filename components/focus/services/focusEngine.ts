@@ -22,9 +22,10 @@ const REQUIRED_ABSENT_FRAMES = 6;
 const SCREEN_ABSENCE_CONFIRMATION_MS = 20_000;
 const MIXED_ABSENCE_CONFIRMATION_MS = 90_000;
 const PAPER_ABSENCE_CONFIRMATION_MS = 5 * 60_000;
-// At session start, allow the camera and face detector to stabilise.
+// At session start, allow the camera and face detector to stabilise. The
+// selected study medium controls how long a missing face is treated as a
+// temporary visibility dropout before the session is marked AWAY.
 const INITIAL_ABSENCE_CONFIRMATION_FRAMES = 4;
-const INITIAL_ABSENCE_CONFIRMATION_MS = 8_000;
 
 export interface FocusEngineOutput {
   state: FocusState;
@@ -172,7 +173,7 @@ export class FocusEngine {
       const initialAbsenceDuration = Math.max(0, timestamp - this.candidateSinceTimestamp);
       if (
         this.consecutiveFrames >= INITIAL_ABSENCE_CONFIRMATION_FRAMES &&
-        initialAbsenceDuration >= INITIAL_ABSENCE_CONFIRMATION_MS
+        initialAbsenceDuration >= this.getAbsenceConfirmationMs()
       ) {
         this.confirmedPresence = false;
       }
@@ -232,7 +233,17 @@ export class FocusEngine {
       this.resetPresenceStability();
     }
 
-    const isPersonPresent = cameraAvailable && this.confirmedPresence === true;
+    // The user explicitly starts a session after choosing a study medium.
+    // During the initial face-detector warm-up, a healthy camera plus a
+    // temporary no-face result is treated as probable presence for that
+    // medium's grace window. Once absence is sustained, timing pauses.
+    const initialPresenceGrace =
+      cameraAvailable &&
+      this.sessionActive &&
+      this.confirmedPresence === null &&
+      this.candidatePresence === false;
+    const isPersonPresent =
+      cameraAvailable && (this.confirmedPresence === true || initialPresenceGrace);
     const hasConfirmedAbsence = cameraAvailable && this.confirmedPresence === false;
 
     let nextState: FocusState;
@@ -267,8 +278,10 @@ export class FocusEngine {
       personPresenceState = 'VISION_UNCERTAIN';
     } else if (isPersonPresent) {
       nextState = 'FOCUSED';
-      stateExplanation = 'PRESENT — TIMER RUNNING.';
-      personPresenceState = 'PERSON_PRESENT';
+      stateExplanation = initialPresenceGrace
+        ? 'PRESENCE GRACE — Camera is healthy; allowing temporary face-visibility loss during the selected study mode.'
+        : 'PRESENT — TIMER RUNNING.';
+      personPresenceState = initialPresenceGrace ? 'PERSON_PROBABLY_PRESENT' : 'PERSON_PRESENT';
     } else if (hasConfirmedAbsence) {
       nextState = 'AWAY';
       stateExplanation = 'ABSENT — TIMER PAUSED. Return in front of the webcam to resume.';
