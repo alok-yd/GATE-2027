@@ -45,8 +45,9 @@ export interface TimerTickData {
 export type TimerTickCallback = (data: TimerTickData) => void;
 
 /**
- * One interval owns the countdown. The only state that earns study time is
- * FOCUSED, which FocusEngine emits only after fresh webcam frames detect a face.
+ * One interval owns the countdown. FOCUSED time is earned only while fresh,
+ * healthy webcam frames are available and the FocusEngine confirms presence
+ * or applies the selected study medium's short face-visibility grace window.
  * AWAY and UNVERIFIED time never reduce the remaining target.
  */
 export class TimerEngine {
