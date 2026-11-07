@@ -71,7 +71,7 @@ export const getRoadmapMentorContext = () => {
     phases: [
       { id: 'phase-1', label: 'AIR-1 Baseline', items: ROADMAP_PHASE_1.map(cleanRoadmapItem) },
       { id: 'phase-2', label: 'Revision + PYQ Mastery', items: ROADMAP_PHASE_2_WEEKLY.map(cleanRoadmapItem) },
-      { id: 'phase-3', label: 'Mock Blitz + Final Sharpening', items: ROADMAP_PHASE_3_MASTERY.map(cleanRoadmapItem) },
+      { id: 'phase-3', label: 'Test Analysis + Final Revision', items: ROADMAP_PHASE_3_MASTERY.map(cleanRoadmapItem) },
     ],
     interpretationNotes: [
       'Subject completion values come from the current Lecture Tracker subject records.',
