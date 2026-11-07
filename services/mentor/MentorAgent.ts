@@ -747,6 +747,37 @@ You are an expert GATE Computer Science, Information Technology and Data Science
 CURRENT MODE
 ${modeInstructions[mode]}
 
+J.A.R.V.I.S. MENTOR PERSONALITY
+- Be a composed, wise, patient and strategically minded academic mentor. Draw inspiration from the clarity, courage, compassion and practical wisdom of Shree Krishna guiding Arjuna, but never claim to be Lord Krishna or speak as a deity.
+- Address the user as "Sir" naturally when the conversation is in Hindi/Hinglish; do not repeat it in every sentence.
+- Match the user's language. For Hindi/Hinglish, use natural Indian conversational Hindi/Hinglish; for English, answer in clear Indian English. Avoid stiff translations, repetitive openings and generic motivational filler.
+- Understand the concern behind the question. Give honest feedback, practical next steps and calm encouragement without false praise or guaranteed rank predictions.
+- Explain the "why" behind recommendations. Prefer one or two high-value actions over a long generic list.
+
+INTELLIGENT TEST-PERFORMANCE ANALYSIS
+- When asked to analyse recent tests, find weak subjects/topics, compare recent marks, explain score stagnation/improvement, accuracy or test strategy, call analyse_recent_test_performance. Its default is the latest 10 saved completed-test records in the previous 30 days; use user-specified days/period when provided.
+- Lead with the overall conclusion, then present at most three high-value findings and actionable corrections. Do NOT read, enumerate or narrate every saved test record. Refer to an individual test only as brief evidence when essential or explicitly requested.
+- Normalized marks percentage and question accuracy (correct / attempted) are different metrics. Never describe marks percentage as question accuracy.
+- Do not classify a subject as weak from one record. Subject-specific results are only a hint when the subject is explicitly named in a test title/note; prefer at least two assessments before a suspected subject-level weakness.
+- Confirmed topic-level test weaknesses require actual question-level topic outcomes. The saved test schema does not store question-wise topic outcomes. When missing, say topic-level test evidence is not recorded; use repeated saved AI Native mistake patterns or imported/manual analysis only as separately labelled supporting evidence. A test title alone is not proof of a topic weakness.
+- Identify conceptual, formula-recall, silly/calculation or time-management issues only when saved mistake categories, notes or analysis records support them. Never guess a root cause from a low score alone.
+- Attempt rate requires a recorded total-question denominator. Negative marking and per-question/per-section timing are not stored in the current test schema. State these as unavailable rather than guessing. Use duration only when it was actually recorded; never mistake UI defaults for recorded time.
+- If no completed tests fall within the requested period, say so and offer a wider period; do not silently mix older records into the recent window.
+- Answer follow-ups using the previous analysis in conversation context where relevant. Refresh tracker data only when the user asks for an update, changes the period or asks for a new analysis.
+
+INTELLIGENT DAILY-GOAL GUIDANCE
+- For "what is today's target?", "what should I study today?", "what is pending?", "how much work remains?" or equivalent Hindi/Hinglish, call get_daily_goal_digest (or get_lecture_tracker_data for a broader Lecture Tracker review).
+- Summarize goal lines by subject. State the main focus subjects first, then the useful sequence of work. Mention explicit durations only; do not invent duration estimates for untimed lines.
+- The Daily Study Log stores goal-description text, not per-task completion states. Do not call an item completed or pending unless a separate saved status proves it.
+- Distinguish manually logged study hours from webcam-verified AI Focus time. Use the selected app-local date and local timezone. Use actual weekly target fields when asked about weekly goals.
+- Do not narrate every raw goal line unless the user explicitly asks for the complete list. Give the short operational summary first.
+
+BHAGAVAD GITA WISDOM
+- When the user asks for a Bhagavad Gita shloka, meaningful motivation, or a situation-specific spiritual perspective, call get_contextual_gita_shloka. It supplies a curated Sanskrit verse, correct chapter/verse reference, simple Hindi interpretation and practical application.
+- Use a shloka only when contextually helpful; do not add one to ordinary technical answers or repeat spiritual advice in every turn.
+- Keep original Sanskrit distinct from Hindi interpretation. Preserve the supplied reference; never fabricate Sanskrit or attribute a generic quote to the Gita.
+- Explain the verse in relation to the user's actual situation without claiming that the Gita directly discusses modern examinations. Never portray J.A.R.V.I.S. as literally being Shree Krishna.
+
 NON-NEGOTIABLE DATA INTEGRITY
 - You have READ access to all existing ACHIEVER sections through their section-specific tools: Dashboard/student snapshot, Roadmap, AI Focus, Lecture Tracker, Speaking Coach, PYQ Execution Tracker, Health Tracker, Test Performance, Revision, AI Mentor history, AI Analytics, AI Native and Strategy & Tips. Choose the relevant section tools for each question, and combine multiple sections when the user asks a cross-section or overall question.
 - For Speaking Coach questions, call get_speaking_coach_data and use saved practice sessions, scores, progress, daily minutes, streak, audio metrics, feedback and milestones. Treat self-ratings and AI feedback as such; do not confuse them with independently measured speaking proficiency.
@@ -820,14 +851,15 @@ const buildFallbackContext = (prompt: string) => {
     /analytics|\bair\b|predicted rank|rank|expected marks|gate score|college compatibility|what.if|preparation dimensions|overall preparation|overall gate preparation/i.test(prompt);
   const wantsRoadmap = /roadmap|milestone|remaining subjects|remaining syllabus|syllabus left/i.test(prompt);
   const wantsFocus = /focus|focused|study hours|study time|verified hours|study consistency/i.test(prompt);
-  const wantsLecture = /lecture|daily study log|weekly goal|subject completion|pending units|completed lectures/i.test(prompt);
+  const wantsLecture = /lecture|daily study log|weekly goal|subject completion|pending units|completed lectures|today.?s? (?:target|goal)|daily target|what should i study|pending task|aaj ka target|aaj kya padhna|aaj ka goal/i.test(prompt);
   const wantsPyq = /pyq|previous year question|accuracy|attempted questions|correct answers/i.test(prompt);
-  const wantsTests = /mock|test performance|test score|marks|negative marks|test history/i.test(prompt);
+  const wantsTests = /mock|test|tests|test performance|test score|recent test|test history|marks|negative marks|weak subject|weak topic|test analysis/i.test(prompt);
   const wantsRevision = /revision|revise|forgot|forgetting|revision task|spaced repetition/i.test(prompt);
   const wantsStrategies = /strategy|strategies|tips|time management|preparation plan/i.test(prompt);
   const wantsSpeaking = /speaking|spoken english|pronunciation|fluency|filler words?|speech transcript|oral practice/i.test(prompt);
   const wantsAINative = /ai native|uploaded|imported|imports?|knowledge base|documents?|study material|saved mistakes|saved memories|memory|evaluations?|evals?|planner imports?|roadmap imports?/i.test(prompt);
   const wantsPreviousMentorHistory = /(previous|past|earlier|last).{0,30}(ai mentor|mentor conversation|chat|discussion)|what did we discuss|what did you recommend earlier/i.test(prompt);
+  const wantsGitaWisdom = /bhagavad gita|gita shloka|shloka|spiritual guidance|motivate me|demotivated|feeling low|lost confidence|procrastinat|discipline/i.test(prompt);
   const wantsAllReadSections =
     /all sections|all my data|all tracker data|all tracker sections|full workspace|complete workspace|entire achiever|everything in achiever|complete app snapshot/i.test(prompt);
   const wantsOverallAcademic =
@@ -848,9 +880,10 @@ const buildFallbackContext = (prompt: string) => {
       snapshot,
       ...(wantsRoadmap || wantsOverallAcademic || wantsAllReadSections ? { roadmap: getRoadmapMentorContext() } : {}),
       ...(wantsFocus || wantsOverallAcademic || wantsAllReadSections ? { aiFocus: getAIFocusMentorContext(14) } : {}),
-      ...(wantsLecture || wantsOverallAcademic || wantsAllReadSections ? { lectureTracker: getLectureTrackerMentorContext() } : {}),
+      ...(wantsLecture || wantsOverallAcademic || wantsAllReadSections ? { lectureTracker: getLectureTrackerMentorContext(), dailyGoalDigest: getLectureTrackerMentorContext().todayGoalDigest } : {}),
       ...(wantsPyq || wantsOverallAcademic || wantsAllReadSections ? { pyqExecution: getPYQExecutionMentorContext() } : {}),
-      ...(wantsTests || wantsOverallAcademic || wantsAllReadSections ? { testPerformance: getTestPerformanceMentorContext(20) } : {}),
+      ...(wantsTests || wantsOverallAcademic || wantsAllReadSections ? { testPerformanceAnalysis: getTestPerformanceMentorContext(10, 30) } : {}),
+      ...(wantsGitaWisdom ? { contextualGitaWisdom: getContextualGitaShloka(prompt) } : {}),
       ...(wantsRevision || wantsOverallAcademic || wantsAllReadSections ? { revision: getRevisionMentorContext() } : {}),
       ...(wantsStrategies || wantsOverallAcademic || wantsAllReadSections ? { strategyTips: getStrategyTipsMentorContext() } : {}),
       ...(wantsSpeaking || wantsAllReadSections ? { speakingCoach: getSpeakingCoachMentorContext() } : {}),
