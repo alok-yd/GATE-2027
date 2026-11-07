@@ -43,6 +43,72 @@ const cleanForSpeech = (value: string) =>
     .replace(/\s+/g, ' ')
     .trim();
 
+const ROMAN_HINDI_TOKENS = new Set([
+  'aap', 'aapka', 'aapki', 'aapke', 'aaj', 'abhi', 'apna', 'apne',
+  'bahut', 'bhi', 'chahiye', 'hai', 'hain', 'ho', 'hoga', 'hogi',
+  'kar', 'karein', 'karen', 'karo', 'karna', 'ki', 'kya', 'liye',
+  'lekin', 'maine', 'mujhe', 'mera', 'meri', 'mere', 'mein', 'mat',
+  'nahi', 'nahin', 'par', 'pehle', 'phir', 'raha', 'rahi', 'rahe',
+  'sakta', 'sakti', 'sakte', 'sirf', 'toh', 'ye', 'yah', 'ya',
+  'humein', 'hum', 'tum', 'unka', 'unki', 'unke', 'thoda', 'thodi',
+  'zaroori', 'dhyan', 'padhai', 'padhiye', 'samajh', 'sahi', 'galat',
+]);
+
+const detectSpeechLanguage = (text: string): 'hi-IN' | 'en-IN' => {
+  if (/[\\u0900-\\u097f]/.test(text)) return 'hi-IN';
+  const words = text.toLowerCase().match(/[a-z]+/g) || [];
+  const hindiWords = words.filter((word) => ROMAN_HINDI_TOKENS.has(word)).length;
+  return hindiWords >= 2 && hindiWords / Math.max(1, words.length) >= 0.07
+    ? 'hi-IN'
+    : 'en-IN';
+};
+
+const waitForSpeechVoices = async (): Promise<SpeechSynthesisVoice[]> => {
+  const synthesis = window.speechSynthesis;
+  const immediate = synthesis.getVoices();
+  if (immediate.length) return immediate;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      synthesis.removeEventListener?.('voiceschanged', handleVoicesChanged);
+      resolve(synthesis.getVoices());
+    };
+    const handleVoicesChanged = () => {
+      if (synthesis.getVoices().length) finish();
+    };
+    const timeoutId = window.setTimeout(finish, 900);
+    synthesis.addEventListener?.('voiceschanged', handleVoicesChanged);
+  });
+};
+
+const selectIndianMentorVoice = (
+  voices: SpeechSynthesisVoice[],
+  preferredLanguage: 'hi-IN' | 'en-IN'
+): SpeechSynthesisVoice | null => {
+  const indianVoices = voices.filter((voice) =>
+    /^(hi|en)-in$/i.test(voice.lang.replace('_', '-'))
+  );
+  const languageVoices = indianVoices.filter((voice) =>
+    voice.lang.replace('_', '-').toLowerCase() === preferredLanguage.toLowerCase()
+  );
+  const preferredNames = /hemant|madhur|prabhat|ravi|amit|rohit|rahul|aarav|male/i;
+  // Prefer a clearly named Indian male voice when the device has one.
+  // Otherwise prefer a matching Indian-language voice over a random accent.
+  return (
+    languageVoices.find((voice) => preferredNames.test(voice.name)) ||
+    languageVoices[0] ||
+    indianVoices.find((voice) => preferredNames.test(voice.name)) ||
+    indianVoices[0] ||
+    voices.find((voice) => voice.default) ||
+    voices[0] ||
+    null
+  );
+};
+
 const VoiceAssistant: React.FC = () => {
   const [status, setStatus] = useState<JarvisVoiceStatus>('idle');
   const [sessionActive, setSessionActive] = useState(false);
@@ -320,24 +386,36 @@ const VoiceAssistant: React.FC = () => {
     }
   };
 
-  const speakResponse = (text: string) => {
+  const speakResponse = async (text: string) => {
     const speechText = cleanForSpeech(text).slice(0, 1800);
     if (!speechText || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
       finishAssistantTurn();
       return;
     }
 
+    const language = detectSpeechLanguage(speechText);
     const utterance = new SpeechSynthesisUtterance(speechText);
-    utterance.lang = 'en-IN';
-    utterance.rate = 0.96;
-    utterance.pitch = 1;
+    utterance.lang = language;
+    utterance.rate = 0.93;
+    utterance.pitch = 0.96;
 
-    const availableVoices = window.speechSynthesis.getVoices();
-    const preferredVoice =
-      availableVoices.find((voice) => voice.lang.toLowerCase() === 'en-in') ||
-      availableVoices.find((voice) => voice.lang.toLowerCase().startsWith('en-in')) ||
-      availableVoices.find((voice) => voice.lang.toLowerCase().startsWith('en-'));
-    if (preferredVoice) utterance.voice = preferredVoice;
+    try {
+      const availableVoices = await waitForSpeechVoices();
+      if (!sessionActiveRef.current) {
+        finishAssistantTurn();
+        return;
+      }
+      const preferredVoice = selectIndianMentorVoice(availableVoices, language);
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+        utterance.lang = preferredVoice.lang || language;
+        console.info('[J.A.R.V.I.S.] Using local speech voice:', preferredVoice.name, preferredVoice.lang);
+      } else {
+        console.info('[J.A.R.V.I.S.] No Indian voice is installed; using the browser default voice.');
+      }
+    } catch (error) {
+      console.warn('[J.A.R.V.I.S.] Could not enumerate installed speech voices.', error);
+    }
 
     utterance.onend = finishAssistantTurn;
     utterance.onerror = finishAssistantTurn;
