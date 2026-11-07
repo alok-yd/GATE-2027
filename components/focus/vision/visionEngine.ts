@@ -252,7 +252,9 @@ export class VisionEngine {
             delegate: 'CPU',
           },
           runningMode: 'VIDEO',
-          minDetectionConfidence: 0.45,
+          // Slightly more permissive than the default to reduce missed
+          // detections on ordinary laptop webcams, low light, and mild head tilt.
+          minDetectionConfidence: 0.30,
           minSuppressionThreshold: 0.3,
         }),
         20000,
@@ -402,7 +404,7 @@ export class VisionEngine {
             ? Math.max(0, ...detection.categories.map((category) => Number(category.score) || 0))
             : 0;
           const score = Math.max(categoryScore, Number(detection.score) || 0);
-          return score >= 0.45;
+          return score >= 0.30;
         });
       } catch (error) {
         console.warn('[AI Focus] MediaPipe frame detection failed; switching to local fallback.', error);
