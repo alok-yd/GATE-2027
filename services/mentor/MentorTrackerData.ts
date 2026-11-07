@@ -371,7 +371,7 @@ const safeReadRawMockFields = () => {
     if (!Array.isArray(parsed)) return new Map<string, Record<string, unknown>>();
     const entries: Array<[string, Record<string, unknown>]> = parsed
       .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-      .map((item) => [String(item.id || ''), item]);
+      .map((item): [string, Record<string, unknown>] => [String(item.id || ''), item]);
     return new Map<string, Record<string, unknown>>(entries);
   } catch {
     return new Map<string, Record<string, unknown>>();
@@ -589,15 +589,16 @@ export const getTestPerformanceMentorContext = (limit = 10, requestedDays = 30) 
 
   const subjectHints = Array.from(new Set(inWindow.flatMap((test) => test.recordedSubjectHints)));
   const topicLabels = Array.from(new Set(inWindow.map((test) => test.explicitTopicLabel).filter((topic): topic is string => Boolean(topic))));
+  const testsWithValidDates = allMocks.filter((test) => getTestDateTimestamp(test.date) != null).length;
 
   return {
     source: 'Test Performance saved gate_mocks records; raw saved fields are used so UI fallback values are not mistaken for recorded evidence.',
     capturedAt: new Date().toISOString(),
     requestedWindow: { days: validDays, maximumTests: validLimit },
     totalRecordedTests: allMocks.length,
-    testsWithValidDates: allMocks.filter((test) => getTestDateTimestamp(test.date) != null).length,
+    testsWithValidDates,
     testsInRequestedWindow: inWindow.length,
-    availableTestsOutsideWindow: allMocks.length - inWindow.length,
+    availableTestsOutsideWindow: Math.max(0, testsWithValidDates - inWindow.length),
     summary: {
       normalizedScoreAveragePercent: averageScore,
       normalizedScorePeakPercent: peakScore,
