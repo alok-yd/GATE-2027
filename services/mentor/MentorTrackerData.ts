@@ -13,7 +13,7 @@ import {
   getSubjectLectureStatus,
   getWeeklyTargets,
 } from '../DataExtractor';
-import { getMistakePatterns, listMistakes, listTestAnalyses } from '../AINativeServices';
+import { listMistakes, listTestAnalyses } from '../AINativeServices';
 import {
   getTodayDateString,
   StorageService,
@@ -368,12 +368,11 @@ const safeReadRawMockFields = () => {
   try {
     const value = localStorage.getItem('gate_mocks');
     const parsed: unknown = value ? JSON.parse(value) : [];
-    return Array.isArray(parsed)
-      ? new Map(parsed.filter((item) => item && typeof item === 'object').map((item) => [
-          String((item as Record<string, unknown>).id || ''),
-          item as Record<string, unknown>,
-        ]))
-      : new Map<string, Record<string, unknown>>();
+    if (!Array.isArray(parsed)) return new Map<string, Record<string, unknown>>();
+    const entries: Array<[string, Record<string, unknown>]> = parsed
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+      .map((item) => [String(item.id || ''), item]);
+    return new Map<string, Record<string, unknown>>(entries);
   } catch {
     return new Map<string, Record<string, unknown>>();
   }
@@ -487,12 +486,15 @@ export const getTestPerformanceMentorContext = (limit = 10, requestedDays = 30) 
   }
 
   const accuracyRows = inWindow.filter((test) => test.measuredAccuracyPercent != null);
-  const totalAttempted = accuracyRows.reduce((sum, test) => sum + (test.attemptedQuestions || 0), 0);
-  const totalCorrect = accuracyRows.reduce((sum, test) => sum + (test.correctQuestions || 0), 0);
-  const hasQuestionCounts = accuracyRows.some((test) =>
-    test.attemptedQuestions != null && test.correctQuestions != null
+  const questionCountRows = inWindow.filter((test) =>
+    test.attemptedQuestions != null &&
+    test.correctQuestions != null &&
+    test.attemptedQuestions > 0 &&
+    test.correctQuestions >= 0
   );
-  const weightedAccuracy = hasQuestionCounts && totalAttempted > 0
+  const totalAttempted = questionCountRows.reduce((sum, test) => sum + (test.attemptedQuestions || 0), 0);
+  const totalCorrect = questionCountRows.reduce((sum, test) => sum + (test.correctQuestions || 0), 0);
+  const weightedAccuracy = questionCountRows.length > 0 && totalAttempted > 0
     ? Number(((totalCorrect / totalAttempted) * 100).toFixed(1))
     : null;
 
