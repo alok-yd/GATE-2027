@@ -13,7 +13,7 @@ import {
   getSubjectLectureStatus,
   getWeeklyTargets,
 } from '../DataExtractor';
-import { listTestAnalyses } from '../AINativeServices';
+import { getMistakePatterns, listMistakes, listTestAnalyses } from '../AINativeServices';
 import {
   getTodayDateString,
   StorageService,
@@ -160,8 +160,90 @@ export const getAIFocusMentorContext = (requestedDays = 14) => {
   };
 };
 
-export const getLectureTrackerMentorContext = () => {
-  const today = getTodayDateString();
+const parseGoalDurationMinutes = (line: string): number | null => {
+  const hours = line.match(/\\b(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hour|hours)\\b/i);
+  if (hours) return Math.round(Number(hours[1]) * 60);
+  const minutes = line.match(/\\b(\\d+)\\s*(?:m|min|mins|minute|minutes)\\b/i);
+  return minutes ? Number(minutes[1]) : null;
+};
+
+const buildDailyGoalDigest = (
+  selectedDate: string,
+  todayLog: ReturnType<typeof getDailyLogs>[number] | null
+) => {
+  const rawLines = String(todayLog?.goalDescription || '')
+    .split(/\\r?\\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const groups = new Map<string, { subject: string; items: string[]; estimatedMinutes: number; timedItems: number }>();
+  rawLines.forEach((rawLine) => {
+    const cleaned = rawLine.replace(/^\\[AI Mentor\\]\\s*/i, '');
+    const match = cleaned.match(/^([^:]{2,48}):\\s*(.+)$/);
+    const subject = (match?.[1] || todayLog?.subject || 'Unassigned').trim();
+    const item = (match?.[2] || cleaned).trim();
+    const duration = parseGoalDurationMinutes(item);
+    const current = groups.get(subject) || {
+      subject,
+      items: [],
+      estimatedMinutes: 0,
+      timedItems: 0,
+    };
+    current.items.push(item);
+    if (duration !== null) {
+      current.estimatedMinutes += duration;
+      current.timedItems += 1;
+    }
+    groups.set(subject, current);
+  });
+
+  const subjectGroups = Array.from(groups.values()).map((group) => ({
+    subject: group.subject,
+    plannedItemCount: group.items.length,
+    plannedItems: group.items,
+    estimatedMinutesFromExplicitDurations: group.estimatedMinutes,
+    itemsWithExplicitDuration: group.timedItems,
+    itemsWithoutExplicitDuration: group.items.length - group.timedItems,
+  }));
+
+  const settings = StorageService.getSettings();
+  const verifiedToday = StorageService.getVerifiedStudyBreakdownForDate(selectedDate);
+  const targetSeconds = Math.max(0, Number(settings.dailyTargetHours || 0) * 3600);
+
+  return {
+    date: selectedDate,
+    hasDailyLog: Boolean(todayLog),
+    primaryFocusSubjects: subjectGroups.map((group) => group.subject),
+    subjectGroups,
+    totalPlannedItems: rawLines.length,
+    estimatedMinutesWithExplicitDurations: subjectGroups.reduce(
+      (sum, group) => sum + group.estimatedMinutesFromExplicitDurations,
+      0
+    ),
+    itemsWithoutExplicitDuration: subjectGroups.reduce(
+      (sum, group) => sum + group.itemsWithoutExplicitDuration,
+      0
+    ),
+    trackerCompletionPercent: todayLog?.completionPercentage ?? null,
+    manuallyLoggedStudyHours: todayLog?.hoursStudied ?? null,
+    verifiedStudyTime: {
+      ...verifiedToday,
+      dailyTargetSeconds: targetSeconds,
+      remainingTargetSeconds: Math.max(0, targetSeconds - verifiedToday.totalSeconds),
+    },
+    weeklyTargets: getWeeklyTargets().slice(-8),
+    interpretationRules: [
+      'Goal-description lines are grouped by the subject prefix before the first colon when present; otherwise the Daily Study Log subject is used.',
+      'These lines are planned work, not verified task-completion records.',
+      'The existing tracker does not store an individual completed/pending state for each goal line.',
+      'Duration estimates include only explicit time values written in the goal text; no duration is invented for untimed items.',
+      'Verified study time comes from the AI Focus persistent ledger; manually logged hours are shown separately.',
+    ],
+  };
+};
+
+export const getLectureTrackerMentorContext = (requestedDate = getTodayDateString()) => {
+  const today = /^\\d{4}-\\d{2}-\\d{2}$/.test(requestedDate) ? requestedDate : getTodayDateString();
   const subjects = getStoredSubjects();
   const logs = getDailyLogs();
   const weeklyTargets = getWeeklyTargets();
@@ -203,6 +285,7 @@ export const getLectureTrackerMentorContext = () => {
       remainingLectures: subjectProgress.reduce((sum, subject) => sum + subject.remainingLectures, 0),
     },
     todayLog,
+    todayGoalDigest: buildDailyGoalDigest(today, todayLog),
     recentDailyLogs: recentLogs,
     weeklyTargets: weeklyTargets.slice(-16),
     dataQuality: [
@@ -268,21 +351,295 @@ export const getPYQExecutionMentorContext = (subjectFilter = '') => {
   };
 };
 
-export const getTestPerformanceMentorContext = (limit = 20) => {
-  const validLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.floor(limit))) : 20;
-  const mocks = getMockResults().slice(-validLimit).reverse();
-  const analyses = listTestAnalyses().slice(0, Math.min(validLimit, 20));
+const normalizeTestLabel = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+const getTestDateTimestamp = (value: unknown): number | null => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const isoDate = raw.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+  const timestamp = isoDate
+    ? new Date(Number(isoDate[1]), Number(isoDate[2]) - 1, Number(isoDate[3])).getTime()
+    : new Date(raw).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const safeReadRawMockFields = () => {
+  try {
+    const value = localStorage.getItem('gate_mocks');
+    const parsed: unknown = value ? JSON.parse(value) : [];
+    return Array.isArray(parsed)
+      ? new Map(parsed.filter((item) => item && typeof item === 'object').map((item) => [
+          String((item as Record<string, unknown>).id || ''),
+          item as Record<string, unknown>,
+        ]))
+      : new Map<string, Record<string, unknown>>();
+  } catch {
+    return new Map<string, Record<string, unknown>>();
+  }
+};
+
+export const getTestPerformanceMentorContext = (limit = 10, requestedDays = 30) => {
+  const validLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.floor(limit))) : 10;
+  const validDays = Number.isFinite(requestedDays) ? Math.max(1, Math.min(365, Math.floor(requestedDays))) : 30;
+  const now = Date.now();
+  const cutoff = now - validDays * 24 * 60 * 60 * 1000;
+  const allMocks = getMockResults();
+  const rawFields = safeReadRawMockFields();
+
+  // Saved gate_mocks entries are completed test-result records. Do not use
+  // getMockResults' UI display defaults as evidence for missing duration fields.
+  const inWindow = allMocks
+    .map((mock) => {
+      const raw = rawFields.get(String(mock.id || '')) || {};
+      const testTimestamp = getTestDateTimestamp(mock.date);
+      if (testTimestamp === null) return null;
+      const normalizedScorePercent = Number(mock.totalMarks) > 0
+        ? Number(((Number(mock.score) / Number(mock.totalMarks)) * 100).toFixed(1))
+        : null;
+      const correct = raw.rightQuestions == null ? null : Number(raw.rightQuestions);
+      const wrong = raw.wrongQuestions == null ? null : Number(raw.wrongQuestions);
+      const explicitAttempted = raw.attempted == null ? null : Number(raw.attempted);
+      const attempted = explicitAttempted != null && Number.isFinite(explicitAttempted)
+        ? explicitAttempted
+        : correct != null && wrong != null && Number.isFinite(correct) && Number.isFinite(wrong)
+          ? correct + wrong
+          : null;
+      const measuredAccuracy = attempted != null && attempted > 0 && correct != null && Number.isFinite(correct)
+        ? Number(((correct / attempted) * 100).toFixed(1))
+        : raw.accuracy != null && Number.isFinite(Number(raw.accuracy))
+          ? Number(Number(raw.accuracy).toFixed(1))
+          : null;
+
+      const label = String(raw.sheet || mock.sheet || '');
+      const notes = String(raw.notes || mock.notes || '');
+      const labelText = normalizeTestLabel(label);
+      const notesText = normalizeTestLabel(notes);
+      const subjectMatches = getStoredSubjects()
+        .map((subject) => String(subject.name || '').trim())
+        .filter((subject) => subject.length >= 3)
+        .filter((subject) =>
+          labelText.includes(normalizeTestLabel(subject)) ||
+          notesText.includes(normalizeTestLabel(subject))
+        );
+
+      const topicLabel = /(?:topic|chapter)\\s*[:=-]\\s*([^,;\\n]+)/i.exec(notes)?.[1]?.trim() || null;
+      const rawDuration = raw.durationMinutes == null ? null : Number(raw.durationMinutes);
+      const durationMinutes = rawDuration != null && Number.isFinite(rawDuration) && rawDuration > 0
+        ? rawDuration
+        : null;
+
+      return {
+        id: mock.id,
+        date: mock.date,
+        timestamp: testTimestamp,
+        testName: label || 'Unnamed test',
+        testType: mock.testType || null,
+        seriesName: mock.seriesName || null,
+        seriesId: mock.seriesId || null,
+        score: Number(mock.score),
+        totalMarks: Number(mock.totalMarks),
+        normalizedScorePercent,
+        attemptedQuestions: attempted,
+        correctQuestions: correct,
+        wrongQuestions: wrong,
+        measuredAccuracyPercent: measuredAccuracy,
+        durationMinutes,
+        recordedSubjectHints: Array.from(new Set(subjectMatches)),
+        explicitTopicLabel: topicLabel,
+        notes: notes ? notes.slice(0, 360) : null,
+      };
+    })
+    .filter((test): test is NonNullable<typeof test> => Boolean(test && test.timestamp >= cutoff && test.timestamp <= now + 24 * 60 * 60 * 1000))
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-validLimit);
+
+  const scoreRows = inWindow.filter((test) => test.normalizedScorePercent != null);
+  const scoreValues = scoreRows.map((test) => test.normalizedScorePercent as number);
+  const mean = (values: number[]) => values.length
+    ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1))
+    : null;
+  const averageScore = mean(scoreValues);
+  const peakScore = scoreValues.length ? Number(Math.max(...scoreValues).toFixed(1)) : null;
+  const latestScoredTest = [...inWindow].reverse().find((test) => test.normalizedScorePercent != null) || null;
+
+  let scoreTrend: Record<string, unknown> = {
+    direction: 'insufficient_data',
+    earlierAveragePercent: null,
+    latestAveragePercent: null,
+    changePercentagePoints: null,
+    note: 'At least four tests with valid maximum marks are required for a balanced first-half vs second-half trend comparison.',
+  };
+  if (scoreValues.length >= 4) {
+    const midpoint = Math.floor(scoreValues.length / 2);
+    const earlierAverage = mean(scoreValues.slice(0, midpoint));
+    const latestAverage = mean(scoreValues.slice(midpoint));
+    const change = earlierAverage != null && latestAverage != null
+      ? Number((latestAverage - earlierAverage).toFixed(1))
+      : null;
+    scoreTrend = {
+      direction: change == null ? 'insufficient_data' : change > 2 ? 'improving' : change < -2 ? 'declining' : 'broadly_stable',
+      earlierAveragePercent: earlierAverage,
+      latestAveragePercent: latestAverage,
+      changePercentagePoints: change,
+      note: 'Comparison uses the chronological first half and second half of the selected recent test window; it is a descriptive trend, not a causal conclusion.',
+    };
+  }
+
+  const accuracyRows = inWindow.filter((test) => test.measuredAccuracyPercent != null);
+  const totalAttempted = accuracyRows.reduce((sum, test) => sum + (test.attemptedQuestions || 0), 0);
+  const totalCorrect = accuracyRows.reduce((sum, test) => sum + (test.correctQuestions || 0), 0);
+  const hasQuestionCounts = accuracyRows.some((test) =>
+    test.attemptedQuestions != null && test.correctQuestions != null
+  );
+  const weightedAccuracy = hasQuestionCounts && totalAttempted > 0
+    ? Number(((totalCorrect / totalAttempted) * 100).toFixed(1))
+    : null;
+
+  const subjectPerformance = new Map<string, { subject: string; tests: Array<{ date: string; testName: string; normalizedScorePercent: number }> }>();
+  inWindow.forEach((test) => {
+    if (test.recordedSubjectHints.length !== 1 || test.normalizedScorePercent == null) return;
+    const subject = test.recordedSubjectHints[0];
+    const row = subjectPerformance.get(subject) || { subject, tests: [] };
+    row.tests.push({
+      date: test.date,
+      testName: test.testName,
+      normalizedScorePercent: test.normalizedScorePercent,
+    });
+    subjectPerformance.set(subject, row);
+  });
+
+  const subjectSignals = Array.from(subjectPerformance.values()).map((row) => {
+    const averagePercent = mean(row.tests.map((test) => test.normalizedScorePercent));
+    return {
+      subject: row.subject,
+      testCount: row.tests.length,
+      averageNormalizedScorePercent: averagePercent,
+      evidence: row.tests,
+      classification: row.tests.length >= 2 && averagePercent != null && averagePercent < 60
+        ? 'suspected_subject_weakness'
+        : row.tests.length >= 2 && averagePercent != null && averagePercent >= 80
+          ? 'relative_strength_signal'
+          : 'insufficient_subject_level_sample',
+    };
+  });
+
+  const mistakeCutoff = now - Math.max(validDays, 90) * 24 * 60 * 60 * 1000;
+  const recentMistakes = listMistakes().filter((mistake) => {
+    const timestamp = Date.parse(mistake.createdAt);
+    return Number.isFinite(timestamp) && timestamp >= mistakeCutoff && timestamp <= now;
+  });
+  const repeatedMistakes = new Map<string, {
+    subject: string;
+    topic: string;
+    category: string;
+    count: number;
+    latestAt: string;
+    preventionStrategies: string[];
+  }>();
+  recentMistakes.forEach((mistake) => {
+    const key = [
+      normalizeTestLabel(mistake.subject),
+      normalizeTestLabel(mistake.topic),
+      mistake.category,
+    ].join('|');
+    const existing = repeatedMistakes.get(key) || {
+      subject: mistake.subject,
+      topic: mistake.topic,
+      category: mistake.category,
+      count: 0,
+      latestAt: mistake.createdAt,
+      preventionStrategies: [],
+    };
+    existing.count += 1;
+    if (mistake.createdAt > existing.latestAt) existing.latestAt = mistake.createdAt;
+    if (mistake.preventionStrategy && !existing.preventionStrategies.includes(mistake.preventionStrategy)) {
+      existing.preventionStrategies.push(mistake.preventionStrategy);
+    }
+    repeatedMistakes.set(key, existing);
+  });
+
+  const repeatedMistakePatterns = Array.from(repeatedMistakes.values())
+    .filter((pattern) => pattern.count >= 2)
+    .sort((a, b) => b.count - a.count || b.latestAt.localeCompare(a.latestAt))
+    .slice(0, 12);
+
+  const importedAnalyses = listTestAnalyses()
+    .filter((analysis) => {
+      const created = Date.parse(analysis.createdAt);
+      return Number.isFinite(created) && created >= cutoff && created <= now;
+    })
+    .slice(0, Math.min(validLimit, 20))
+    .map((analysis) => ({
+      createdAt: analysis.createdAt,
+      score: analysis.score,
+      totalMarks: analysis.totalMarks,
+      attempted: analysis.attempted,
+      correct: analysis.correct,
+      wrong: analysis.wrong,
+      durationMinutes: analysis.durationMinutes,
+      weakSubjects: analysis.weakSubjects,
+      timeManagementIssues: analysis.timeManagementIssues,
+      accuracyIssues: analysis.accuracyIssues,
+      correctiveActions: analysis.correctiveActions,
+      evidenceType: 'separate imported/manual document analysis; not merged into saved test score rows',
+    }));
+
+  const subjectHints = Array.from(new Set(inWindow.flatMap((test) => test.recordedSubjectHints)));
+  const topicLabels = Array.from(new Set(inWindow.map((test) => test.explicitTopicLabel).filter((topic): topic is string => Boolean(topic))));
 
   return {
-    source: 'Test Performance gate_mocks records plus separate AI Native imported/manual test-analysis records.',
+    source: 'Test Performance saved gate_mocks records; raw saved fields are used so UI fallback values are not mistaken for recorded evidence.',
     capturedAt: new Date().toISOString(),
-    totalRecordedTests: getMockResults().length,
-    recentTests: mocks,
-    importedOrManualAnalyses: analyses,
+    requestedWindow: { days: validDays, maximumTests: validLimit },
+    totalRecordedTests: allMocks.length,
+    testsWithValidDates: allMocks.filter((test) => getTestDateTimestamp(test.date) != null).length,
+    testsInRequestedWindow: inWindow.length,
+    availableTestsOutsideWindow: allMocks.length - inWindow.length,
+    summary: {
+      normalizedScoreAveragePercent: averageScore,
+      normalizedScorePeakPercent: peakScore,
+      latestScoredTest: latestScoredTest
+        ? { date: latestScoredTest.date, testName: latestScoredTest.testName, normalizedScorePercent: latestScoredTest.normalizedScorePercent }
+        : null,
+      measuredWeightedAccuracyPercent: weightedAccuracy,
+      testsWithQuestionAccuracy: accuracyRows.length,
+      questionAttemptRatePercent: null,
+      negativeMarking: 'Not recorded in the existing test-result schema.',
+      timeManagement: {
+        recordedDurationsMinutes: inWindow.filter((test) => test.durationMinutes != null).map((test) => ({
+          date: test.date,
+          testName: test.testName,
+          durationMinutes: test.durationMinutes,
+        })),
+        perQuestionTime: 'Not recorded.',
+        perSectionTime: 'Not recorded.',
+        timeManagementConclusion: 'Insufficient timing evidence to diagnose time allocation from saved test rows alone.',
+      },
+    },
+    scoreTrend,
+    subjectPerformanceSignals: subjectSignals,
+    weaknessEvidence: {
+      repeatedSavedMistakePatterns: repeatedMistakePatterns,
+      importedOrManualTestAnalysisSignals: importedAnalyses,
+      confirmedWeakTopicsFromQuestionLevelTests: [],
+      suspectedTopicLabelsFromTestNotes: topicLabels.map((topic) => ({
+        topic,
+        evidence: 'Explicitly labelled in test notes, but no question-level per-topic result is stored.',
+        classification: 'suspected_only',
+      })),
+      knownDataGap: 'The current gate_mocks schema stores an overall score and optional question totals; it does not store subject/topic-wise question outcomes or negative marks. Do not claim confirmed test-derived weak topics when those fields are absent.',
+    },
+    recordedSubjectHints: subjectHints,
+    recentTests: inWindow.map(({ timestamp, ...test }) => test),
+    importedOrManualAnalyses: importedAnalyses,
     dataQuality: [
-      'Question-level correct/wrong/attempted values are included only when present in the saved test record.',
-      'Imported/manual analyses are kept separate from actual saved mock result rows.',
-      'No question-wise analysis is inferred when the test record does not contain it.',
+      'The default window is the latest 10 saved completed-test records whose dates fall within the previous 30 days.',
+      'Scores are normalized to percentages before comparisons across different maximum marks.',
+      'Question accuracy is measured only when attempted/correct counts or a saved accuracy value exist. It is distinct from normalized marks percentage.',
+      'The saved schema does not record question attempt denominator, negative marks, per-question time, section time, or question-level topic outcomes; these are reported as unavailable.',
+      'Subject names are treated as hints only when explicitly present in a test title or note. A test name alone is not proof of a topic weakness.',
+      'Saved mistake patterns are separate AI Native learner logs; imported/manual test analysis is separate from completed test score rows.',
     ],
   };
 };
