@@ -41,15 +41,15 @@ export interface FocusEngineOutput {
 
 export type FocusEngineCallback = (output: FocusEngineOutput) => void;
 
-/**
- * Presence is the sole timer gate:
- * - one or more faces detected in fresh camera frames => FOCUSED
- * - no face detected in fresh camera frames => AWAY
+ * Webcam presence is the timer gate:
+ * - a confirmed face in fresh frames => FOCUSED
+ * - brief face-detection dropouts remain FOCUSED within a study-medium grace window
+ * - sustained absence after that window => AWAY
  * - camera unavailable/stale => UNVERIFIED
  *
- * No gaze, posture, head-pose, desk, app, keyboard, mouse, speaking or
- * study-mode signal participates in this decision.
- */
+ * Paper/PYQ and mixed study use longer face-visibility grace periods because
+ * looking down at notes is normal. No gaze, app, keyboard, or mouse activity
+ * is treated as proof of presence.
 export class FocusEngine {
   private currentState: FocusState = 'IDLE';
   private sessionActive = false;
