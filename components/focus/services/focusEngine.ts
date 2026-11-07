@@ -4,18 +4,27 @@ import {
   PersonPresenceState,
   StateTransitionLog,
   VisionData,
+  StudyMedium,
 } from '../types';
 
-const CAMERA_STALE_AFTER_MS = 8000;
+// Browser background-tab scheduling and on-device inference can briefly
+// delay webcam analysis. Keep a wider freshness window before declaring the
+// camera unusable; a real track disconnect still pauses immediately.
+const CAMERA_STALE_AFTER_MS = 15_000;
 const REQUIRED_PRESENT_FRAMES = 2;
-// Ignore short detector dropouts (blink, motion blur, autofocus/white-balance
-// changes) before pausing a person who is still sitting at the desk.
+
+// Face-only detectors can miss a face during blinking, movement, or when the
+// student looks down at paper/PYQs. Confirm absence over a sustained interval,
+// with a longer grace period for paper-based work (the student explicitly
+// selected that study medium). This prevents normal note-taking from losing
+// large blocks of verified time.
 const REQUIRED_ABSENT_FRAMES = 6;
-const ABSENCE_CONFIRMATION_MS = 2000;
-// At session start, wait briefly for the first reliable observation rather
-// than immediately declaring the user absent from one or two weak frames.
+const SCREEN_ABSENCE_CONFIRMATION_MS = 20_000;
+const MIXED_ABSENCE_CONFIRMATION_MS = 90_000;
+const PAPER_ABSENCE_CONFIRMATION_MS = 5 * 60_000;
+// At session start, allow the camera and face detector to stabilise.
 const INITIAL_ABSENCE_CONFIRMATION_FRAMES = 4;
-const INITIAL_ABSENCE_CONFIRMATION_MS = 700;
+const INITIAL_ABSENCE_CONFIRMATION_MS = 8_000;
 
 export interface FocusEngineOutput {
   state: FocusState;
@@ -47,6 +56,7 @@ export class FocusEngine {
   private manualPauseRequested = false;
   private breakActive = false;
   private lastVision: VisionData | null = null;
+  private studyMedium: StudyMedium = 'Screen Study';
 
   private candidatePresence: boolean | null = null;
   private candidateSinceTimestamp = 0;
@@ -56,6 +66,16 @@ export class FocusEngine {
   private callbacks = new Set<FocusEngineCallback>();
   private transitions: StateTransitionLog[] = [];
   private lastEvaluationOutput: FocusEngineOutput | null = null;
+
+  setStudyMedium(medium: StudyMedium): void {
+    this.studyMedium = medium;
+  }
+
+  private getAbsenceConfirmationMs(): number {
+    if (this.studyMedium === 'Paper / PYQ Study') return PAPER_ABSENCE_CONFIRMATION_MS;
+    if (this.studyMedium === 'Mixed Study') return MIXED_ABSENCE_CONFIRMATION_MS;
+    return SCREEN_ABSENCE_CONFIRMATION_MS;
+  }
 
   beginSession(): void {
     this.sessionActive = true;
@@ -144,7 +164,7 @@ export class FocusEngine {
       const absenceDuration = Math.max(0, timestamp - this.candidateSinceTimestamp);
       if (
         this.consecutiveFrames >= REQUIRED_ABSENT_FRAMES &&
-        absenceDuration >= ABSENCE_CONFIRMATION_MS
+        absenceDuration >= this.getAbsenceConfirmationMs()
       ) {
         this.confirmedPresence = false;
       }
