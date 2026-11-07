@@ -118,6 +118,13 @@ const VoiceAssistant: React.FC = () => {
   const [reducedMotion, setReducedMotion] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const recognitionLanguageRef = useRef<'hi-IN' | 'en-IN'>(() => {
+    try {
+      return localStorage.getItem('achiever_jarvis_speech_language') === 'hi-IN' ? 'hi-IN' : 'en-IN';
+    } catch {
+      return 'en-IN';
+    }
+  });
   const abortControllerRef = useRef<AbortController | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -315,7 +322,7 @@ const VoiceAssistant: React.FC = () => {
 
     try {
       const recognition = new SpeechRecognition();
-      recognition.lang = 'en-IN';
+      recognition.lang = recognitionLanguageRef.current;
       recognition.interimResults = false;
       recognition.continuous = true;
 
@@ -328,6 +335,14 @@ const VoiceAssistant: React.FC = () => {
 
         const finalText = transcript.trim();
         if (finalText && !processingRef.current) {
+          // Adapt the next recognition turn to the language detected in this
+          // turn, so Hindi/Hinglish users are not permanently locked to en-IN.
+          recognitionLanguageRef.current = detectSpeechLanguage(finalText);
+          try {
+            localStorage.setItem('achiever_jarvis_speech_language', recognitionLanguageRef.current);
+          } catch {
+            // Conversation remains available when browser storage is disabled.
+          }
           retryDelayRef.current = 500;
           void handleRecognisedSpeech(finalText);
         }
