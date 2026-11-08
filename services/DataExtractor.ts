@@ -131,7 +131,9 @@ export const getCurrentPhaseSummary = () => {
   const now = new Date();
   const aug2026 = new Date('2026-08-01T00:00:00');
   const nov2026 = new Date('2026-11-01T00:00:00');
-  const feb2027 = new Date(GATE_2027_DATE);
+  // Keep Phase 3 active through every February GATE weekend, including
+  // a second registered paper that may be scheduled later in the month.
+  const march2027 = new Date('2027-03-01T00:00:00');
 
   if (now < aug2026) {
     return {
@@ -157,15 +159,15 @@ export const getCurrentPhaseSummary = () => {
     };
   }
 
-  if (now < feb2027) {
+  if (now < march2027) {
     return {
-      title: 'Phase 3: Test Analysis + Final Revision',
-      period: 'November 2026 - GATE 2027',
+      title: 'Mock Blitz + Final Sharpening',
+      period: '10 November 2026 - February 2027',
       checkpoints: [
-        ['Test analysis', 'Every completed test'],
-        ['Question reattempts', 'Within 24-48 hours + 1 week'],
-        ['Weekly focus', 'Top 3 weaknesses'],
-        ['Final revision', 'From 11 January 2027'],
+        ['November', 'CN, CD, DL + first-pass PYQs'],
+        ['December', 'Go Classes tests + deep analysis'],
+        ['January', 'Second revision + final consolidation'],
+        ['February', 'Separate CS/IT + DA exam execution'],
       ],
     };
   }
