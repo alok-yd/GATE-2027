@@ -138,7 +138,7 @@ export const ROADMAP_PHASE_3_MASTERY: WeeklyPlanItem[] = [
       'DA track: Probability/Statistics, Linear Algebra, Calculus/Optimization, Programming/DSA, DBMS/Warehousing, ML and AI through DA PYQs and timed practice.',
     ],
     goal: 'Complete the remaining subject revision and PYQs before the intensive test series begins.',
-    milestone: 'By 30 November: CN, CD and DL revision plus first-pass PYQs complete; 100% syllabus coverage.',
+    milestone: 'By 30 November: CN, CD and DL revision plus first-pass PYQs complete; 100% CS/IT syllabus coverage. DA preparation continues in parallel.',
     status: 'in-progress',
   },
   {
