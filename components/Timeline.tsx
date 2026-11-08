@@ -47,7 +47,7 @@ const Timeline: React.FC = () => {
               : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
           }`}
         >
-          Phase 3: Test Analysis + Final Revision
+          Phase 3: Mock Blitz + Final Sharpening
         </button>
       </div>
 
@@ -77,9 +77,17 @@ const Timeline: React.FC = () => {
                     )}
                   </div>
                   <h3 className="text-lg font-bold text-slate-800 mb-2">{item.title}</h3>
-                  <p className="text-slate-600 mb-4 font-medium italic border-l-4 border-amber-400 pl-3">
+                  <p className="text-slate-600 mb-3 font-medium italic border-l-4 border-amber-400 pl-3">
                     Goal: {item.goal}
                   </p>
+                  {activeTab === 'phase3' && item.milestone && (
+                    <div className="mb-4 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3">
+                      <h4 className="mb-1 text-[11px] font-bold uppercase tracking-wide text-emerald-700">
+                        Completion Milestone
+                      </h4>
+                      <p className="text-sm leading-relaxed text-emerald-900">{item.milestone}</p>
+                    </div>
+                  )}
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
