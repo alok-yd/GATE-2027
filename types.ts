@@ -41,6 +41,7 @@ export interface WeeklyPlanItem {
   focus: string[];
   tasks: string[];
   goal: string;
+  milestone?: string;
   status: 'pending' | 'in-progress' | 'completed';
 }
 
