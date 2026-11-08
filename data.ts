@@ -137,7 +137,8 @@ export const ROADMAP_PHASE_3_MASTERY: WeeklyPlanItem[] = [
       'Use 29–30 November to consolidate difficult PYQs, repair weak areas and confirm remaining-subject coverage.',
       'DA track: Probability/Statistics, Linear Algebra, Calculus/Optimization, Programming/DSA, DBMS/Warehousing, ML and AI through DA PYQs and timed practice.',
     ],
-    goal: 'Complete CN, CD and DL revision with first-pass PYQs by 30 November: 100% syllabus coverage and remaining-subject PYQs completed.',
+    goal: 'Complete the remaining subject revision and PYQs before the intensive test series begins.',
+    milestone: 'By 30 November: CN, CD and DL revision plus first-pass PYQs complete; 100% syllabus coverage.',
     status: 'in-progress',
   },
   {
@@ -145,7 +146,7 @@ export const ROADMAP_PHASE_3_MASTERY: WeeklyPlanItem[] = [
     title: 'Go Classes Test Series + Score Stabilization',
     period: '1–31 December 2026',
     focus: [
-      'GO Classes CSE-2027 starts 1 December • 137 tests / 24 full-length',
+      'GO Classes CSE-2027 starts 1 December • 137 tests: 24 full + 113 other',
       '2 full-length mocks/week: Wednesday + Sunday',
       '2–3 sectional tests/week • select by actual weaknesses',
       '50–55 focused study hours/week target',
@@ -163,7 +164,8 @@ export const ROADMAP_PHASE_3_MASTERY: WeeklyPlanItem[] = [
       'Full-mock day: 3h test, 2–3h analysis, 30m error log and 1.5–2h lighter Mathematics; never add a sectional test.',
       'Keep DA-specific PYQs, timed practice, formula revision and test analysis separate from CSE test-series scores.',
     ],
-    goal: 'Build exam temperament, stronger retention and accuracy. By 31 December target 9 full mocks, about 13 sectionals, every attempted test analysed and major weaknesses identified.',
+    goal: 'Build exam temperament, stronger retention and accuracy through selected Go Classes tests and systematic analysis.',
+    milestone: 'By 31 December: 9 full mocks + about 13 sectionals attempted; 100% of attempts analysed; major weaknesses identified; Mathematics and DA practice maintained.',
     status: 'pending',
   },
   {
@@ -171,14 +173,16 @@ export const ROADMAP_PHASE_3_MASTERY: WeeklyPlanItem[] = [
     title: 'AIR-1 Final Sharpening',
     period: '1–31 January 2027',
     focus: [
-      '1–10 Jan: complete intensive test cycle',
+      '1–10 Jan: complete intensive test cycle • continue December weekly rhythm',
       '11–20 Jan: second complete revision cycle',
       '21–31 Jan: final consolidation',
       '1–2 full mocks/week after 10 January, based on performance',
       'Daily Mathematics • DA 4 × 60–90 min/week',
       '50–55 focused hours/week planning target',
+      'Previous-subject active recall continues throughout January',
     ],
     tasks: [
+      'Continue the December weekly rhythm through 10 January: Monday analysis; Tuesday/Friday/Saturday subject work and sectionals; Wednesday/Sunday full mocks.',
       '1–10 Jan full mocks: 3 January, 6 January and 10 January. Cumulative quality target by 10 January: 12 full mocks + about 18 sectionals + 30 thoroughly analysed tests; these are targets, not quotas.',
       'Use remaining GO Classes tests selectively as a question bank for weak subjects/topics. Never sacrifice analysis to meet test counts.',
       '11–20 Jan subject rotation: Mon C + DS + Algorithms; Tue DBMS; Wed OS; Thu COA; Fri TOC + CD; Sat CN + DL; Sun Discrete Mathematics + General Aptitude.',
@@ -188,7 +192,8 @@ export const ROADMAP_PHASE_3_MASTERY: WeeklyPlanItem[] = [
       'Avoid unnecessary lectures, new resources and frequent strategy changes. Track average marks, accuracy, negative marks, recurring errors and weaknesses actually improved.',
       'Continue the separate DA track: DA PYQs and timed practice across Probability/Statistics, Linear Algebra, Calculus/Optimization, Programming/DSA, DBMS/Warehousing, ML and AI.',
     ],
-    goal: 'Complete a strong second revision cycle, review important PYQs, reduce the weak-topic backlog and stabilize speed, retention and accuracy for the examination.',
+    goal: 'Convert accumulated knowledge and mock experience into examination readiness through second revision and final consolidation.',
+    milestone: 'By 31 January: second revision cycle completed; important PYQs reviewed; weak-topic backlog reduced; formula/error notebooks consolidated; mock performance analysed.',
     status: 'pending',
   },
   {
@@ -200,10 +205,10 @@ export const ROADMAP_PHASE_3_MASTERY: WeeklyPlanItem[] = [
       'T−7 to T−4: revision and consolidation',
       'T−3 to T−1: light revision + mental readiness',
       'Separate CS/IT and DA exam countdowns',
-      'Official exam weekends: 6–7, 13–14 and 20–21 February',
+      'Official exam weekends: 6–7, 13–14 and 20–21 February (paper slots per timetable/admit card)',
     ],
     tasks: [
-      'For each paper independently, calculate T−14 from its actual official exam date/shift on the GATE timetable or admit card; do not assume CS/IT and DA are on the same day.',
+      'For each paper independently, calculate T−14 from its actual official exam date/shift on the GATE timetable or admit card; do not assume CS/IT and DA are on the same day. Official dates are liable to change.',
       'T−14 to T−8: take the final 1–2 full mocks only if useful; analyse major mistakes, revise weak subjects and practise mixed questions.',
       'T−7 to T−4: revise short notes, formulas and incorrect PYQs; practise selected numericals; avoid exhausting mock schedules.',
       'T−3 to T−1: no full mocks or new concepts; revise important formulas/concepts lightly and maintain a normal sleep schedule.',
@@ -212,6 +217,7 @@ export const ROADMAP_PHASE_3_MASTERY: WeeklyPlanItem[] = [
       'Protect confidence, sleep and calm execution. Do not cram or change strategy at the last moment.',
     ],
     goal: 'Enter each GATE paper rested, confident and accurate, with a separate final countdown and execution strategy for CS/IT and DA.',
+    milestone: 'For each paper: complete its T−14 to T−1 countdown; no full mocks in the final three days; arrive rested with a clear paper-specific execution strategy.',
     status: 'pending',
   },
 ];
