@@ -53,6 +53,19 @@ const Timeline: React.FC = () => {
 
       {/* Timeline Content */}
       <div className="p-6 md:p-10">
+        {activeTab === 'phase3' && (
+          <div className="mb-8 rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+            <p className="mb-1 text-xs font-bold uppercase tracking-wide text-indigo-700">
+              Phase 3 Mission • 10 November 2026 – February 2027
+            </p>
+            <p className="mb-2 text-sm leading-relaxed text-slate-700">
+              Transform existing subject knowledge into examination-level accuracy, speed, retention and problem-solving ability through structured revision, PYQs, mock tests and deep performance analysis.
+            </p>
+            <p className="text-xs font-semibold leading-relaxed text-indigo-800">
+              Conceptual Mastery + PYQs + Spaced Revision + Mock Tests + Deep Analysis + Accuracy + Consistency = Maximum Rank Potential.
+            </p>
+          </div>
+        )}
         <div className="relative border-l-2 border-indigo-100 space-y-12">
           {getActiveData().map((item, index) => (
             <div key={item.id} className="relative pl-8 md:pl-12">
