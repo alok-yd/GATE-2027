@@ -89,14 +89,19 @@ const subjectAliases: Record<string, string> = {
   digitallogic: 'Digital Logic',
   coa: 'COA',
   computerorgandarch: 'COA',
+  computerorgarchitecture: 'COA',
+  computerorgandarchitecture: 'COA',
+  computerorganization: 'COA',
+  computerorganisation: 'COA',
   computerorganizationandarchitecture: 'COA',
+  computerorganisationandarchitecture: 'COA',
   computerarchitecture: 'COA',
   cprog: 'C Programming',
   clanguage: 'C Programming',
   cprogramming: 'C Programming',
 };
 
-const canonicalSubjectName = (value: string) => {
+export const canonicalSubjectName = (value: string) => {
   const normalized = normalizeSubjectName(value);
   return subjectAliases[normalized] || value.trim();
 };
