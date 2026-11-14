@@ -1,4 +1,5 @@
 import { StudentProfile } from '../../types';
+import { canonicalSubjectName } from '../DataExtractor';
 import {
   DimensionLevel,
   PreparationAnalysis,
@@ -388,13 +389,27 @@ export const analyzePreparationState = (profile: StudentProfile): PreparationAna
   // Subject Readiness Breakdown
   // -------------------------------------------------------------
   const subjectReadiness: SubjectReadiness[] = subjects.map((sub) => {
-    const matchingPYQ = pyqs.find(
+    // Use the canonical subject key for PYQ volume so labels such as
+    // "COA", "Computer Organization", and "Computer Org & Arch" resolve
+    // to the same saved PYQ records.
+    const subjectKeys = new Set([
+      canonicalSubjectName(sub.id),
+      canonicalSubjectName(sub.name),
+    ]);
+    const matchingPYQForCount = pyqs.find((p) =>
+      subjectKeys.has(canonicalSubjectName(p.subject))
+    );
+
+    // Preserve the existing accuracy matching behaviour. This keeps a
+    // test-derived accuracy value (for example, 96% (test)) from being
+    // silently replaced by a PYQ accuracy value during this count-only fix.
+    const matchingPYQForAccuracy = pyqs.find(
       (p) =>
         p.subject.toLowerCase().includes(sub.name.toLowerCase()) ||
         sub.name.toLowerCase().includes(p.subject.toLowerCase())
     );
-    const solved = matchingPYQ?.totalSolved || 0;
-    const pyqAcc = matchingPYQ?.accuracy ?? null;
+    const solved = matchingPYQForCount?.totalSolved || 0;
+    const pyqAcc = matchingPYQForAccuracy?.accuracy ?? null;
     const testAcc = sub.accuracy || 70;
 
     // Composite subject readiness
