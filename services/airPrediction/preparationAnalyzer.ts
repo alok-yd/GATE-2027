@@ -389,16 +389,19 @@ export const analyzePreparationState = (profile: StudentProfile): PreparationAna
   // Subject Readiness Breakdown
   // -------------------------------------------------------------
   const subjectReadiness: SubjectReadiness[] = subjects.map((sub) => {
-    // Use the canonical subject key for PYQ volume so labels such as
-    // "COA", "Computer Organization", and "Computer Org & Arch" resolve
-    // to the same saved PYQ records.
-    const subjectKeys = new Set([
-      canonicalSubjectName(sub.id),
-      canonicalSubjectName(sub.name),
-    ]);
-    const matchingPYQForCount = pyqs.find((p) =>
-      subjectKeys.has(canonicalSubjectName(p.subject))
-    );
+    // Apply canonical-key matching specifically to COA, whose tracker
+    // label ("COA") differs from the Analytics subject label. All other
+    // subjects retain their exact pre-existing count-matching behaviour.
+    const isCOASubject =
+      canonicalSubjectName(sub.id) === 'COA' ||
+      canonicalSubjectName(sub.name) === 'COA';
+    const matchingPYQForCount = isCOASubject
+      ? pyqs.find((p) => canonicalSubjectName(p.subject) === 'COA')
+      : pyqs.find(
+          (p) =>
+            p.subject.toLowerCase().includes(sub.name.toLowerCase()) ||
+            sub.name.toLowerCase().includes(p.subject.toLowerCase())
+        );
 
     // Preserve the existing accuracy matching behaviour. This keeps a
     // test-derived accuracy value (for example, 96% (test)) from being
