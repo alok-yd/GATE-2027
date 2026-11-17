@@ -55,6 +55,7 @@ export interface MentorExecutionProfile {
   allowedTools: readonly string[];
   maxToolCalls?: number;
   maxToolRounds?: number;
+  onToolCall?: (toolName: string) => void;
 }
 
 interface FunctionDeclaration {
@@ -1111,6 +1112,20 @@ const callGeminiWithTools = async (
 
         try {
           const latestUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
+          if (executionProfile && !executionProfile.allowedTools.includes(call.name)) {
+            return {
+              functionResponse: {
+                name: call.name,
+                ...(typeof call.id === 'string' ? { id: call.id } : {}),
+                response: { error: `Tool not permitted for this specialist: ${call.name}` },
+              },
+            };
+          }
+          try {
+            executionProfile?.onToolCall?.(call.name);
+          } catch {
+            // Diagnostics must never interfere with tool execution.
+          }
           const result = executeMentorTool(
             call.name,
             call.args,
