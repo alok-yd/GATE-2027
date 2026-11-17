@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 
 interface SectionErrorBoundaryProps {
   sectionName: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 interface SectionErrorBoundaryState {
@@ -13,7 +13,7 @@ interface SectionErrorBoundaryState {
  * Isolates a runtime failure to the active section instead of allowing one
  * route's render error to blank the entire ACHIEVER application.
  */
-class SectionErrorBoundary extends React.Component<
+class SectionErrorBoundary extends Component<
   SectionErrorBoundaryProps,
   SectionErrorBoundaryState
 > {
@@ -23,7 +23,7 @@ class SectionErrorBoundary extends React.Component<
     return { hasError: true };
   }
 
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
+  componentDidCatch(error: Error, info: ErrorInfo) {
     console.error(
       `[ACHIEVER] ${this.props.sectionName} section failed to render.`,
       error,
