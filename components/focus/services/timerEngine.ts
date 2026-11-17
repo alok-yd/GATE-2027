@@ -66,6 +66,7 @@ export class TimerEngine {
   private sessionStartTime = 0;
 
   private focusedMs = 0;
+  private readonly activeSessionFocusedMsByDate = new Map<string, number>();
   private screenFocusedMs = 0;
   private paperFocusedMs = 0;
   private mixedFocusedMs = 0;
@@ -95,6 +96,15 @@ export class TimerEngine {
 
   hasActiveSession(): boolean {
     return Boolean(this.activeSessionId);
+  }
+
+  getActiveSessionId(): string | null {
+    return this.activeSessionId;
+  }
+
+  getActiveSessionVerifiedSecondsForDate(dateKey: string): number {
+    const milliseconds = this.activeSessionFocusedMsByDate.get(dateKey) || 0;
+    return Math.floor(milliseconds / 1000);
   }
 
   setStudyMedium(medium: StudyMedium): void {
@@ -154,6 +164,7 @@ export class TimerEngine {
     this.lastTickTimestamp = now;
 
     this.focusedMs = 0;
+    this.activeSessionFocusedMsByDate.clear();
     this.screenFocusedMs = 0;
     this.paperFocusedMs = 0;
     this.mixedFocusedMs = 0;
@@ -220,6 +231,33 @@ export class TimerEngine {
           end,
           this.medium
         );
+
+        // Keep an in-memory mirror for the active session, split at local
+        // midnight exactly like the persistent ledger. The Dashboard combines
+        // this with persisted *other-session* totals to avoid double counting.
+        let cursor = start;
+        while (cursor < end) {
+          const date = new Date(cursor);
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const dateKey = `${year}-${month}-${day}`;
+          const nextLocalMidnight = new Date(
+            year,
+            date.getMonth(),
+            date.getDate() + 1,
+            0, 0, 0, 0
+          ).getTime();
+          const segmentEnd = Math.min(end, nextLocalMidnight);
+          const segmentMilliseconds = Math.max(0, segmentEnd - cursor);
+          if (segmentMilliseconds > 0) {
+            this.activeSessionFocusedMsByDate.set(
+              dateKey,
+              (this.activeSessionFocusedMsByDate.get(dateKey) || 0) + segmentMilliseconds
+            );
+          }
+          cursor = segmentEnd;
+        }
       }
       if (this.medium === 'Paper / PYQ Study') {
         this.paperFocusedMs += deltaMs;
