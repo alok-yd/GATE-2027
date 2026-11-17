@@ -706,7 +706,7 @@ const HealthTracker: React.FC = () => {
     }
 
     const elapsedDays = Math.min(100, daysBetween(noFapChallenge.startedAt, today) + 1);
-    const completedDays = Object.values(noFapChallenge.logs)
+    const completedDays = (Object.values(noFapChallenge.logs) as NoFapLog[])
       .filter((log) => log.completed && log.date >= noFapChallenge.startedAt! && log.date <= today)
       .length;
     const pastDaysElapsed = Math.max(0, Math.min(100, daysBetween(noFapChallenge.startedAt, today)));
@@ -764,7 +764,7 @@ const HealthTracker: React.FC = () => {
       bestStreak: challengeStats.bestStreak,
       progressPercent: challengeStats.progress,
       dailyTargetMinutes: challenge.dailyTargetMinutes,
-      recentCheckIns: Object.values(challenge.logs)
+      recentCheckIns: (Object.values(challenge.logs) as MeditationLog[])
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(-14)
         .map((log) => ({ date: log.date, completed: log.completed, minutes: log.minutes })),
@@ -783,7 +783,7 @@ const HealthTracker: React.FC = () => {
       currentStreak: noFapStats.currentStreak,
       bestStreak: noFapStats.bestStreak,
       progressPercent: noFapStats.progress,
-      recentCheckIns: Object.values(noFapChallenge.logs)
+      recentCheckIns: (Object.values(noFapChallenge.logs) as NoFapLog[])
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(-14)
         .map((log) => ({ date: log.date, completed: log.completed })),
