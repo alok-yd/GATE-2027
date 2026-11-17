@@ -318,8 +318,18 @@ const scheduleLocalWrite = (write: PendingWrite): void => {
   if (!currentUser) return;
   pendingWrites.set(write.key, write);
   const existing = pendingTimers.get(write.key);
+  const isFrequentlyUpdatedFocusLedger = write.key === VERIFIED_FOCUS_LEDGER_KEY;
+
+  // The verified-time ledger is written locally throughout an active session.
+  // Use a fixed first-write window rather than resetting the timer on every
+  // 250ms update; otherwise continuous studying can postpone cloud sync forever.
+  if (existing && isFrequentlyUpdatedFocusLedger) {
+    updateState({ status: 'syncing' });
+    return;
+  }
   if (existing) window.clearTimeout(existing);
-  const delay = write.key === VERIFIED_FOCUS_LEDGER_KEY
+
+  const delay = isFrequentlyUpdatedFocusLedger
     ? VERIFIED_FOCUS_DEBOUNCE_MS
     : NORMAL_WRITE_DEBOUNCE_MS;
   const timer = window.setTimeout(() => {
