@@ -504,7 +504,11 @@ const flushAllPending = async (): Promise<void> => {
   }
 };
 
-const mergeInitialCloudData = async (user: User): Promise<void> => {
+const mergeInitialCloudData = async (
+  user: User,
+  isStillCurrent: () => boolean = () => currentUser?.uid === user.uid
+): Promise<void> => {
+  if (!isStillCurrent()) return;
   const [profileSnapshot, recordsSnapshot] = await Promise.all([
     getDoc(profileDocument(user.uid)),
     getDocs(recordsCollection(user.uid)),
@@ -523,6 +527,7 @@ const mergeInitialCloudData = async (user: User): Promise<void> => {
 
   if (isFirstMigration) {
     for (const [key, value] of localRecords) {
+      if (!isStillCurrent()) return;
       const meta = readLocalMeta();
       const modifiedAt = Math.max(
         Number(meta.pendingBeforeLogin[key]) || 0,
@@ -530,16 +535,19 @@ const mergeInitialCloudData = async (user: User): Promise<void> => {
         Date.now()
       );
       await writeCloudRecord(user.uid, key, value, modifiedAt);
+      if (!isStillCurrent()) return;
       markWriteSynced(user.uid, key, modifiedAt);
     }
   } else {
     for (const remoteSnapshot of recordsSnapshot.docs) {
+      if (!isStillCurrent()) return;
       const record = remoteSnapshot.data() as CloudRecord;
       await applyRemoteRecord(user.uid, remoteSnapshot, record);
     }
 
     // Preserve legacy local records that have never existed in the cloud.
     for (const [key, value] of localRecords) {
+      if (!isStillCurrent()) return;
       if (remoteByKey.has(key)) continue;
       const modifiedAt = Math.max(
         userKeyMeta(user.uid, key).modifiedAt,
@@ -549,10 +557,12 @@ const mergeInitialCloudData = async (user: User): Promise<void> => {
       // A local key absent from the cloud collection is legacy or was created
       // on this device while offline. Tombstones remain as remote documents.
       await writeCloudRecord(user.uid, key, value, modifiedAt);
+      if (!isStillCurrent()) return;
       markWriteSynced(user.uid, key, modifiedAt);
     }
   }
 
+  if (!isStillCurrent()) return;
   await setDoc(profileDocument(user.uid), {
     uid: user.uid,
     email: user.email || null,
@@ -566,6 +576,7 @@ const mergeInitialCloudData = async (user: User): Promise<void> => {
   const latestMeta = readLocalMeta();
   const latestLocal = listLocalRecords();
   for (const [key, value] of latestLocal) {
+    if (!isStillCurrent()) return;
     const keyMeta = latestMeta.users[user.uid]?.[key];
     const pending = Math.max(
       Number(keyMeta?.modifiedAt) || 0,
@@ -573,6 +584,7 @@ const mergeInitialCloudData = async (user: User): Promise<void> => {
     );
     if (pending > (Number(keyMeta?.lastSyncedAt) || 0)) {
       await writeCloudRecord(user.uid, key, value, pending);
+      if (!isStillCurrent()) return;
       markWriteSynced(user.uid, key, pending);
     }
   }
@@ -629,7 +641,10 @@ const startUserSync = async (user: User): Promise<void> => {
   });
 
   const task = (async () => {
-    await mergeInitialCloudData(user);
+    await mergeInitialCloudData(
+      user,
+      () => currentUser?.uid === user.uid && generation === authGeneration
+    );
     if (currentUser?.uid !== user.uid || generation !== authGeneration) return;
 
     originalSetItem.call(window.localStorage, ACTIVE_UID_KEY, user.uid);
@@ -773,7 +788,14 @@ const startService = (): void => {
 
   authUnsubscribe = onAuthStateChanged(cloudAuth, handleAuthUser);
   window.addEventListener('online', () => {
-    if (currentUser) void flushAllPending();
+    if (!currentUser) return;
+    if (!syncReady) {
+      void startUserSync(currentUser).catch((error) => {
+        updateState({ status: 'error', message: getCloudErrorMessage(error) });
+      });
+    } else {
+      void flushAllPending();
+    }
   });
   window.addEventListener('offline', () => {
     updateState({
@@ -819,7 +841,8 @@ export const syncCloudDataNow = async (): Promise<void> => {
   if (!currentUser) throw new Error('Connect your Google account before syncing.');
   updateState({ status: 'syncing', message: 'Syncing recent ACHIEVER changes…' });
   await flushAllPending();
-  await mergeInitialCloudData(currentUser);
+  const user = currentUser;
+  await mergeInitialCloudData(user, () => currentUser?.uid === user.uid);
   updateState({
     status: pendingWrites.size ? 'syncing' : 'synced',
     message: pendingWrites.size
