@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { timerEngine, TimerTickData } from './focus/services/timerEngine';
 import VoiceAssistant from './VoiceAssistant';
+import CloudSyncControl from './CloudSyncControl';
 
 const iitBombayLogo = new URL('../iit-bombay-logo-circle.png', import.meta.url).href;
 const achieverLogo = `${import.meta.env.BASE_URL}achiever-logo.svg`;
@@ -218,6 +219,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               )}
             </NavLink>
           ))}
+          <div className="mt-5">
+            <CloudSyncControl />
+          </div>
         </nav>
         
         {/* Target Institute & Countdown Section */}
@@ -318,6 +322,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   )}
                 </NavLink>
               ))}
+              <div className="mt-3">
+                <CloudSyncControl />
+              </div>
               <div className="px-4 py-3 border-t border-slate-700 mt-2 space-y-3">
                 <div className="flex justify-center">
                   <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-amber-500/30 bg-black p-1 flex items-center justify-center shadow-lg">
