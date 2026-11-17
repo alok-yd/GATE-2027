@@ -235,10 +235,60 @@ export const getLecturePhaseStatus = (subjects: LectureSubject[]): LecturePhaseS
 };
 
 export const getStoredSubjects = (): LectureSubject[] => {
-  const storedSubjects = safeParse<LectureSubject[]>(
-    localStorage.getItem('gate_subjects'),
-    []
-  );
+  // Local browser data can survive several application versions. Validate the
+  // stored shape before merging so one malformed record cannot crash the
+  // Lecture Tracker route (or any other section that reads the subject list).
+  let rawSubjects: unknown = [];
+  try {
+    rawSubjects = safeParse<unknown>(localStorage.getItem('gate_subjects'), []);
+  } catch (error) {
+    console.warn('[ACHIEVER] Could not read saved subjects; using defaults.', error);
+  }
+
+  const storedSubjects: LectureSubject[] = Array.isArray(rawSubjects)
+    ? rawSubjects
+        .filter((value): value is Record<string, unknown> =>
+          Boolean(value && typeof value === 'object' && !Array.isArray(value))
+        )
+        .filter((value) =>
+          typeof value.id === 'string' &&
+          value.id.trim().length > 0 &&
+          typeof value.name === 'string' &&
+          value.name.trim().length > 0
+        )
+        .map((value) => {
+          const totalLectures = Number(value.totalLectures);
+          const completedLectures = Number(value.completedLectures);
+          return {
+            id: String(value.id),
+            name: String(value.name),
+            totalLectures: Number.isFinite(totalLectures) ? Math.max(0, totalLectures) : 0,
+            completedLectures: Number.isFinite(completedLectures)
+              ? Math.max(0, completedLectures)
+              : 0,
+            phase: value.phase === 1 ? 1 : 2,
+            color: typeof value.color === 'string' ? value.color : 'bg-indigo-500',
+          };
+        })
+    : [];
+
+  const clampSavedCompletion = (subject: LectureSubject): LectureSubject => {
+    let savedCount: string | null = null;
+    try {
+      savedCount = localStorage.getItem(`lectures_${subject.id}`);
+    } catch {
+      // Keep the completion value on the saved subject if storage is unavailable.
+    }
+    const effectiveCompleted = Number.isFinite(subject.completedLectures)
+      ? subject.completedLectures
+      : savedCount != null && Number.isFinite(Number(savedCount))
+        ? Number(savedCount)
+        : subject.totalLectures;
+    return {
+      ...subject,
+      completedLectures: Math.max(0, Math.min(subject.totalLectures, effectiveCompleted)),
+    };
+  };
 
   if (storedSubjects.length > 0) {
     const merged = [...storedSubjects];
@@ -247,30 +297,10 @@ export const getStoredSubjects = (): LectureSubject[] => {
         merged.push(subject);
       }
     });
-
-    return merged.map((subject) => {
-      const savedCount = localStorage.getItem(`lectures_${subject.id}`);
-      const effectiveCompleted =
-        typeof subject.completedLectures === 'number'
-          ? subject.completedLectures
-          : savedCount != null
-          ? Number(savedCount)
-          : subject.totalLectures;
-      return {
-        ...subject,
-        completedLectures: Math.max(0, Math.min(subject.totalLectures, effectiveCompleted)),
-      };
-    });
+    return merged.map(clampSavedCompletion);
   }
 
-  return INITIAL_SUBJECTS.map((subject) => {
-    const savedCount = localStorage.getItem(`lectures_${subject.id}`);
-    return {
-      ...subject,
-      completedLectures:
-        savedCount != null ? Number(savedCount) : subject.completedLectures ?? subject.totalLectures,
-    };
-  });
+  return INITIAL_SUBJECTS.map(clampSavedCompletion);
 };
 
 export const getDailyLogs = (): DailyStudyLog[] => {
