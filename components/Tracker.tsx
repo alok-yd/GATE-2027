@@ -36,45 +36,75 @@ const createDefaultDailyTarget = (date: string): DailyTarget => ({
   aiFocusVerifiedSeconds: 0,
 });
 
-const loadDailyTargetWithAiFocusSync = (date: string): DailyTarget => {
-  const raw = localStorage.getItem(`gate_daily_target_${date}`);
-  let stored: DailyTarget = createDefaultDailyTarget(date);
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw) as Partial<DailyTarget>;
-      stored = {
-        ...createDefaultDailyTarget(date),
-        ...parsed,
-        date,
-      };
-    } catch {
-      // Keep the safe defaults and recover the selected date's AI Focus total.
-    }
+const readStoredJson = <T,>(key: string, fallback: T): T => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    console.warn(`[Lecture Tracker] Ignoring unreadable local data for "${key}".`, error);
+    return fallback;
   }
+};
+
+const finiteNumberOr = (value: unknown, fallback: number): number => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+const loadDailyTargetWithAiFocusSync = (date: string): DailyTarget => {
+  const parsed = readStoredJson<unknown>(`gate_daily_target_${date}`, null);
+  const defaults = createDefaultDailyTarget(date);
+  const stored: DailyTarget = isPlainRecord(parsed)
+    ? {
+        ...defaults,
+        subject: typeof parsed.subject === 'string' ? parsed.subject : defaults.subject,
+        goalDescription: typeof parsed.goalDescription === 'string'
+          ? parsed.goalDescription
+          : defaults.goalDescription,
+        hoursStudied: finiteNumberOr(parsed.hoursStudied, defaults.hoursStudied),
+        completionPercentage: Math.max(
+          0,
+          Math.min(100, finiteNumberOr(parsed.completionPercentage, defaults.completionPercentage))
+        ),
+        hoursStudiedSource: parsed.hoursStudiedSource === 'manual' ? 'manual' : 'ai_focus',
+        manualHoursStudied: finiteNumberOr(parsed.manualHoursStudied, defaults.manualHoursStudied || 0),
+        aiFocusVerifiedSeconds: Math.max(
+          0,
+          finiteNumberOr(parsed.aiFocusVerifiedSeconds, defaults.aiFocusVerifiedSeconds || 0)
+        ),
+        date,
+      }
+    : defaults;
 
   if (stored.hoursStudiedSource === 'manual') {
-    const manualHours = Number(stored.manualHoursStudied ?? stored.hoursStudied ?? 0);
+    const manualHours = Math.max(0, finiteNumberOr(
+      stored.manualHoursStudied ?? stored.hoursStudied,
+      0
+    ));
     return {
       ...stored,
-      hoursStudied: Number.isFinite(manualHours) && manualHours > 0 ? manualHours : 0,
+      hoursStudied: manualHours,
       hoursStudiedSource: 'manual',
-      manualHoursStudied: Number.isFinite(manualHours) && manualHours > 0 ? manualHours : 0,
+      manualHoursStudied: manualHours,
     };
   }
 
   const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
-  const preservedManualHours = Number(stored.manualHoursStudied ?? stored.hoursStudied ?? 0);
-  const manualHours = Number.isFinite(preservedManualHours) && preservedManualHours > 0
-    ? preservedManualHours
-    : 0;
+  const preservedManualHours = Math.max(0, finiteNumberOr(
+    stored.manualHoursStudied ?? stored.hoursStudied,
+    0
+  ));
   const syncedHours = Number((verifiedSeconds / 3600).toFixed(2));
 
   return {
     ...stored,
     hoursStudied: syncedHours,
     hoursStudiedSource: 'ai_focus',
-    manualHoursStudied: manualHours,
+    manualHoursStudied: preservedManualHours,
     aiFocusVerifiedSeconds: verifiedSeconds,
   };
 };
@@ -130,8 +160,8 @@ const Tracker: React.FC = () => {
     'bg-sky-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'
   ];
 
-  const normalizeSubject = (value: string) =>
-    value.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
+  const normalizeSubject = (value: unknown) =>
+    String(value ?? '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
 
   const subjectAliases: Record<string, string> = {
     aptitude: 'aptitude',
@@ -172,8 +202,8 @@ const Tracker: React.FC = () => {
   };
 
   const getSubjectKey = (subject: LectureSubject) => {
-    const normalizedName = normalizeSubject(subject.name);
-    const normalizedId = normalizeSubject(subject.id);
+    const normalizedName = normalizeSubject(subject?.name);
+    const normalizedId = normalizeSubject(subject?.id);
     return subjectAliases[normalizedName] || subjectAliases[normalizedId] || normalizedName || normalizedId;
   };
 
@@ -185,7 +215,17 @@ const Tracker: React.FC = () => {
 
   const removeDuplicateSubjects = (items: LectureSubject[]) => {
     const uniqueSubjects = new Map<string, LectureSubject>();
-    items.forEach((subject) => {
+    const safeItems = Array.isArray(items)
+      ? items.filter((subject): subject is LectureSubject =>
+          isPlainRecord(subject) &&
+          typeof subject.id === 'string' &&
+          subject.id.trim().length > 0 &&
+          typeof subject.name === 'string' &&
+          subject.name.trim().length > 0
+        )
+      : [];
+
+    safeItems.forEach((subject) => {
       const key = getSubjectKey(subject);
       const existing = uniqueSubjects.get(key);
       if (!existing || shouldReplaceDuplicate(subject, existing)) {
@@ -207,8 +247,13 @@ const Tracker: React.FC = () => {
   // Helper: Update Streak
   const checkAndUpdateStreak = () => {
     const today = getTodayDateString();
-    const stored = localStorage.getItem('gate_streak_data');
-    let data = stored ? JSON.parse(stored) : { currentStreak: 0, lastLogDate: '' };
+    const parsedStreak = readStoredJson<unknown>('gate_streak_data', null);
+    const data = isPlainRecord(parsedStreak)
+      ? {
+          currentStreak: Math.max(0, finiteNumberOr(parsedStreak.currentStreak, 0)),
+          lastLogDate: typeof parsedStreak.lastLogDate === 'string' ? parsedStreak.lastLogDate : '',
+        }
+      : { currentStreak: 0, lastLogDate: '' };
 
     // If already logged today, do nothing to the count (streak maintained)
     if (data.lastLogDate === today) {
@@ -243,24 +288,38 @@ const Tracker: React.FC = () => {
     }
 
     // 2. Load Daily Progress for Selected Date
-    const dateSpecificProgress = localStorage.getItem(`gate_progress_${selectedDate}`);
-    if (dateSpecificProgress) {
-        setDailyProgress(JSON.parse(dateSpecificProgress));
+    const defaultProgress: DailyProgress = { date: selectedDate, count: 0, goal: 3 };
+    const storedProgress = readStoredJson<unknown>(`gate_progress_${selectedDate}`, null);
+    if (isPlainRecord(storedProgress)) {
+      setDailyProgress({
+        date: typeof storedProgress.date === 'string' ? storedProgress.date : selectedDate,
+        count: Math.max(0, finiteNumberOr(storedProgress.count, 0)),
+        goal: Math.max(1, finiteNumberOr(storedProgress.goal, 3)),
+      });
     } else {
-        // Default new entry
-        setDailyProgress({ date: selectedDate, count: 0, goal: 3 });
+      // Corrupt/legacy records must not crash the entire React route.
+      setDailyProgress(defaultProgress);
     }
 
     // 3. Load Daily Target Log for Selected Date
     const loadedTarget = loadDailyTargetWithAiFocusSync(selectedDate);
     setDailyTarget(loadedTarget);
-    localStorage.setItem(`gate_daily_target_${selectedDate}`, JSON.stringify(loadedTarget));
+    try {
+      localStorage.setItem(`gate_daily_target_${selectedDate}`, JSON.stringify(loadedTarget));
+    } catch (error) {
+      console.warn('[Lecture Tracker] Could not persist the recovered daily log.', error);
+    }
 
     // 4. Load Weekly Target
     const currentWeekId = getWeekId(selectedDate);
-    const storedWeekly = localStorage.getItem(`gate_weekly_target_${currentWeekId}`);
-    if (storedWeekly) {
-      setWeeklyTarget(JSON.parse(storedWeekly));
+    const storedWeekly = readStoredJson<unknown>(`gate_weekly_target_${currentWeekId}`, null);
+    if (isPlainRecord(storedWeekly)) {
+      setWeeklyTarget({
+        weekId: typeof storedWeekly.weekId === 'string' ? storedWeekly.weekId : currentWeekId,
+        focus: typeof storedWeekly.focus === 'string' ? storedWeekly.focus : '',
+        targetLectures: Math.max(0, finiteNumberOr(storedWeekly.targetLectures, 15)),
+        completedLectures: Math.max(0, finiteNumberOr(storedWeekly.completedLectures, 0)),
+      });
     } else {
       setWeeklyTarget({
         weekId: currentWeekId,
@@ -431,7 +490,8 @@ const Tracker: React.FC = () => {
     let reportContent = `GATE 2027 PROGRESS REPORT\nGenerated on: ${today}\n\n`;
 
     // 1. Overall Stats
-    const streakData = JSON.parse(localStorage.getItem('gate_streak_data') || '{"currentStreak": 0}');
+    const savedStreak = readStoredJson<unknown>('gate_streak_data', null);
+    const streakData = isPlainRecord(savedStreak) ? savedStreak : { currentStreak: 0 };
     reportContent += `CURRENT STREAK: ${streakData.currentStreak} Days\n`;
     reportContent += `PREPARATION PHASE: ${allSubjectsComplete ? 'POST-LECTURE MASTERY' : 'LECTURE COMPLETION'}\n`;
 
