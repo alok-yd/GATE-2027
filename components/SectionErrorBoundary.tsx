@@ -17,6 +17,8 @@ class SectionErrorBoundary extends Component<
   SectionErrorBoundaryProps,
   SectionErrorBoundaryState
 > {
+  // Explicit declaration keeps the boundary typed across React type-package versions.
+  declare readonly props: Readonly<SectionErrorBoundaryProps>;
   state: SectionErrorBoundaryState = { hasError: false };
 
   static getDerivedStateFromError(): SectionErrorBoundaryState {
