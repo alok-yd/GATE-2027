@@ -25,5 +25,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Type-check all application sections
+        run: npx tsc --noEmit
+
       - name: Build ACHIEVER
         run: npm run build
