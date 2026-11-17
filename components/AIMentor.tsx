@@ -8,7 +8,6 @@ import {
   describeAIGatewayError,
 } from '../services/AIGatewayClient';
 import { AI_MODEL_CONFIG } from '../services/ai/modelConfig';
-import { aiHub } from '../services/AIServiceHub';
 import { getStudentProfile } from '../services/DataExtractor';
 import {
   createMemory,
@@ -27,9 +26,10 @@ import {
   setActiveMentorConversationId,
 } from '../services/mentor/MentorStorage';
 import type { MentorConversation, MentorStoredMessage } from '../services/mentor/MentorStorage';
-import { generateMentorReply, summarizeMentorConversation } from '../services/mentor/MentorAgent';
-import { getAIAnalyticsMentorContext } from '../services/mentor/MentorDomainData';
-import type { MentorHistoryMessage, MentorMode } from '../services/mentor/MentorAgent';
+import { summarizeMentorConversation } from '../services/mentor/MentorAgent';
+import type { MentorMode } from '../services/mentor/MentorAgent';
+import { orchestrateJarvisMessage } from '../services/assistant/JarvisOrchestrator';
+import type { JarvisProgressStage } from '../services/assistant/JarvisOrchestrator';
 import { MentorMarkdown } from './mentor/MentorMarkdown';
 import type { StudentProfile } from '../types';
 
@@ -56,139 +56,6 @@ const createMessage = (role: MentorStoredMessage['role'], content: string): Ment
   timestamp: new Date().toISOString(),
 });
 
-const formatPlan = (plan: Awaited<ReturnType<typeof aiHub.createPersonalizedPlan>>) => {
-  const week = plan.weeks?.[0];
-  if (!week) return 'No plan could be generated yet. Add study logs or mock scores and try again.';
-
-  const days = week.daily
-    .slice(0, 7)
-    .map((day) => `- **${day.day}:** ${day.target}`)
-    .join('\n');
-
-  return `## This week's target
-
-**Milestone:** ${week.milestone}
-
-**Focus:** ${week.focus.join(', ')}
-
-${days}
-
-${plan.notes || ''}`;
-};
-
-const formatWeakAreas = (areas: Awaited<ReturnType<typeof aiHub.identifyWeakAreas>>) => {
-  if (areas.length === 0) return 'No weak area is currently above the tracker priority threshold.';
-
-  return `## Priority areas
-
-${areas
-    .slice(0, 5)
-    .map(
-      (area, index) =>
-        `${index + 1}. **${area.subject} — ${area.topic}**
-   - Priority: ${area.priority} | ROI indicator: ${area.roi} | Time estimate: ${area.timeRequired}
-   - Next action: ${area.milestones[0] || 'Solve PYQs and update error notes.'}`
-    )
-    .join('\n\n')}
-
-_Accuracy-based priority indicators in the legacy tracker can be derived estimates; check measured correct/attempted PYQ records before treating them as test accuracy._`;
-};
-
-const formatPrediction = (prediction: Awaited<ReturnType<typeof aiHub.predictAIR>>) => {
-  const readiness = prediction.rankReadiness;
-  const hardGateSummary = readiness
-    ? `
-### Rank-readiness checks
-- Readiness score: **${readiness.score}/100**
-- Under-50 conditions met: **${readiness.under50Eligible ? 'Yes' : 'No'}**
-
-${readiness.hardConditions.map((condition) => `- ${condition.passed ? 'PASS' : 'MISS'} — ${condition.label}: ${condition.detail}`).join('\n')}
-`
-    : '';
-
-  return `> This is a tracker-derived readiness estimate, not a prediction or guarantee of your actual GATE rank.
-
-## AIR readiness estimate
-
-- Most likely range: **${prediction.mostLikely.range}** (${prediction.mostLikely.confidence}% model confidence)
-- Optimistic scenario: **${prediction.optimistic.range}**
-- Pessimistic scenario: **${prediction.pessimistic.range}**
-${hardGateSummary}
-
-### Key factors
-${prediction.keyFactors.map((factor) => `- ${factor}`).join('\n')}
-
-### Improvements to prioritise
-${prediction.requiredImprovements
-    .map((item) => `- **${item.area}:** ${item.from} → ${item.to} (${item.impact})`)
-    .join('\n')}`;
-};
-
-const formatDashboardAIRAnalytics = () => {
-  const data = getAIAnalyticsMentorContext();
-  const { preparation, airPrediction, collegeCompatibility, defaultWhatIfSimulation, savedAIRHistory } = data;
-
-  const dimensions = preparation.dimensions
-    .map((dimension) => `- **${dimension.name}:** ${dimension.score}/100 (${dimension.level}) — ${dimension.primaryMetric}`)
-    .join('\n');
-  const subjects = preparation.subjectReadiness
-    .slice()
-    .sort((a, b) => a.compositeScore - b.compositeScore)
-    .slice(0, 6)
-    .map((subject) =>
-      `- **${subject.name}:** ${subject.compositeScore}/100 · ${subject.status} · ${subject.pyqsSolved} PYQs · measured PYQ accuracy: ${subject.pyqAccuracy == null ? 'not recorded' : `${subject.pyqAccuracy}%`}`
-    )
-    .join('\n');
-  const scenarios = Object.values(airPrediction.scenarios)
-    .map((scenario) => `- **${scenario.title}:** ${scenario.airDisplay} · ${scenario.marks} marks · ${scenario.gateScore} GATE score · ${scenario.probability}% scenario weight`)
-    .join('\n');
-  const colleges = collegeCompatibility.topMatches.length
-    ? collegeCompatibility.topMatches
-        .map((match) => `- ${match.institute} — ${match.program}: ${match.interpretation} (historical cutoff score ${match.historicalClosingScore})`)
-        .join('\n')
-    : 'No matches in the historically competitive/above categories for the selected category.';
-  const whatIf = defaultWhatIfSimulation.result;
-
-  return `# AI Analytics — AIR Readiness & Performance
-
-> These are dashboard model projections from your current tracker data, not actual GATE results or rank guarantees.
-
-## Current projection
-- **Overall readiness:** ${preparation.overallReadinessPercent}/100
-- **Predicted AIR:** ${airPrediction.airDisplay}
-- **Likely AIR range:** ${airPrediction.likelyRange}
-- **Expected marks:** ${airPrediction.marksEstimation.expectedMarks}/100
-- **Estimated GATE score:** ${airPrediction.marksEstimation.estimatedScore}/1000
-- **Model confidence:** ${airPrediction.confidencePercent}%
-- **Stability:** ${airPrediction.stability}
-- **Data quality:** ${preparation.dataHealth.dataQualityRating}
-
-## Eight readiness dimensions
-${dimensions}
-
-## Subjects needing the closest review
-${subjects}
-
-## AIR scenarios
-${scenarios}
-
-## Historical college compatibility
-Selected category: **${collegeCompatibility.category}**
-${colleges}
-
-## Default what-if scenario
-Assumptions: +${defaultWhatIfSimulation.assumptions.mockMarksDelta} mock marks, +${defaultWhatIfSimulation.assumptions.pyqAccuracyDelta}% PYQ accuracy, ${defaultWhatIfSimulation.assumptions.sillyMistakesSaved} marks recovered from silly mistakes, and ${defaultWhatIfSimulation.assumptions.revisionCyclesComplete} revision cycles.
-- Projected marks: **${whatIf.projectedMarks}**
-- Projected GATE score: **${whatIf.projectedScore}**
-- Projected AIR: **AIR ${whatIf.projectedAIR.toLocaleString()}**
-- Improvement vs current estimate: **${whatIf.airDelta > 0 ? '+' : ''}${whatIf.airDelta} rank positions**
-  
-This is a hypothetical simulator output, not a recorded improvement.
-
-Saved prediction snapshots: **${savedAIRHistory.count}**.
-`;
-};
-
 const AIMentor: React.FC = () => {
   const [searchParams] = useSearchParams();
   const initialAsk = searchParams.get('ask') || '';
@@ -213,6 +80,8 @@ const AIMentor: React.FC = () => {
   const [input, setInput] = useState(initialAsk);
   const [mode, setMode] = useState<MentorMode>('chat');
   const [loading, setLoading] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState('');
+  const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadFeedback, setUploadFeedback] = useState<string | null>(null);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
@@ -444,33 +313,6 @@ const AIMentor: React.FC = () => {
     }
   };
 
-  const runMentorAction = async (label: string, action: () => Promise<string>) => {
-    if (loading) return;
-    const conversationId = activeConversationIdRef.current;
-    const current = conversationsRef.current.find((conversation) => conversation.id === conversationId);
-    const baseMessages = current?.messages || messagesRef.current;
-    const requestMessages = [...baseMessages, createMessage('user', label)];
-    persistMessagesForConversation(conversationId, requestMessages);
-    setLoading(true);
-    try {
-      const response = await action();
-      const latest = conversationsRef.current.find((conversation) => conversation.id === conversationId);
-      persistMessagesForConversation(conversationId, [
-        ...(latest?.messages || requestMessages),
-        createMessage('assistant', response),
-      ]);
-    } catch (error) {
-      console.error('[AIMentor] Quick action failed:', error);
-      const latest = conversationsRef.current.find((conversation) => conversation.id === conversationId);
-      persistMessagesForConversation(conversationId, [
-        ...(latest?.messages || requestMessages),
-        createMessage('assistant', `I couldn't complete that quick action. ${describeAIGatewayError(error)}`),
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const runMentorPrompt = async (prompt: string, currentMode: MentorMode) => {
     if (!prompt.trim() || loading) return;
 
@@ -481,20 +323,35 @@ const AIMentor: React.FC = () => {
     const requestHistory = [...baseMessages, userMessage];
     persistMessagesForConversation(conversationId, requestHistory);
     setLoading(true);
+    setGenerationStatus('Planning the best route for your question…');
+    const requestStartedAt = performance.now();
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     try {
-      const response = await generateMentorReply({
+      const response = await orchestrateJarvisMessage({
+        prompt: prompt.trim(),
         messages: requestHistory.map((message) => ({
           role: message.role,
           content: message.content,
-        })) as MentorHistoryMessage[],
-        mode: currentMode,
+        })),
+        conversationMode: currentMode,
+        responseChannel: 'text',
         summary: currentConversation?.summary || '',
         signal: controller.signal,
+        onProgress: (stage: JarvisProgressStage) => {
+          const progressMessages: Record<JarvisProgressStage, string> = {
+            planning: 'Planning the best route for your question…',
+            retrieving: 'Retrieving relevant ACHIEVER records…',
+            analysing: 'Analysing the available evidence…',
+            synthesising: 'Combining findings into your answer…',
+            generating: 'Preparing your response…',
+          };
+          setGenerationStatus(progressMessages[stage]);
+        },
       });
+      setLastRequestLatencyMs(Math.max(0, Math.round(performance.now() - requestStartedAt)));
       setActiveModel(response.model);
       const latest = conversationsRef.current.find((conversation) => conversation.id === conversationId);
       const completedMessages = [
@@ -524,6 +381,7 @@ const AIMentor: React.FC = () => {
     } finally {
       abortControllerRef.current = null;
       setLoading(false);
+      setGenerationStatus('');
     }
   };
 
@@ -723,27 +581,12 @@ You can now ask me to search this material. I’ll include local chunk identifie
     }
   };
 
-  const quickActions = [
-    {
-      label: 'What should I study today?',
-      action: () => aiHub.createPersonalizedPlan(profile).then(formatPlan),
-    },
-    {
-      label: 'Find my top weak areas',
-      action: () => aiHub.identifyWeakAreas(profile).then(formatWeakAreas),
-    },
-    {
-      label: 'Predict my AIR',
-      action: async () => formatDashboardAIRAnalytics(),
-    },
-    {
-      label: 'Explain DBMS normalization',
-      action: () => aiHub.explainConcept('DBMS normalization for GATE CS', profile.studyMetrics.learningStyle),
-    },
-    {
-      label: 'Give me a motivation reset',
-      action: () => aiHub.generateMotivationalMessage(profile),
-    },
+  const quickActions: Array<{ label: string; mode: MentorMode }> = [
+    { label: 'What should I study today?', mode: 'strategy' },
+    { label: 'Find my top weak areas', mode: 'strategy' },
+    { label: 'Predict my AIR', mode: 'chat' },
+    { label: 'Explain DBMS normalization', mode: 'concept' },
+    { label: 'Give me a motivation reset', mode: 'chat' },
   ];
 
   return (
@@ -785,8 +628,12 @@ You can now ask me to search this material. I’ll include local chunk identifie
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="font-medium text-slate-500">Response Latency</span>
+              <span className="font-medium text-slate-500">Connection Test Latency</span>
               <span className="font-mono font-semibold text-emerald-700">{geminiLatency ? `${geminiLatency} ms` : '—'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="font-medium text-slate-500">Last AI Request</span>
+              <span className="font-mono font-semibold text-indigo-700">{lastRequestLatencyMs == null ? '—' : `${lastRequestLatencyMs} ms`}</span>
             </div>
             <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 p-2.5">
               <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
@@ -891,7 +738,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
               <button
                 key={item.label}
                 type="button"
-                onClick={() => runMentorAction(item.label, item.action)}
+                onClick={() => void runMentorPrompt(item.label, item.mode)}
                 disabled={loading}
                 className="w-full rounded-lg bg-slate-50 px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-60"
               >
@@ -1104,7 +951,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
                   <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400" />
                   <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:120ms]" />
                   <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:240ms]" />
-                  <span className="ml-1 text-xs text-slate-500">Checking context and preparing an answer…</span>
+                  <span className="ml-1 text-xs text-slate-500">{generationStatus || 'Preparing your response…'}</span>
                 </div>
               </div>
             </div>
