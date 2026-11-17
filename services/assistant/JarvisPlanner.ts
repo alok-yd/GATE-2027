@@ -77,12 +77,14 @@ export const planJarvisExecution = (
       'focus-consistency',
       'revision-planner',
     ];
-    if (hasWellnessIntent(text)) agents.push('wellness-agent');
+    const explicitWellnessRequest = hasWellnessIntent(text);
+    if (explicitWellnessRequest) agents.push('wellness-agent');
+    const maxAgents = explicitWellnessRequest ? 5 : 4;
     return {
       mode: 'multi-agent',
       reason: 'Cross-domain preparation review requires independent academic, performance, focus and revision evidence.',
-      agents: agents.slice(0, 4),
-      maxParallelAgents: 4,
+      agents: agents.slice(0, maxAgents),
+      maxParallelAgents: maxAgents,
       readOnly: true,
     };
   }
@@ -99,12 +101,15 @@ export const planJarvisExecution = (
     agents.push('concept-tutor');
   }
 
-  // A strategy/daily-plan request benefits from current academic and revision data.
+  // Daily plans benefit from both current academic priorities and revision evidence.
+  const isDailyPlanRequest =
+    /plan my day|daily plan|what should i study today|today.?s? target|daily target|what next|next steps/i.test(text);
   if (
-    agents.length === 0 &&
-    (conversationMode === 'strategy' || /plan my day|daily plan|what next|next steps/i.test(text))
+    isDailyPlanRequest ||
+    (agents.length === 0 && conversationMode === 'strategy')
   ) {
-    agents.push('academic-strategist', 'revision-planner');
+    if (!agents.includes('academic-strategist')) agents.push('academic-strategist');
+    if (!agents.includes('revision-planner')) agents.push('revision-planner');
   }
 
   const uniqueAgents = [...new Set(agents)].slice(0, 4);
