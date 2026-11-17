@@ -16,6 +16,7 @@ import {
   getFirestore,
   onSnapshot,
   serverTimestamp,
+  setDoc,
   writeBatch,
   type DocumentData,
   type QueryDocumentSnapshot,
@@ -121,9 +122,10 @@ let applyingRemote = false;
 let authGeneration = 0;
 let syncInFlight: Promise<void> | null = null;
 let lastSyncedAt = 0;
+let storagePatchInstalled = false;
 
 const pendingWrites = new Map<string, PendingWrite>();
-const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingTimers = new Map<string, number>();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value));
