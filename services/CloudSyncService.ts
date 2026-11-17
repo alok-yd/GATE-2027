@@ -85,6 +85,13 @@ interface CloudRecord {
   writerId?: string;
 }
 
+const originalSetItem: Storage['setItem'] =
+  typeof Storage !== 'undefined' ? Storage.prototype.setItem : function () {};
+const originalRemoveItem: Storage['removeItem'] =
+  typeof Storage !== 'undefined' ? Storage.prototype.removeItem : function () {};
+const originalClear: Storage['clear'] =
+  typeof Storage !== 'undefined' ? Storage.prototype.clear : function () {};
+
 const META_KEY = 'achiever_cloud_sync_meta_v1';
 const DEVICE_ID_KEY = 'achiever_cloud_sync_device_id_v1';
 const SCHEMA_VERSION = 1;
@@ -116,7 +123,6 @@ let lastSyncedAt = 0;
 
 const pendingWrites = new Map<string, PendingWrite>();
 const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const remoteRecords = new Map<string, CloudRecord>();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -279,73 +285,6 @@ const saveKeyMeta = (
   writeLocalMeta(meta);
 };
 
-const markLocalMutation = (key: string): void => {
-  if (!isCloudSyncableKey(key) || applyingRemote) return;
-  const modifiedAt = Date.now();
-  const meta = readLocalMeta();
-
-  if (currentUser) {
-    const userMap = meta.users[currentUser.uid] || {};
-    const previous = userMap[key] || { modifiedAt: 0, lastSyncedAt: 0 };
-    userMap[key] = { ...previous, modifiedAt };
-    meta.users[currentUser.uid] = userMap;
-  } else {
-    meta.pendingBeforeLogin[key] = modifiedAt;
-  }
-
-  writeLocalMeta(meta);
-
-  if (currentUser && syncReady) {
-    scheduleLocalWrite({
-      key,
-      value: window.localStorage.getItem(key),
-      modifiedAt,
-    });
-  }
-};
-
-const originalSetItem = Storage.prototype.setItem;
-const originalRemoveItem = Storage.prototype.removeItem;
-const originalClear = Storage.prototype.clear;
-
-let storagePatchInstalled = false;
-
-const installStorageMutationBridge = (): void => {
-  if (storagePatchInstalled || typeof window === 'undefined' || typeof Storage === 'undefined') return;
-  storagePatchInstalled = true;
-
-  Storage.prototype.setItem = function patchedSetItem(key: string, value: string): void {
-    originalSetItem.call(this, key, value);
-    try {
-      if (this === window.localStorage) markLocalMutation(String(key));
-    } catch {
-      // Ignore inaccessible storage contexts.
-    }
-  };
-
-  Storage.prototype.removeItem = function patchedRemoveItem(key: string): void {
-    originalRemoveItem.call(this, key);
-    try {
-      if (this === window.localStorage) markLocalMutation(String(key));
-    } catch {
-      // Ignore inaccessible storage contexts.
-    }
-  };
-
-  Storage.prototype.clear = function patchedClear(): void {
-    let keysToDelete: string[] = [];
-    try {
-      if (this === window.localStorage) {
-        keysToDelete = Array.from(listLocalRecords().keys());
-      }
-    } catch {
-      // Ignore inaccessible storage contexts.
-    }
-    originalClear.call(this);
-    if (keysToDelete.length) keysToDelete.forEach((key) => markLocalMutation(key));
-  };
-};
-
 const clearPendingTimers = (): void => {
   pendingTimers.forEach((timer) => window.clearTimeout(timer));
   pendingTimers.clear();
@@ -432,7 +371,6 @@ const writeCloudRecord = async (
 };
 
 const readCloudRecordValue = async (
-  uid: string,
   reference: QueryDocumentSnapshot<DocumentData>,
   record: CloudRecord
 ): Promise<string> => {
@@ -492,7 +430,7 @@ const applyRemoteRecord = async (
     if (record.deleted) {
       originalRemoveItem.call(window.localStorage, record.key);
     } else {
-      const value = await readCloudRecordValue(uid, reference, record);
+      const value = await readCloudRecordValue(reference, record);
       originalSetItem.call(window.localStorage, record.key, value);
     }
   } finally {
@@ -573,22 +511,20 @@ const mergeInitialCloudData = async (user: User): Promise<void> => {
     for (const remoteSnapshot of recordsSnapshot.docs) {
       const record = remoteSnapshot.data() as CloudRecord;
       await applyRemoteRecord(user.uid, remoteSnapshot, record);
-      remoteByKey.delete(record.key);
     }
 
     // Preserve legacy local records that have never existed in the cloud.
     for (const [key, value] of localRecords) {
       if (remoteByKey.has(key)) continue;
-      const meta = userKeyMeta(user.uid, key);
-      const localMeta = readLocalMeta();
       const modifiedAt = Math.max(
-        meta.modifiedAt,
-        Number(localMeta.pendingBeforeLogin[key]) || 0
+        userKeyMeta(user.uid, key).modifiedAt,
+        Number(readLocalMeta().pendingBeforeLogin[key]) || 0,
+        Date.now()
       );
-      if (modifiedAt > meta.lastSyncedAt || !profileSnapshot.exists()) {
-        await writeCloudRecord(user.uid, key, value, modifiedAt || Date.now());
-        markWriteSynced(user.uid, key, modifiedAt || Date.now());
-      }
+      // A local key absent from the cloud collection is legacy or was created
+      // on this device while offline. Tombstones remain as remote documents.
+      await writeCloudRecord(user.uid, key, value, modifiedAt);
+      markWriteSynced(user.uid, key, modifiedAt);
     }
   }
 
@@ -849,8 +785,7 @@ export const syncCloudDataNow = async (): Promise<void> => {
   if (!currentUser) throw new Error('Connect your Google account before syncing.');
   updateState({ status: 'syncing', message: 'Syncing recent ACHIEVER changes…' });
   await flushAllPending();
-  const snapshot = await getDocs(recordsCollection(currentUser.uid));
-  snapshot.docs.forEach((record) => remoteRecords.set(String(record.data().key || ''), record.data() as CloudRecord));
+  await mergeInitialCloudData(currentUser);
   updateState({
     status: pendingWrites.size ? 'syncing' : 'synced',
     message: pendingWrites.size
