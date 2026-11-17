@@ -266,7 +266,7 @@ export const getStoredSubjects = (): LectureSubject[] => {
             completedLectures: Number.isFinite(completedLectures)
               ? Math.max(0, completedLectures)
               : 0,
-            phase: value.phase === 1 ? 1 : 2,
+            phase: value.phase === 1 ? (1 as const) : (2 as const),
             color: typeof value.color === 'string' ? value.color : 'bg-indigo-500',
           };
         })
