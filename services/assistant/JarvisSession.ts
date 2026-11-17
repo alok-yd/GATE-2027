@@ -6,11 +6,9 @@ import {
   upsertMentorConversation,
 } from '../mentor/MentorStorage';
 import type { MentorConversation, MentorStoredMessage } from '../mentor/MentorStorage';
-import {
-  generateMentorReply,
-  summarizeMentorConversation,
-} from '../mentor/MentorAgent';
+import { summarizeMentorConversation } from '../mentor/MentorAgent';
 import type { MentorHistoryMessage } from '../mentor/MentorAgent';
+import { orchestrateJarvisMessage } from './JarvisOrchestrator';
 
 const JARVIS_WELCOME = `J.A.R.V.I.S. — Just A Rather Very Intelligent System
 
@@ -51,10 +49,10 @@ const ensureConversation = (): MentorConversation => {
 };
 
 /**
- * J.A.R.V.I.S. deliberately reuses the existing Mentor conversation store,
- * memory retrieval and section-specific tool-calling agent. This keeps one
- * source of truth instead of creating a competing assistant history or data
- * model. Voice and text conversations are therefore visible in AI Mentor.
+ * J.A.R.V.I.S. reuses the existing Mentor conversation store, approved
+ * memories, section-specific read tools and AI provider. The orchestrator adds
+ * bounded specialist routing for complex requests without creating a second
+ * conversation store or changing the voice-first interface.
  */
 export const getJarvisConversationSnapshot = (): MentorConversation => ensureConversation();
 
@@ -82,9 +80,10 @@ export const sendJarvisMessage = async (
     .slice(-14)
     .map((message) => ({ role: message.role, content: message.content }));
 
-  const result = await generateMentorReply({
+  const result = await orchestrateJarvisMessage({
+    prompt: cleanPrompt,
     messages: history,
-    mode: 'chat',
+    conversationMode: 'chat',
     summary: savedWithUser.summary || '',
     signal,
   });
