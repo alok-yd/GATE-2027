@@ -140,7 +140,7 @@ export const JARVIS_AGENT_REGISTRY: Record<JarvisAgentId, JarvisSpecialist> = {
     id: 'research-agent',
     name: 'Research Agent',
     purpose: 'Source-grounded research over locally indexed notes and uploaded study material.',
-    objective: 'Find and synthesize relevant evidence from the user's existing uploaded/indexed knowledge.',
+    objective: "Find and synthesize relevant evidence from the user's existing uploaded/indexed knowledge.",
     instructions: [
       'Search the existing locally indexed uploaded notes and AI Native knowledge base before answering source-specific questions.',
       'Preserve exact source identifiers returned by search_uploaded_study_material; never invent citations, page numbers or research-paper metadata.',
