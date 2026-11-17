@@ -286,7 +286,7 @@ export class StorageService {
     }
   }
 
-  static getVerifiedStudySecondsForDate(date: string): number {
+  static getVerifiedStudySecondsForDate(date: string, excludeSessionId?: string): number {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return 0;
 
     try {
@@ -294,7 +294,8 @@ export class StorageService {
       const day = ledger?.version === 1 ? ledger.days?.[date] : undefined;
       if (!day || typeof day !== 'object') return 0;
 
-      const totalMilliseconds = Object.values(day).reduce((total, session) => {
+      const totalMilliseconds = Object.entries(day).reduce((total, [sessionId, session]) => {
+        if (excludeSessionId && sessionId === excludeSessionId) return total;
         const value = Number(session?.totalMilliseconds);
         return total + (Number.isFinite(value) && value > 0 ? value : 0);
       }, 0);
