@@ -29,7 +29,7 @@ export interface JarvisOrchestrationResult {
 }
 
 interface SpecialistReport {
-  agentId: string;
+  agentId: Parameters<typeof getJarvisSpecialist>[0];
   name: string;
   content: string;
   model: string;
