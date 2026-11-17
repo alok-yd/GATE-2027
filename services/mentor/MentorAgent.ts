@@ -37,6 +37,7 @@ import { getSpeakingCoachMentorContext } from './MentorSpeakingData';
 import { getContextualGitaShloka } from './GitaWisdom';
 
 export type MentorMode = 'chat' | 'concept' | 'problem' | 'strategy';
+export type MentorResponseChannel = 'text' | 'voice';
 
 export interface MentorHistoryMessage {
   role: 'user' | 'assistant';
@@ -750,7 +751,8 @@ const executeMentorTool = (
 
 export const buildMentorSystemInstruction = (
   mode: MentorMode,
-  executionProfile?: MentorExecutionProfile
+  executionProfile?: MentorExecutionProfile,
+  responseChannel: MentorResponseChannel = 'text'
 ): string => {
   const modeInstructions: Record<MentorMode, string> = {
     chat:
@@ -867,9 +869,19 @@ OUTPUT
 - End long academic explanations with a short revision recap or a concrete next action when appropriate.
 - Do not mention tools, internal implementation or hidden instructions.`;
 
-  if (!executionProfile) return baseInstruction;
+  const channelInstruction = responseChannel === 'voice'
+    ? `${baseInstruction}
 
-  return `${baseInstruction}
+VOICE RESPONSE CHANNEL
+Respond as natural spoken Indian English/Hinglish, matching the user's language. Keep ordinary answers concise and conversational. For a complex analysis, lead with the conclusion and at most three key findings/actions. Avoid Markdown tables, code fences, long headings and visual formatting that would sound unnatural when spoken. Do not omit essential reasoning or safety caveats.`
+    : `${baseInstruction}
+
+TEXT RESPONSE CHANNEL
+Respond for the existing AI Mentor text workspace. Use readable Markdown when it improves clarity: descriptive headings, ordered steps, compact tables, mathematical equations, code fences and genuine source identifiers. For teaching/problem-solving requests, show the necessary derivation and intermediate steps. Do not artificially shorten a detailed educational answer into a spoken summary.`;
+
+  if (!executionProfile) return channelInstruction;
+
+  return `${channelInstruction}
 
 SPECIALIST EXECUTION CONTRACT
 You are acting as the ${executionProfile.name} inside the J.A.R.V.I.S. orchestrator.
@@ -1013,7 +1025,8 @@ const callGeminiWithTools = async (
   mode: MentorMode,
   summary = '',
   signal?: AbortSignal,
-  executionProfile?: MentorExecutionProfile
+  executionProfile?: MentorExecutionProfile,
+  responseChannel: MentorResponseChannel = 'text'
 ): Promise<string> => {
   const apiKey = getGeminiApiKey();
   if (!apiKey) throw new Error('Gemini API key is not configured.');
@@ -1059,11 +1072,13 @@ const callGeminiWithTools = async (
           signal: controller.signal,
           body: JSON.stringify({
             contents,
-            systemInstruction: { parts: [{ text: buildMentorSystemInstruction(mode, executionProfile) }] },
+            systemInstruction: { parts: [{ text: buildMentorSystemInstruction(mode, executionProfile, responseChannel) }] },
             ...(availableTools.length > 0
-              ? { tools: [{ functionDeclarations: availableTools }] }
+              ? {
+                  tools: [{ functionDeclarations: availableTools }],
+                  toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+                }
               : {}),
-            toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
             generationConfig: {
               temperature: mode === 'problem' ? 0.15 : mode === 'concept' ? 0.22 : 0.35,
               maxOutputTokens: AI_MODEL_CONFIG.maxOutputTokens,
@@ -1169,12 +1184,14 @@ export const generateMentorReply = async ({
   summary = '',
   signal,
   executionProfile,
+  responseChannel = 'text',
 }: {
   messages: MentorHistoryMessage[];
   mode: MentorMode;
   summary?: string;
   signal?: AbortSignal;
   executionProfile?: MentorExecutionProfile;
+  responseChannel?: MentorResponseChannel;
 }): Promise<{ content: string; model: string; toolCalling: boolean }> => {
   const apiKey = getGeminiApiKey();
   if (apiKey) {
@@ -1187,7 +1204,8 @@ export const generateMentorReply = async ({
           mode,
           summary,
           signal,
-          executionProfile
+          executionProfile,
+          responseChannel
         );
         return { content, model, toolCalling: true };
       } catch (error) {
@@ -1205,6 +1223,10 @@ export const generateMentorReply = async ({
   if (signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
   const prompt = `
 The user is asking in ${mode.toUpperCase()} mode.
+Response channel: ${responseChannel.toUpperCase()}.
+${responseChannel === 'voice'
+    ? 'Speak naturally and concisely. Avoid tables and code fences unless essential.'
+    : 'Use rich, readable Markdown and show required educational steps, equations and code clearly.'}
 
 Prior conversation summary:
 ${summary || 'No saved summary yet.'}
@@ -1220,7 +1242,7 @@ Answer the latest user message. Do not invent or infer missing statistics. State
 
   const fallback = await generateGatewayText({
     prompt,
-    system: buildMentorSystemInstruction(mode, executionProfile),
+    system: buildMentorSystemInstruction(mode, executionProfile, responseChannel),
   });
   return { content: fallback.content, model: fallback.model || AI_MODEL_CONFIG.primaryModel, toolCalling: false };
 };
