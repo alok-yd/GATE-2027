@@ -93,12 +93,12 @@ export function findSkinFaceRegions(
 
     // Keep one compact, upper-frame region large enough to plausibly be a face.
     if (
-      area < 14 ||
-      width < 5 ||
-      height < 6 ||
-      aspectRatio < 0.35 ||
-      aspectRatio > 1.65 ||
-      centerY > gridHeight * 0.9
+      area < 32 ||
+      width < 7 ||
+      height < 8 ||
+      aspectRatio < 0.55 ||
+      aspectRatio > 1.4 ||
+      centerY > gridHeight * 0.82
     ) {
       continue;
     }
