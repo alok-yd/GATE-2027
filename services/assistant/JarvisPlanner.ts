@@ -38,8 +38,19 @@ const hasRevisionIntent = (prompt: string): boolean =>
 const hasResearchIntent = (prompt: string): boolean =>
   /research|research paper|paper review|literature review|academic source|arxiv|crossref|latest (?:ai|ml|llm)|research methodology|compare research/i.test(prompt);
 
-const hasConceptIntent = (prompt: string): boolean =>
-  /explain|teach me|concept|derive|derivation|solve this|solve the|numerical|problem step by step|why does|how does .* work/i.test(prompt);
+const hasConceptIntent = (prompt: string): boolean => {
+  const explicitConceptRequest =
+    /teach me|concept|derive|derivation|solve this|solve the|numerical|problem step by step|why does|how does .* work/i.test(prompt);
+  const asksToExplain = /\bexplain\b/i.test(prompt);
+  const isSectionAnalysis =
+    hasWellnessIntent(prompt) ||
+    hasPerformanceIntent(prompt) ||
+    hasFocusIntent(prompt) ||
+    hasAcademicIntent(prompt) ||
+    hasRevisionIntent(prompt) ||
+    hasResearchIntent(prompt);
+  return explicitConceptRequest || (asksToExplain && !isSectionAnalysis);
+};
 
 const hasWellnessIntent = (prompt: string): boolean =>
   /health|wellness|sleep|stress|spo2|oxygen|heart.?rate|steps|hydration|mood|symptom|supplement|vitamin|omega|magnesium|sky|sudarshan|meditation|no.?fap|fatigue|tired|recovery|habit challenge|missed.{0,12}days?|broken streak/i.test(prompt);
