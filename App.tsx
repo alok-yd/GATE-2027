@@ -14,25 +14,30 @@ import HealthTracker from './components/HealthTracker';
 import SpeakingDashboard from './components/SpeakingDashboard';
 import AINativeWorkbench from './components/AINativeWorkbench';
 import FocusTracker from './components/FocusTracker';
+import SectionErrorBoundary from './components/SectionErrorBoundary';
+
+const protectSection = (sectionName: string, content: React.ReactNode) => (
+  <SectionErrorBoundary sectionName={sectionName}>{content}</SectionErrorBoundary>
+);
 
 const App: React.FC = () => {
   return (
     <Router>
       <Layout>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/roadmap" element={<Timeline />} />
-          <Route path="/focus" element={<FocusTracker />} />
-          <Route path="/tracker" element={<Tracker />} />
-          <Route path="/pyq-tracker" element={<PYQExecutionTracker />} />
-          <Route path="/strategy" element={<Strategies />} />
-          <Route path="/health" element={<HealthTracker />} />
-          <Route path="/speaking" element={<SpeakingDashboard />} />
-          <Route path="/tests" element={<TestPerformance />} />
-          <Route path="/revision" element={<Revision />} />
-          <Route path="/mentor" element={<AIMentor />} />
-          <Route path="/analytics" element={<AIAnalyticsDashboard />} />
-          <Route path="/ai-native" element={<AINativeWorkbench />} />
+          <Route path="/" element={protectSection('Dashboard', <Dashboard />)} />
+          <Route path="/roadmap" element={protectSection('Roadmap', <Timeline />)} />
+          <Route path="/focus" element={protectSection('AI Focus', <FocusTracker />)} />
+          <Route path="/tracker" element={protectSection('Lecture Tracker', <Tracker />)} />
+          <Route path="/pyq-tracker" element={protectSection('PYQ Execution Tracker', <PYQExecutionTracker />)} />
+          <Route path="/strategy" element={protectSection('Strategy & Tips', <Strategies />)} />
+          <Route path="/health" element={protectSection('Health Tracker', <HealthTracker />)} />
+          <Route path="/speaking" element={protectSection('Speaking Coach', <SpeakingDashboard />)} />
+          <Route path="/tests" element={protectSection('Test Performance', <TestPerformance />)} />
+          <Route path="/revision" element={protectSection('Revision', <Revision />)} />
+          <Route path="/mentor" element={protectSection('AI Mentor', <AIMentor />)} />
+          <Route path="/analytics" element={protectSection('AI Analytics', <AIAnalyticsDashboard />)} />
+          <Route path="/ai-native" element={protectSection('AI Native', <AINativeWorkbench />)} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>
