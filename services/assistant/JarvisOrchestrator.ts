@@ -21,7 +21,10 @@ export interface JarvisOrchestrationResult {
   failedAgents: string[];
 }
 
-const buildExecutionProfile = (agentId: Parameters<typeof getJarvisSpecialist>[0]): MentorExecutionProfile => {
+const buildExecutionProfile = (
+  agentId: Parameters<typeof getJarvisSpecialist>[0],
+  onToolCall?: (toolName: string) => void
+): MentorExecutionProfile => {
   const specialist = getJarvisSpecialist(agentId);
   return {
     id: specialist.id,
@@ -31,6 +34,7 @@ const buildExecutionProfile = (agentId: Parameters<typeof getJarvisSpecialist>[0
     allowedTools: specialist.allowedTools,
     maxToolCalls: specialist.maxToolCalls,
     maxToolRounds: specialist.maxToolRounds,
+    onToolCall,
   };
 };
 
@@ -98,17 +102,19 @@ export const orchestrateJarvisMessage = async ({
   if (selectedAgents.length === 1) {
     const agentId = selectedAgents[0];
     const specialist = getJarvisSpecialist(agentId);
+    const invokedTools = new Set<string>();
     const result = await generateMentorReply({
       messages,
       mode: specialist.mode,
       summary,
       signal,
-      executionProfile: buildExecutionProfile(agentId),
+      executionProfile: buildExecutionProfile(agentId, (toolName) => invokedTools.add(toolName)),
     });
     console.info('[J.A.R.V.I.S. Orchestrator]', {
       executionMode: 'single-agent',
       selectedAgents: [agentId],
       succeeded: true,
+      invokedTools: [...invokedTools],
       toolCalling: result.toolCalling,
     });
     return {
@@ -126,12 +132,14 @@ export const orchestrateJarvisMessage = async ({
   const settled = await Promise.allSettled(
     boundedAgents.map(async (agentId) => {
       const specialist = getJarvisSpecialist(agentId);
+      const invokedTools = new Set<string>();
+      const agentStartedAt = Date.now();
       const result = await generateMentorReply({
         messages,
         mode: specialist.mode,
         summary,
         signal,
-        executionProfile: buildExecutionProfile(agentId),
+        executionProfile: buildExecutionProfile(agentId, (toolName) => invokedTools.add(toolName)),
       });
       return {
         agentId,
@@ -139,6 +147,8 @@ export const orchestrateJarvisMessage = async ({
         content: result.content.slice(0, MAX_SPECIALIST_REPORT_CHARS),
         model: result.model,
         toolCalling: result.toolCalling,
+        invokedTools: [...invokedTools],
+        elapsedMs: Date.now() - agentStartedAt,
       };
     })
   );
@@ -152,6 +162,8 @@ export const orchestrateJarvisMessage = async ({
       content: string;
       model: string;
       toolCalling: boolean;
+      invokedTools: string[];
+      elapsedMs: number;
     }> => result.status === 'fulfilled')
     .map((result) => result.value);
 
@@ -237,11 +249,19 @@ export const orchestrateJarvisMessage = async ({
 
   console.info('[J.A.R.V.I.S. Orchestrator]', {
     executionMode: result.executionMode,
+    plannerReason: plan.reason,
     selectedAgents: result.selectedAgents,
     successfulAgents: result.successfulAgents,
     failedAgents: result.failedAgents,
+    invokedTools: reports.map((report) => ({
+      agent: report.agentId,
+      tools: report.invokedTools,
+      elapsedMs: report.elapsedMs,
+      model: report.model,
+    })),
     elapsedMs: Date.now() - startTime,
     specialistCount: reports.length,
+    tokenUsage: 'Not exposed by the existing MentorAgent result contract.',
   });
 
   return result;
