@@ -11,6 +11,10 @@ interface NativeFaceDetectorLike {
 interface MediaPipeDetection {
   categories?: Array<{ score?: number }>;
   score?: number;
+  boundingBox?: {
+    width?: number;
+    height?: number;
+  };
 }
 
 interface MediaPipeDetectionResult {
@@ -254,7 +258,7 @@ export class VisionEngine {
           runningMode: 'VIDEO',
           // Slightly more permissive than the default to reduce missed
           // detections on ordinary laptop webcams, low light, and mild head tilt.
-          minDetectionConfidence: 0.30,
+          minDetectionConfidence: 0.55,
           minSuppressionThreshold: 0.3,
         }),
         20000,
@@ -404,7 +408,17 @@ export class VisionEngine {
             ? Math.max(0, ...detection.categories.map((category) => Number(category.score) || 0))
             : 0;
           const score = Math.max(categoryScore, Number(detection.score) || 0);
-          return score >= 0.30;
+          if (score < 0.55) return false;
+
+          // The input is a 160x120 frame. Ignore tiny boxes that are more
+          // likely to be background patterns/reflections than a visible face.
+          const box = detection.boundingBox;
+          if (box) {
+            return Number(box.width) >= 18 && Number(box.height) >= 18;
+          }
+
+          // When the model omits box geometry, demand higher confidence.
+          return score >= 0.68;
         });
       } catch (error) {
         console.warn('[AI Focus] MediaPipe frame detection failed; switching to local fallback.', error);
