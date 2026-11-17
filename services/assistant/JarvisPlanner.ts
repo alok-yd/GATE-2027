@@ -24,10 +24,10 @@ const isOverallPreparationRequest = (prompt: string): boolean =>
   /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|analyse my preparation|analyze my preparation|how is my (?:gate )?preparation|preparation status|overall progress|complete preparation review|daily intelligence briefing|daily briefing|all sections|all tracker data|full workspace|complete workspace|entire achiever|everything in achiever|complete app snapshot/i.test(prompt);
 
 const hasAcademicIntent = (prompt: string): boolean =>
-  /roadmap|syllabus|subject completion|lecture completion|remaining subjects|remaining syllabus|milestone|study plan|what should i study|today.?s? target|daily target|preparation strategy|prepare for gate|gate preparation/i.test(prompt);
+  /roadmap|syllabus|subject completion|lecture completion|remaining subjects|remaining syllabus|milestone|study plan|what should i study|today.?s? target|tomorrow.?s? plan|plan for tomorrow|daily target|preparation strategy|prepare for gate|gate preparation|predict my air|predicted air|air readiness|rank prediction|expected marks|gate score|college compatibility|what.if simulation/i.test(prompt);
 
 const hasPerformanceIntent = (prompt: string): boolean =>
-  /mock|test performance|test score|test history|marks|negative marks|accuracy|performance trend|weak subject|weak topic|test analysis|analyse my tests|analyze my tests/i.test(prompt);
+  /mock|test performance|test score|test history|marks|negative marks|accuracy|performance trend|weak subject|weak area|weak topic|top weak|weakest subject|test analysis|analyse my tests|analyze my tests/i.test(prompt);
 
 const hasFocusIntent = (prompt: string): boolean =>
   /ai focus|focus timer|verified study|verified hours|study hours|study time|consistency|focus session|time at desk/i.test(prompt);
@@ -114,7 +114,7 @@ export const planJarvisExecution = (
 
   // Daily plans benefit from both current academic priorities and revision evidence.
   const isDailyPlanRequest =
-    /plan my day|daily plan|what should i study today|today.?s? target|daily target|what next|next steps/i.test(text);
+    /plan my day|daily plan|what should i study (today|tomorrow)|today.?s? target|tomorrow.?s? plan|plan for tomorrow|what next|next steps/i.test(text);
   if (
     isDailyPlanRequest ||
     (agents.length === 0 && conversationMode === 'strategy')
