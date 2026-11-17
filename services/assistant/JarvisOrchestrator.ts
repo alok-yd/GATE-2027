@@ -8,7 +8,7 @@ import {
 import { getJarvisSpecialist } from './JarvisAgentRegistry';
 import { planJarvisExecution } from './JarvisPlanner';
 
-const MAX_PARALLEL_SPECIALISTS = 4;
+const MAX_PARALLEL_SPECIALISTS = 5;
 const MAX_SPECIALIST_REPORT_CHARS = 2200;
 
 export interface JarvisOrchestrationResult {
