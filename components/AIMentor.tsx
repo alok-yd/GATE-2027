@@ -144,7 +144,7 @@ const formatDashboardAIRAnalytics = () => {
     .join('\n');
   const colleges = collegeCompatibility.topMatches.length
     ? collegeCompatibility.topMatches
-        .map((match) => `- ${match.record.institute} — ${match.record.program}: ${match.statusText} (historical cutoff score ${match.closingScore})`)
+        .map((match) => `- ${match.institute} — ${match.program}: ${match.interpretation} (historical cutoff score ${match.historicalClosingScore})`)
         .join('\n')
     : 'No matches in the historically competitive/above categories for the selected category.';
   const whatIf = defaultWhatIfSimulation.result;
