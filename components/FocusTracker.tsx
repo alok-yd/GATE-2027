@@ -113,12 +113,22 @@ export default function FocusTracker() {
     [sessions, settings.dailyTargetHours]
   );
 
-  // The persistent verified-time ledger is the single source of truth for
-  // the dashboard total. It is updated by TimerEngine while the webcam
-  // confirms presence, and remains available after STOP saves the session.
-  const todayVerifiedSeconds = useMemo(
-    () => StorageService.getVerifiedStudySecondsForDate(getTodayDateString()),
-    [tickData.focusedSeconds, sessions]
+  // Combine persisted totals from previous sessions with the current
+  // session's verified runtime counter. Excluding the active session from the
+  // ledger prevents double counting while providing a live fallback if a
+  // browser/cloud storage write is delayed.
+  const readTodayVerifiedSeconds = () => {
+    const today = getTodayDateString();
+    const activeSessionId = timerEngine.getActiveSessionId();
+    const persistedOtherSessions = StorageService.getVerifiedStudySecondsForDate(
+      today,
+      activeSessionId || undefined
+    );
+    return persistedOtherSessions + timerEngine.getActiveSessionVerifiedSecondsForDate(today);
+  };
+
+  const [todayVerifiedSeconds, setTodayVerifiedSeconds] = useState<number>(
+    () => readTodayVerifiedSeconds()
   );
 
   const todaySessions = useMemo(() => {
@@ -136,12 +146,28 @@ export default function FocusTracker() {
       setCameraError(reason);
     });
 
+    const refreshVerifiedTotal = () => {
+      setTodayVerifiedSeconds(readTodayVerifiedSeconds());
+    };
+
     const unsubTimer = timerEngine.subscribe((tick) => {
       setTickData(tick);
+      // TimerEngine emits every 250ms. The displayed total is second-based,
+      // but refreshing here also covers session stop/completion transitions.
+      refreshVerifiedTotal();
     });
+
+    window.addEventListener('gate-ai-focus-study-time-updated', refreshVerifiedTotal);
+    window.addEventListener('storage', refreshVerifiedTotal);
+    // Reconcile with cloud-originated storage changes (the browser storage
+    // event does not fire in the same document that applies the remote value).
+    const verifiedTotalRefreshId = window.setInterval(refreshVerifiedTotal, 1000);
 
     return () => {
       sessionStartGenerationRef.current += 1;
+      window.clearInterval(verifiedTotalRefreshId);
+      window.removeEventListener('gate-ai-focus-study-time-updated', refreshVerifiedTotal);
+      window.removeEventListener('storage', refreshVerifiedTotal);
       unsubFailure();
       unsubTimer();
       // Route navigation must not stop an active verified study session.
