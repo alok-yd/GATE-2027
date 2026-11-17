@@ -18,13 +18,17 @@ const REQUIRED_PRESENT_FRAMES = 2;
 // with a longer grace period for paper-based work (the student explicitly
 // selected that study medium). This prevents normal note-taking from losing
 // large blocks of verified time.
-const REQUIRED_ABSENT_FRAMES = 6;
-const SCREEN_ABSENCE_CONFIRMATION_MS = 20_000;
-const MIXED_ABSENCE_CONFIRMATION_MS = 90_000;
-const PAPER_ABSENCE_CONFIRMATION_MS = 5 * 60_000;
-// At session start, allow the camera and face detector to stabilise. The
-// selected study medium controls how long a missing face is treated as a
-// temporary visibility dropout before the session is marked AWAY.
+const REQUIRED_ABSENT_FRAMES = 4;
+// Pause fairly quickly after sustained absence. The paper/PYQ window is a
+// little longer so brief downward glances and note-taking do not create
+// unnecessary pauses, while still detecting someone who has left the desk.
+const SCREEN_ABSENCE_CONFIRMATION_MS = 10_000;
+const MIXED_ABSENCE_CONFIRMATION_MS = 15_000;
+const PAPER_ABSENCE_CONFIRMATION_MS = 30_000;
+// Presence grace is only for the detector's initial warm-up, never the whole
+// absence-confirmation window. Without this cap an empty chair could earn
+// 90 seconds (Mixed) or 5 minutes (Paper/PYQ) at the start of a session.
+const INITIAL_PRESENCE_GRACE_MS = 4_000;
 const INITIAL_ABSENCE_CONFIRMATION_FRAMES = 4;
 
 export interface FocusEngineOutput {
@@ -89,6 +93,8 @@ export class FocusEngine {
     this.candidateSinceTimestamp = 0;
     this.consecutiveFrames = 0;
     this.confirmedPresence = null;
+    this.lastVision = null;
+    this.lastEvaluationOutput = null;
     this.currentState = 'UNVERIFIED';
     this.evaluate(true);
   }
@@ -243,7 +249,9 @@ export class FocusEngine {
       cameraAvailable &&
       this.sessionActive &&
       this.confirmedPresence === null &&
-      this.candidatePresence === false;
+      this.candidatePresence === false &&
+      this.candidateSinceTimestamp > 0 &&
+      now - this.candidateSinceTimestamp <= INITIAL_PRESENCE_GRACE_MS;
     const isPersonPresent =
       cameraAvailable && (this.confirmedPresence === true || initialPresenceGrace);
     const hasConfirmedAbsence = cameraAvailable && this.confirmedPresence === false;
