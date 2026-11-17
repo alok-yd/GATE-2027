@@ -103,6 +103,7 @@ export class TimerEngine {
   }
 
   getActiveSessionVerifiedSecondsForDate(dateKey: string): number {
+    if (!this.activeSessionId) return 0;
     const milliseconds = this.activeSessionFocusedMsByDate.get(dateKey) || 0;
     return Math.floor(milliseconds / 1000);
   }
