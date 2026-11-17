@@ -94,6 +94,7 @@ const originalClear: Storage['clear'] =
 
 const META_KEY = 'achiever_cloud_sync_meta_v1';
 const DEVICE_ID_KEY = 'achiever_cloud_sync_device_id_v1';
+const ACTIVE_UID_KEY = 'achiever_cloud_sync_active_uid_v1';
 const SCHEMA_VERSION = 1;
 const INLINE_VALUE_LIMIT_BYTES = 450_000;
 const CHUNK_CHAR_LIMIT = 100_000;
@@ -589,6 +590,13 @@ const startUserSync = async (user: User): Promise<void> => {
   }
   if (currentUser?.uid !== user.uid || generation !== authGeneration) return;
 
+  const activeUid = window.localStorage.getItem(ACTIVE_UID_KEY);
+  if (activeUid && activeUid !== user.uid) {
+    throw new Error(
+      'This browser already contains ACHIEVER records linked to another Google account. Sign in with the original account to avoid mixing private study data.'
+    );
+  }
+
   syncReady = false;
   updateState({
     status: navigator.onLine ? 'syncing' : 'offline',
@@ -599,6 +607,8 @@ const startUserSync = async (user: User): Promise<void> => {
   const task = (async () => {
     await mergeInitialCloudData(user);
     if (currentUser?.uid !== user.uid || generation !== authGeneration) return;
+
+    originalSetItem.call(window.localStorage, ACTIVE_UID_KEY, user.uid);
 
     if (recordsUnsubscribe) recordsUnsubscribe();
     recordsUnsubscribe = onSnapshot(
