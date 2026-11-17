@@ -119,7 +119,6 @@ let recordsUnsubscribe: FirestoreUnsubscribe | null = null;
 let currentUser: User | null = null;
 let syncReady = false;
 let bootstrapping = false;
-let applyingRemote = false;
 let authGeneration = 0;
 let syncInFlight: Promise<void> | null = null;
 let lastSyncedAt = 0;
@@ -450,16 +449,14 @@ const applyRemoteRecord = async (
     return;
   }
 
-  applyingRemote = true;
-  try {
-    if (record.deleted) {
-      originalRemoveItem.call(window.localStorage, record.key);
-    } else {
-      const value = await readCloudRecordValue(reference, record);
-      originalSetItem.call(window.localStorage, record.key, value);
-    }
-  } finally {
-    applyingRemote = false;
+  // Apply remote data with the captured original Storage methods. This
+  // bypasses the outbound mutation bridge without suppressing unrelated local
+  // writes that may occur while a large/chunked record is being downloaded.
+  if (record.deleted) {
+    originalRemoveItem.call(window.localStorage, record.key);
+  } else {
+    const value = await readCloudRecordValue(reference, record);
+    originalSetItem.call(window.localStorage, record.key, value);
   }
 
   saveKeyMeta(uid, record.key, {
@@ -720,7 +717,7 @@ const handleAuthUser = (user: User | null): void => {
 };
 
 const onLocalStorageMutation = (key: string, value: string | null): void => {
-  if (!isCloudSyncableKey(key) || applyingRemote) return;
+  if (!isCloudSyncableKey(key)) return;
 
   const modifiedAt = Date.now();
   const meta = readLocalMeta();
