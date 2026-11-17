@@ -17,6 +17,7 @@ import {
   onSnapshot,
   serverTimestamp,
   setDoc,
+  deleteField,
   writeBatch,
   type DocumentData,
   type QueryDocumentSnapshot,
@@ -130,6 +131,26 @@ const pendingTimers = new Map<string, number>();
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
+const getCloudErrorMessage = (error: unknown): string => {
+  const candidate = isRecord(error) ? error : {};
+  const code = String(candidate.code || '');
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (code.includes('permission-denied')) {
+    return 'Firestore security rules denied access. Publish the repository firestore.rules file in your Firebase project, then click Sync now.';
+  }
+  if (code.includes('failed-precondition') || code.includes('not-found')) {
+    return 'Cloud Firestore is not ready. Create or enable the default Firestore database in Firebase Console, then retry.';
+  }
+  if (code.includes('unavailable') || !navigator.onLine) {
+    return 'Cloud connection is unavailable. Your changes remain saved locally and will retry when you are online.';
+  }
+  if (code.includes('unauthenticated')) {
+    return 'Your Google session has expired. Disconnect and connect your Google account again.';
+  }
+  return message || 'Cloud sync failed. Your local records remain available.';
+};
+
 const readLocalMeta = (): LocalSyncMeta => {
   try {
     const raw = window.localStorage.getItem(META_KEY);
@@ -228,7 +249,7 @@ const splitIntoChunks = (value: string): string[] => {
 };
 
 const recordIdForKey = (key: string): string =>
-  encodeURIComponent(key).replace(/%/g, '_');
+  encodeURIComponent(key);
 
 const recordsCollection = (uid: string) =>
   collection(cloudDb, 'users', uid, 'appData');
@@ -369,6 +390,7 @@ const writeCloudRecord = async (
   };
 
   if (value !== null && !chunked) rootRecord.value = value;
+  else rootRecord.value = deleteField();
   batch.set(reference, rootRecord, { merge: true });
   await batch.commit();
 };
@@ -468,7 +490,7 @@ const flushKey = async (key: string): Promise<void> => {
     console.error('[ACHIEVER Cloud Sync] Write failed.', error);
     updateState({
       status: navigator.onLine ? 'error' : 'offline',
-      message: error instanceof Error ? error.message : 'Cloud write failed. Your local data remains safe.',
+      message: getCloudErrorMessage(error),
     });
   }
 };
@@ -620,7 +642,7 @@ const startUserSync = async (user: User): Promise<void> => {
         console.error('[ACHIEVER Cloud Sync] Live sync listener failed.', error);
         updateState({
           status: navigator.onLine ? 'error' : 'offline',
-          message: error.message || 'Cloud sync listener failed.',
+          message: getCloudErrorMessage(error),
         });
       }
     );
@@ -677,7 +699,7 @@ const handleAuthUser = (user: User | null): void => {
     console.error('[ACHIEVER Cloud Sync] Initial sync failed.', error);
     updateState({
       status: navigator.onLine ? 'error' : 'offline',
-      message: error instanceof Error ? error.message : 'Could not connect to Cloud Firestore.',
+      message: getCloudErrorMessage(error),
     });
   });
 };
