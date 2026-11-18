@@ -1547,35 +1547,36 @@ These are the current browser tracker records. Ask your next question and I’ll
   };
 
   const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file || uploading) return;
+    const files = event.currentTarget.files ? Array.from(event.currentTarget.files) : [];
+    event.currentTarget.value = '';
+    if (!files.length || uploading) return;
     setUploading(true);
-    setUploadFeedback(`Indexing ${file.name} locally…`);
 
     try {
-      const document = await processUploadedDocument(file, 'mentor');
-      setDocumentsCount(listDocuments().length);
-      const warningText = document.warnings.length
-        ? `\n\n**Extraction note:** ${document.warnings.join(' ')}`
-        : '';
-      appendMessage(
-        'assistant',
-        `## Study material indexed
-
-**File:** ${document.name}
-
-**Local extraction confidence:** ${Math.round(document.extractionConfidence * 100)}%
-
-${document.summary}
-
-You can now ask me to search this material. I’ll include local chunk identifiers when a matching passage is retrieved.${warningText}`
-      );
-      setUploadFeedback(`Indexed ${file.name} in this browser.`);
+      const indexedNames: string[] = [];
+      for (const file of files.slice(0, 10)) {
+        setUploadFeedback('Extracting and indexing ' + file.name + '…');
+        const document = await processUploadedDocument(file, 'mentor');
+        indexedNames.push(document.name);
+        setDocumentsCount(listDocuments().length);
+        const warningText = document.warnings.length
+          ? '\\n\\n**Extraction note:** ' + document.warnings.join(' ')
+          : '';
+        appendMessage(
+          'assistant',
+          '## Study material indexed\\n\\n**File:** ' + document.name +
+          '\\n\\n**Extraction confidence:** ' + Math.round(document.extractionConfidence * 100) +
+          '%\\n\\n' + document.summary +
+          '\\n\\nYou can now ask me to search this material. Relevant local chunk identifiers are included when matching passages are retrieved.' +
+          warningText
+        );
+      }
+      setUploadFeedback('Indexed ' + indexedNames.length + ' document(s) in this browser: ' + indexedNames.join(', '));
     } catch (error) {
-      setUploadFeedback(error instanceof Error ? error.message : 'Could not import that document.');
+      setUploadFeedback(error instanceof Error ? error.message : 'Could not import one of the selected documents.');
     } finally {
       setUploading(false);
+      window.setTimeout(() => setUploadFeedback(null), 5000);
     }
   };
 
