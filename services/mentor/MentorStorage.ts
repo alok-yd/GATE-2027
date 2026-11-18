@@ -94,9 +94,10 @@ const sanitiseQuiz = (value: unknown): MentorQuizPayload | null => {
   if (!Array.isArray(quiz.questions) || quiz.questions.length === 0) return null;
   const questions = quiz.questions.slice(0, 40).filter((question) => question && typeof question === 'object').map((value, index) => {
     const question = value as Record<string, unknown>;
-    const type = question.type === 'multiple' || question.type === 'nat' || question.type === 'true_false'
-      ? question.type
-      : 'single';
+    const type: MentorQuizQuestionType =
+      question.type === 'multiple' || question.type === 'nat' || question.type === 'true_false'
+        ? question.type as MentorQuizQuestionType
+        : 'single';
     return {
       id: typeof question.id === 'string' ? question.id.slice(0, 100) : `question_${index + 1}`,
       type,
