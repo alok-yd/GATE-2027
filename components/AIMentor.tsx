@@ -126,6 +126,16 @@ const normaliseQuizAnswer = (value: string) =>
   value.toLowerCase().replace(/\s+/g, '').replace(/,/g, '').trim();
 
 const getQuizQuestionCorrect = (question: MentorQuizQuestion, selected: string[]) => {
+  if (question.type === 'nat') {
+    if (!selected[0] || !question.correctAnswers[0]) return false;
+    const expectedNumber = Number(question.correctAnswers[0].replace(/,/g, '').trim());
+    const actualNumber = Number(selected[0].replace(/,/g, '').trim());
+    if (!Number.isFinite(expectedNumber) || !Number.isFinite(actualNumber)) {
+      return normaliseQuizAnswer(question.correctAnswers[0]) === normaliseQuizAnswer(selected[0]);
+    }
+    // Accept small numeric rounding differences for numerical-answer practice.
+    return Math.abs(expectedNumber - actualNumber) <= 0.01;
+  }
   const expected = question.correctAnswers.map(normaliseQuizAnswer).sort();
   const actual = selected.map(normaliseQuizAnswer).sort();
   return expected.length === actual.length && expected.every((answer, index) => answer === actual[index]);
@@ -1213,6 +1223,18 @@ These are the current browser tracker records. Ask your next question and I’ll
       const typeInstruction = quizQuestionType === 'mixed'
         ? 'Use a sensible mix of single-correct MCQ, multiple-correct MSQ, numerical-answer (NAT), and true/false questions.'
         : 'Every question must use question type "' + quizQuestionType + '".';
+      const quizSources = searchKnowledge(subject + ' ' + topic)
+        .filter((item) => item.sourceType === 'document')
+        .slice(0, 6)
+        .map((item) => ({
+          source: item.sourceName,
+          citation: item.citation,
+          excerpt: item.snippet,
+        }));
+      const quizSourceContext = quizSources.length
+        ? '\\n\\nUse these retrieved passages from the user's indexed AI Mentor study documents as primary source material. Cite filenames in question explanations where relevant and do not rely on unsupported details.\\n' + JSON.stringify(quizSources)
+        : '\\n\\nNo matching indexed source passages were found. Generate original GATE-style questions from the subject and topic; do not claim these are derived from an uploaded source.';
+
       const generated = await generateGatewayJson<{
         title?: string;
         questions?: Array<{
@@ -1244,7 +1266,8 @@ These are the current browser tracker records. Ask your next question and I’ll
           '"type":"single | multiple | nat | true_false", "prompt":"Question statement with equations", ' +
           '"options":[{"id":"A","text":"..."},{"id":"B","text":"..."},{"id":"C","text":"..."},{"id":"D","text":"..."}], ' +
           '"correctAnswers":["A"], "explanation":"Reasoned solution", "marks":1, "negativeMarks":0.33}] }. ' +
-          'For NAT, set options=[] and put the numeric answer in correctAnswers. Ensure all items have valid answer keys.',
+          'For NAT, set options=[] and put the numeric answer in correctAnswers. Ensure all items have valid answer keys.' +
+          quizSourceContext,
       });
 
       if (!generated || !Array.isArray(generated.questions) || generated.questions.length < 1) {
