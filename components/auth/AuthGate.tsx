@@ -44,6 +44,12 @@ const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
       return onAuthStateChanged(
         cloudAuth,
         (user) => {
+          if (previousUid && previousUid !== user?.uid) {
+            // Unmount the previous account's React tree before changing the
+            // active local-storage namespace or restoring another user's data.
+            setGate({ status: 'loading', user: null, error: '' });
+          }
+
           transition = transition.then(async () => {
             if (!active) return;
 
