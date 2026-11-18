@@ -1,0 +1,41 @@
+name: Temporary dependency remediation
+on:
+  push:
+    branches:
+      - feat/secure-multi-user-authentication
+permissions:
+  contents: write
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install current lockfile
+        run: npm ci
+      - name: Apply compatible security fixes only
+        run: npm audit fix --no-fund --no-progress || true
+      - name: Reinstall from updated lockfile
+        run: npm ci
+      - name: Save exact post-fix audit report
+        run: |
+          npm audit --json > .tmp-npm-audit-after.json || true
+          node --input-type=module -e "import fs from 'node:fs'; const a=JSON.parse(fs.readFileSync('.tmp-npm-audit-after.json','utf8')); console.log('POST_FIX_AUDIT', JSON.stringify(a.metadata?.vulnerabilities ?? {})); for (const [name,v] of Object.entries(a.vulnerabilities ?? {})) console.log('ADVISORY', name, JSON.stringify({severity:v.severity,via:v.via,fixAvailable:v.fixAvailable}));"
+      - name: Verify production build
+        run: npm run build
+      - name: Verify TypeScript
+        run: npx tsc --noEmit
+      - name: Commit lockfile and audit evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json .tmp-npm-audit-after.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: apply non-breaking dependency security fixes"
+            git push origin HEAD
+          else
+            echo "No dependency changes to commit."
+          fi
