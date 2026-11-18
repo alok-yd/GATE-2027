@@ -4,6 +4,7 @@ import {
   BarChart3,
   Bookmark,
   BookOpen,
+  CalendarDays,
   CheckCircle2,
   ChevronDown,
   Copy,
@@ -24,6 +25,7 @@ import {
   ShieldCheck,
   Sparkles,
   Square,
+  Target,
   Trash2,
   X,
   Zap,
@@ -1250,7 +1252,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
                     <div className="mb-2 flex items-center gap-2 text-emerald-800"><ShieldCheck size={16} /><p className="text-xs font-bold uppercase tracking-wide">Connected application data</p></div>
                     <p className="text-[11px] leading-5 text-emerald-800/80">Relevant records are retrieved from existing ACHIEVER sections when needed. Lecture Tracker task creation remains scoped to explicit user requests. Other tracker operations remain read-only.</p>
                     <div className="mt-3 flex flex-wrap gap-1.5">
-                      {['Roadmap', 'AI Focus', 'Lecture Tracker', 'PYQ Execution', 'Test Performance', 'Revision', 'AI Analytics', 'Strategy & Tips'].map((section) => <span key={section} className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-800">{section}</span>)}
+                      {['Roadmap', 'AI Focus', 'Lecture Tracker', 'PYQ Execution', 'Health Tracker', 'Test Performance', 'Revision', 'AI Analytics', 'Strategy & Tips'].map((section) => <span key={section} className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-800">{section}</span>)}
                     </div>
                     <p className="mt-2 text-[10px] leading-4 text-emerald-900/70">Health Tracker information is accessed only for relevant wellness questions.</p>
                   </div>
