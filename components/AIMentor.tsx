@@ -421,10 +421,10 @@ const AIMentor: React.FC = () => {
     const conversationId = activeConversationIdRef.current;
     const currentConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId);
     const baseMessages = currentConversation?.messages || messagesRef.current;
-    const previousVisualAttachments = attachedImages.length
+    const referencesPreviousVisual = /\b(it|this|that|these|those|here|above|shown|image|diagram|figure|screenshot|uploaded|same|second|first)\b/i.test(prompt);
+    const previousVisualAttachments = attachedImages.length || !referencesPreviousVisual
       ? []
       : ([...baseMessages].reverse().find((message) =>
-          message.role === 'user' &&
           message.attachments?.some((attachment) =>
             attachment.kind === 'image' || attachment.kind === 'generated-image'
           )
