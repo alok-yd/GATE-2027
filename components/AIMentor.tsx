@@ -41,6 +41,8 @@ import {
   describeAIGatewayError,
   generateGatewayImage,
   generateGatewayVision,
+  generateGatewayJson,
+  searchGatewayWeb,
 } from '../services/AIGatewayClient';
 import { AI_MODEL_CONFIG } from '../services/ai/modelConfig';
 import { getStudentProfile } from '../services/DataExtractor';
@@ -61,9 +63,17 @@ import {
   loadMentorConversations,
   saveMentorConversations,
   removeMentorConversation,
+  renameMentorConversation,
   setActiveMentorConversationId,
 } from '../services/mentor/MentorStorage';
-import type { MentorConversation, MentorStoredAttachment, MentorStoredMessage } from '../services/mentor/MentorStorage';
+import type {
+  MentorConversation,
+  MentorStoredAttachment,
+  MentorStoredMessage,
+  MentorQuizPayload,
+  MentorQuizQuestion,
+  MentorQuizQuestionType,
+} from '../services/mentor/MentorStorage';
 import { base64ToBlob, blobToBase64, deleteMentorAttachments, readMentorAttachment, saveMentorAttachment } from '../services/mentor/MentorAttachmentStorage';
 import { summarizeMentorConversation } from '../services/mentor/MentorAgent';
 import type { MentorMode } from '../services/mentor/MentorAgent';
@@ -108,6 +118,179 @@ const StoredMentorImage: React.FC<{ attachment: MentorStoredAttachment }> = ({ a
         </a>
       </div>
     </div>
+  );
+};
+
+
+const normaliseQuizAnswer = (value: string) =>
+  value.toLowerCase().replace(/\\s+/g, '').replace(/,/g, '').trim();
+
+const getQuizQuestionCorrect = (question: MentorQuizQuestion, selected: string[]) => {
+  const expected = question.correctAnswers.map(normaliseQuizAnswer).sort();
+  const actual = selected.map(normaliseQuizAnswer).sort();
+  return expected.length === actual.length && expected.every((answer, index) => answer === actual[index]);
+};
+
+const MentorQuizCard: React.FC<{
+  quiz: MentorQuizPayload;
+  onChange: (quiz: MentorQuizPayload) => void;
+}> = ({ quiz, onChange }) => {
+  const question = quiz.questions[quiz.currentIndex];
+  if (!question) return null;
+  const selected = quiz.responses[question.id] || [];
+  const totalMarks = quiz.questions.reduce((sum, item) => sum + item.marks, 0);
+  const correctCount = quiz.questions.filter((item) => getQuizQuestionCorrect(item, quiz.responses[item.id] || [])).length;
+  const score = quiz.questions.reduce((sum, item) => {
+    const answer = quiz.responses[item.id] || [];
+    if (!answer.length) return sum;
+    return sum + (getQuizQuestionCorrect(item, answer) ? item.marks : -item.negativeMarks);
+  }, 0);
+  const accuracy = quiz.questions.length ? Math.round((correctCount / quiz.questions.length) * 100) : 0;
+  const updateAnswer = (answers: string[]) => onChange({
+    ...quiz,
+    responses: { ...quiz.responses, [question.id]: answers },
+  });
+  const moveTo = (index: number) => onChange({
+    ...quiz,
+    currentIndex: Math.max(0, Math.min(quiz.questions.length - 1, index)),
+  });
+  const toggleReview = () => {
+    const marked = new Set(quiz.markedForReview);
+    if (marked.has(question.id)) marked.delete(question.id);
+    else marked.add(question.id);
+    onChange({ ...quiz, markedForReview: [...marked] });
+  };
+  const chooseOption = (id: string) => {
+    if (quiz.submitted) return;
+    updateAnswer(question.type === 'multiple'
+      ? (selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id])
+      : [id]);
+  };
+
+  return (
+    <section className="my-4 overflow-hidden rounded-2xl border border-indigo-100 bg-white shadow-sm">
+      <div className="bg-gradient-to-r from-indigo-600 to-violet-700 px-4 py-4 text-white">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-100">Interactive GATE Practice</p>
+            <h3 className="mt-1 text-lg font-bold">{quiz.title}</h3>
+            <p className="mt-1 text-xs text-indigo-100">{quiz.subject} · {quiz.topic} · {quiz.difficulty.toUpperCase()}</p>
+          </div>
+          <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold">{quiz.questions.length} questions</span>
+        </div>
+        <div className="mt-4 flex items-center justify-between text-[11px] text-indigo-100">
+          <span>Question {quiz.currentIndex + 1} of {quiz.questions.length}</span>
+          <span>{Math.round(((quiz.currentIndex + 1) / quiz.questions.length) * 100)}% viewed</span>
+        </div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/20">
+          <div className="h-full rounded-full bg-white transition-all" style={{ width: (((quiz.currentIndex + 1) / quiz.questions.length) * 100) + '%' }} />
+        </div>
+      </div>
+
+      <div className="p-4 sm:p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-bold uppercase text-indigo-700">{question.type === 'single' ? 'MCQ · Single correct' : question.type === 'multiple' ? 'MSQ · Multiple correct' : question.type === 'nat' ? 'Numerical answer' : 'True / False'}</span>
+            <span className="text-[10px] text-slate-500">+{question.marks} marks{question.negativeMarks > 0 ? ' · −' + question.negativeMarks + ' for wrong answer' : ''}</span>
+          </div>
+          <button type="button" onClick={toggleReview} disabled={quiz.submitted} className={quiz.markedForReview.includes(question.id) ? 'rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800' : 'rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-40'}>
+            {quiz.markedForReview.includes(question.id) ? '★ Marked for review' : '☆ Mark for review'}
+          </button>
+        </div>
+
+        <div className="text-sm font-semibold leading-6 text-slate-900">{question.prompt}</div>
+        {question.type === 'nat' ? (
+          <div className="mt-4 max-w-xs">
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Your numerical answer</label>
+            <input
+              value={selected[0] || ''}
+              onChange={(event) => updateAnswer(event.target.value ? [event.target.value] : [])}
+              disabled={quiz.submitted}
+              inputMode="decimal"
+              placeholder="Enter numerical value"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 disabled:bg-slate-50"
+            />
+          </div>
+        ) : (
+          <div className="mt-4 space-y-2">
+            {question.options.map((option) => {
+              const isSelected = selected.includes(option.id);
+              const isCorrect = quiz.submitted && question.correctAnswers.includes(option.id);
+              const isWrongSelection = quiz.submitted && isSelected && !isCorrect;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  disabled={quiz.submitted}
+                  onClick={() => chooseOption(option.id)}
+                  className={[
+                    'flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left text-sm transition',
+                    isCorrect ? 'border-emerald-300 bg-emerald-50 text-emerald-900' :
+                    isWrongSelection ? 'border-rose-300 bg-rose-50 text-rose-900' :
+                    isSelected ? 'border-indigo-300 bg-indigo-50 text-indigo-900' :
+                    'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-slate-50',
+                  ].join(' ')}
+                >
+                  <span className={['mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center border text-[10px] font-bold', question.type === 'multiple' ? 'rounded' : 'rounded-full', isSelected ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300 bg-white text-slate-500'].join(' ')}>
+                    {isSelected ? '✓' : option.id}
+                  </span>
+                  <span className="min-w-0 flex-1">{option.text}</span>
+                  {isCorrect && <CheckCircle2 size={16} className="shrink-0 text-emerald-600" />}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {quiz.submitted && (
+          <div className={getQuizQuestionCorrect(question, selected) ? 'mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3' : 'mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3'}>
+            <p className="text-xs font-bold">{getQuizQuestionCorrect(question, selected) ? 'Correct answer' : 'Not quite — review the solution'}</p>
+            <p className="mt-1 text-xs leading-5">
+              <strong>Correct answer:</strong> {question.correctAnswers.join(', ')}
+            </p>
+            <p className="mt-2 whitespace-pre-wrap text-xs leading-5">{question.explanation}</p>
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
+          <button type="button" onClick={() => moveTo(quiz.currentIndex - 1)} disabled={quiz.currentIndex === 0} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40">Previous</button>
+          <div className="flex flex-wrap gap-2">
+            {!quiz.submitted && (
+              <button type="button" onClick={() => onChange({ ...quiz, submitted: true })} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700">Submit quiz</button>
+            )}
+            <button type="button" onClick={() => moveTo(quiz.currentIndex + 1)} disabled={quiz.currentIndex === quiz.questions.length - 1} className="rounded-lg border border-indigo-200 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-40">Next</button>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {quiz.questions.map((item, index) => {
+            const answered = Boolean(quiz.responses[item.id]?.length);
+            const marked = quiz.markedForReview.includes(item.id);
+            return (
+              <button key={item.id} type="button" onClick={() => moveTo(index)} title={'Question ' + (index + 1) + (marked ? ' · Marked for review' : '')} className={[
+                'flex h-8 w-8 items-center justify-center rounded-lg border text-[11px] font-bold',
+                index === quiz.currentIndex ? 'border-indigo-600 bg-indigo-600 text-white' :
+                marked ? 'border-amber-300 bg-amber-50 text-amber-800' :
+                answered ? 'border-emerald-200 bg-emerald-50 text-emerald-700' :
+                'border-slate-200 bg-white text-slate-500',
+              ].join(' ')}>{index + 1}</button>
+            );
+          })}
+        </div>
+
+        {quiz.submitted && (
+          <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+            <p className="text-sm font-bold text-indigo-950">Quiz performance</p>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg bg-white p-2"><p className="text-lg font-bold text-slate-900">{correctCount}/{quiz.questions.length}</p><p className="text-[9px] uppercase text-slate-500">Correct</p></div>
+              <div className="rounded-lg bg-white p-2"><p className="text-lg font-bold text-slate-900">{accuracy}%</p><p className="text-[9px] uppercase text-slate-500">Accuracy</p></div>
+              <div className="rounded-lg bg-white p-2"><p className="text-lg font-bold text-slate-900">{score.toFixed(2)}/{totalMarks}</p><p className="text-[9px] uppercase text-slate-500">Score</p></div>
+            </div>
+            <p className="mt-2 text-[10px] leading-4 text-indigo-800">Score uses the marks and negative-marking values shown for each question. Numerical answers are compared as entered; verify rounding instructions in the question.</p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 };
 
