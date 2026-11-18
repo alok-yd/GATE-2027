@@ -52,9 +52,11 @@ Publish the repository's `storage.rules` file. These rules permit only the owner
 
 If Cloud Storage has not been enabled for this Firebase project yet, complete the Firebase Console provisioning and billing/location prompts before testing AI Mentor uploads.
 
-## Deploy Firebase security rules
+## Verify existing Firestore rules and deploy Storage rules
 
-From the repository root, with Firebase CLI authenticated to an account authorized for project `gate-2027-a8850`:
+First, open **Firestore Database → Rules** in Firebase Console and verify that the already-published rules enforce `request.auth.uid == userId` for `users/{userId}`, `appData`, and `chunks`. The repository's existing `firestore.rules` is intentionally unchanged by this authentication PR. Do not replace or weaken the existing Firestore rules.
+
+The only new rules file in this PR is `storage.rules`. From the repository root, with Firebase CLI authenticated to an account authorized for project `gate-2027-a8850`:
 
 ```bash
 npx firebase-tools login
@@ -129,7 +131,7 @@ Use Firebase Rules Playground or the Firebase Emulator Suite for rule checks whe
 - Ensure authorized domains and phone SMS region policy are configured.
 - Ensure Firebase Storage is provisioned.
 - Add `VITE_FIREBASE_APPCHECK_SITE_KEY` to the Render static app's environment and deploy a new build.
-- Deploy the new Firebase Storage rules with the Firebase CLI command above. Existing Firestore rules are left as they are.
+- Confirm the existing Firestore owner-only rules are already published without modification, and deploy the new Firebase Storage rules with the Firebase CLI command above.
 - Register a localhost App Check debug token in Firebase Console when doing local development.
 - Run real Google/phone sign-in, OTP, two-account isolation, Firestore/Storage-denial, and cross-device smoke tests.
 
