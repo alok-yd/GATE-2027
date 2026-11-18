@@ -1179,21 +1179,39 @@ You can now ask me to search this material. I’ll include local chunk identifie
                     <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">{group.label}</p>
                     <div className="space-y-1">
                       {group.items.map((conversation) => (
-                        <button
+                        <div
                           key={conversation.id}
-                          type="button"
-                          onClick={() => {
-                            switchConversation(conversation.id);
-                            setMobileSidebarOpen(false);
-                          }}
-                          title={conversation.title}
                           className={conversation.id === activeConversationId
-                            ? 'group flex w-full items-center gap-2 rounded-lg bg-indigo-50 px-2.5 py-2.5 text-left text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-100'
-                            : 'group flex w-full items-center gap-2 rounded-lg px-2.5 py-2.5 text-left text-xs text-slate-600 transition hover:bg-slate-100 hover:text-slate-900'}
+                            ? 'group flex w-full items-center gap-1 rounded-lg bg-indigo-50 p-1 ring-1 ring-inset ring-indigo-100'
+                            : 'group flex w-full items-center gap-1 rounded-lg p-1 transition hover:bg-slate-100'}
                         >
-                          <MessageSquare size={14} className="shrink-0 opacity-70" />
-                          <span className="min-w-0 flex-1 truncate">{conversation.title || 'New conversation'}</span>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              switchConversation(conversation.id);
+                              setMobileSidebarOpen(false);
+                            }}
+                            title={conversation.title}
+                            className={conversation.id === activeConversationId
+                              ? 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold text-indigo-700'
+                              : 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs text-slate-600 transition hover:text-slate-900'}
+                          >
+                            <MessageSquare size={14} className="shrink-0 opacity-70" />
+                            <span className="min-w-0 flex-1 truncate">{conversation.title || 'New conversation'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteConversation(conversation)}
+                            disabled={loading || Boolean(deletingConversationId)}
+                            aria-label={'Delete conversation: ' + (conversation.title || 'New conversation')}
+                            title={deletingConversationId === conversation.id ? 'Deleting conversation…' : 'Delete conversation'}
+                            className="shrink-0 rounded-md p-1.5 text-slate-400 opacity-70 transition hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            {deletingConversationId === conversation.id
+                              ? <span className="block h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-rose-500" />
+                              : <Trash2 size={14} />}
+                          </button>
+                        </div>
                       ))}
                     </div>
                   </div>
