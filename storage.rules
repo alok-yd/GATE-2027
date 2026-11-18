@@ -14,11 +14,17 @@ service firebase.storage {
 
       allow create, update: if isOwner()
         && request.resource.size <= 10 * 1024 * 1024
-        && request.resource.contentType.matches(
-          '(application/pdf|application/vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document|application/json|image/(png|jpeg|webp)|text/(plain|markdown|csv))'
-        );
+        && request.resource.contentType in [
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/json',
+          'image/png',
+          'image/jpeg',
+          'image/webp',
+          'text/plain',
+          'text/markdown',
+          'text/csv'
+        ];
     }
-
-    // No public or cross-user object access is granted.
   }
 }
