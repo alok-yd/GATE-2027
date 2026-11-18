@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
-  ArrowRight,
   CheckCircle2,
   LoaderCircle,
   Mail,
@@ -44,6 +43,7 @@ const COUNTRY_CODES = [
 
 interface AuthScreenProps {
   authError?: string;
+  onRetry?: () => void;
 }
 
 const GoogleMark = () => (
@@ -55,7 +55,7 @@ const GoogleMark = () => (
   </svg>
 );
 
-const AuthScreen: React.FC<AuthScreenProps> = ({ authError = '' }) => {
+const AuthScreen: React.FC<AuthScreenProps> = ({ authError = '', onRetry }) => {
   const [mode, setMode] = useState<'choose' | 'phone'>('choose');
   const [step, setStep] = useState<'number' | 'otp'>('number');
   const [countryCode, setCountryCode] = useState('+91');
@@ -211,6 +211,11 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ authError = '' }) => {
               <XCircle size={16} className="mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>
+          )}
+          {onRetry && (
+            <button type="button" onClick={onRetry} className="w-full rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">
+              Retry secure account setup
+            </button>
           )}
           {notice && (
             <div role="status" className="flex gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs leading-5 text-emerald-700">
