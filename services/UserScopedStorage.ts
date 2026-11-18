@@ -217,6 +217,49 @@ const clearActiveUserData = (storage: Storage): void => {
 };
 
 /**
+ * The previous Cloud Sync version kept unowned pending writes in one global
+ * map. Assign them only to the UID recorded by the old Cloud Sync owner marker;
+ * otherwise discard the timestamps so they cannot tombstone another account's
+ * Firestore records.
+ */
+const reconcileLegacyPendingWrites = (storage: Storage, ownerUid: string | null): void => {
+  const metaKey = 'achiever_cloud_sync_meta_v1';
+  const rawMeta = rawGet(storage, metaKey);
+  if (!rawMeta) return;
+
+  try {
+    const parsed: unknown = JSON.parse(rawMeta);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    const meta = parsed as Record<string, unknown>;
+    const pending = meta.pendingBeforeLogin && typeof meta.pendingBeforeLogin === 'object'
+      ? meta.pendingBeforeLogin as Record<string, unknown>
+      : {};
+    const users = meta.users && typeof meta.users === 'object'
+      ? meta.users as Record<string, Record<string, { modifiedAt?: number; lastSyncedAt?: number }>>
+      : {};
+
+    if (ownerUid) {
+      const userMap = users[ownerUid] || {};
+      Object.entries(pending).forEach(([key, rawTimestamp]) => {
+        const timestamp = Number(rawTimestamp) || 0;
+        const previous = userMap[key] || { modifiedAt: 0, lastSyncedAt: 0 };
+        userMap[key] = {
+          modifiedAt: Math.max(Number(previous.modifiedAt) || 0, timestamp),
+          lastSyncedAt: Number(previous.lastSyncedAt) || 0,
+        };
+      });
+      users[ownerUid] = userMap;
+    }
+
+    meta.users = users;
+    meta.pendingBeforeLogin = {};
+    rawSet(storage, metaKey, JSON.stringify(meta));
+  } catch (error) {
+    console.warn('[ACHIEVER] Legacy pending-write metadata could not be reconciled safely.', error);
+  }
+};
+
+/**
  * Returns the UID, if any, that can be proven as the owner of pre-upgrade
  * attachment blobs in the old non-namespaced IndexedDB store.
  */
@@ -252,6 +295,10 @@ const activateUserStorageInternal = (uid: string): UserStorageActivationResult =
   const previousUid = rawGet(storage, ACTIVE_UID_KEY);
   const currentEntries = getUserDataEntries(storage);
   let quarantinedLegacyData = false;
+
+  // Pending writes from the old global storage model belong to the previous
+  // signed-in UID, never to whichever account happens to log in next.
+  reconcileLegacyPendingWrites(storage, previousUid || null);
 
   if (previousUid === uid) {
     if (!rawGet(storage, LEGACY_OWNER_KEY)) rawSet(storage, LEGACY_OWNER_KEY, uid);
