@@ -3,6 +3,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { initializeFirebaseAppCheck } from "./firebaseAppCheck";
 // TODO: Add SDKs for Firebase products that you want to use
 // https://firebase.google.com/docs/web/setup#available-libraries
 
@@ -20,6 +21,8 @@ export const firebaseConfig = {
 
 // Initialize Firebase
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// App Check must be active before Auth, Firestore or Analytics use this app.
+export const appCheck = initializeFirebaseAppCheck(app);
 export const analytics = (() => {
   if (typeof window === 'undefined') return null;
   try {
