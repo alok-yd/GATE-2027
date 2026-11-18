@@ -1,9 +1,11 @@
 /**
- * Keeps the existing unprefixed localStorage API used by ACHIEVER modules,
- * while physically separating each account's records on this browser.
+ * Keeps ACHIEVER's existing unprefixed localStorage API while storing every
+ * user's values under a UID-specific physical key. The active UID is held in
+ * this browser tab's JavaScript context, so another account cannot read the
+ * same logical key through a shared unprefixed localStorage slot.
  *
- * This is a device-local cache boundary. CloudSyncService remains responsible
- * for syncing eligible logical keys to users/{uid}/appData in Firestore.
+ * Existing pre-authentication records are migrated only when the previous
+ * Cloud Sync UID proves their owner. Otherwise they are quarantined.
  */
 const ACTIVE_UID_KEY = 'achiever_cloud_sync_active_uid_v1';
 const LEGACY_OWNER_KEY = 'achiever_legacy_data_owner_uid_v1';
@@ -16,23 +18,25 @@ const SYSTEM_KEYS = new Set([
   LEGACY_OWNER_KEY,
 ]);
 
-const nativeStorage = typeof Storage !== 'undefined' ? Storage.prototype : null;
-const nativeGetItem = nativeStorage?.getItem;
-const nativeSetItem = nativeStorage?.setItem;
-const nativeRemoveItem = nativeStorage?.removeItem;
-const nativeKey = nativeStorage?.key;
-const nativeLengthGetter = nativeStorage
-  ? Object.getOwnPropertyDescriptor(nativeStorage, 'length')?.get
+const storagePrototype = typeof Storage !== 'undefined' ? Storage.prototype : null;
+const nativeGetItem = storagePrototype?.getItem;
+const nativeSetItem = storagePrototype?.setItem;
+const nativeRemoveItem = storagePrototype?.removeItem;
+const nativeClear = storagePrototype?.clear;
+const nativeKey = storagePrototype?.key;
+const nativeLengthGetter = storagePrototype
+  ? Object.getOwnPropertyDescriptor(storagePrototype, 'length')?.get
   : undefined;
 
 let activeStorageUid: string | null = null;
 let storageOperation: Promise<void> = Promise.resolve();
+let adapterInstalled = false;
 
 const getStorage = (): Storage => {
   if (typeof window === 'undefined' || !window.localStorage) {
     throw new Error('Browser storage is unavailable. ACHIEVER cannot safely switch accounts on this device.');
   }
-  if (!nativeGetItem || !nativeSetItem || !nativeRemoveItem || !nativeKey || !nativeLengthGetter) {
+  if (!nativeGetItem || !nativeSetItem || !nativeRemoveItem || !nativeClear || !nativeKey || !nativeLengthGetter) {
     throw new Error('This browser does not support the required secure account storage operations.');
   }
   return window.localStorage;
@@ -73,6 +77,102 @@ const getUserDataEntries = (storage: Storage): Array<[string, string]> =>
 const userCachePrefix = (uid: string): string =>
   CACHE_PREFIX + encodeURIComponent(uid) + ':';
 
+const userPhysicalKey = (uid: string, logicalKey: string): string =>
+  userCachePrefix(uid) + encodeURIComponent(logicalKey);
+
+const visibleLocalStorageKeys = (storage: Storage): string[] => {
+  const prefix = activeStorageUid ? userCachePrefix(activeStorageUid) : '';
+  const keys: string[] = [];
+
+  rawEntries(storage).forEach(([physicalKey]) => {
+    if (prefix && physicalKey.startsWith(prefix)) {
+      try {
+        keys.push(decodeURIComponent(physicalKey.slice(prefix.length)));
+      } catch {
+        // Ignore malformed cache keys rather than exposing physical identifiers.
+      }
+      return;
+    }
+
+    if (physicalKey.startsWith(CACHE_PREFIX) || physicalKey.startsWith(UNASSIGNED_PREFIX)) return;
+    if (isSystemKey(physicalKey)) keys.push(physicalKey);
+  });
+
+  return keys;
+};
+
+/**
+ * Install before importing application modules. CloudSyncService captures the
+ * current Storage methods and therefore also routes its logical key reads and
+ * writes through this UID-aware adapter.
+ */
+export const installUserScopedStorage = (): void => {
+  if (adapterInstalled || typeof window === 'undefined' || !storagePrototype) return;
+  adapterInstalled = true;
+
+  storagePrototype.getItem = function scopedGetItem(key: string): string | null {
+    if (this !== window.localStorage || isSystemKey(String(key))) {
+      return nativeGetItem!.call(this, String(key));
+    }
+    if (!activeStorageUid) return null;
+    return rawGet(this, userPhysicalKey(activeStorageUid, String(key)));
+  };
+
+  storagePrototype.setItem = function scopedSetItem(key: string, value: string): void {
+    const logicalKey = String(key);
+    if (this !== window.localStorage || isSystemKey(logicalKey)) {
+      nativeSetItem!.call(this, logicalKey, String(value));
+      return;
+    }
+    if (!activeStorageUid) {
+      throw new DOMException(
+        'Sign in to ACHIEVER before writing private application data.',
+        'SecurityError'
+      );
+    }
+    rawSet(this, userPhysicalKey(activeStorageUid, logicalKey), String(value));
+  };
+
+  storagePrototype.removeItem = function scopedRemoveItem(key: string): void {
+    const logicalKey = String(key);
+    if (this !== window.localStorage || isSystemKey(logicalKey)) {
+      nativeRemoveItem!.call(this, logicalKey);
+      return;
+    }
+    if (!activeStorageUid) return;
+    rawRemove(this, userPhysicalKey(activeStorageUid, logicalKey));
+  };
+
+  storagePrototype.clear = function scopedClear(): void {
+    if (this !== window.localStorage) {
+      nativeClear!.call(this);
+      return;
+    }
+    if (!activeStorageUid) return;
+    const prefix = userCachePrefix(activeStorageUid);
+    rawEntries(this)
+      .filter(([key]) => key.startsWith(prefix))
+      .forEach(([key]) => rawRemove(this, key));
+  };
+
+  storagePrototype.key = function scopedKey(index: number): string | null {
+    if (this !== window.localStorage) return nativeKey!.call(this, index);
+    if (!Number.isInteger(index) || index < 0) return null;
+    return visibleLocalStorageKeys(this)[index] ?? null;
+  };
+
+  Object.defineProperty(storagePrototype, 'length', {
+    configurable: true,
+    enumerable: true,
+    get: function scopedLength(): number {
+      if (typeof window === 'undefined' || this !== window.localStorage) {
+        return Number(nativeLengthGetter!.call(this));
+      }
+      return visibleLocalStorageKeys(this).length;
+    },
+  });
+};
+
 const writeSnapshot = (
   storage: Storage,
   prefix: string,
@@ -82,7 +182,7 @@ const writeSnapshot = (
     .map(([key]) => key)
     .filter((key) => key.startsWith(prefix));
 
-  // Write and verify the complete snapshot before deleting any active records.
+  // Write and verify the complete snapshot before deleting any legacy records.
   const written: string[] = [];
   try {
     entries.forEach(([logicalKey, value]) => {
@@ -102,7 +202,6 @@ const writeSnapshot = (
     );
   }
 
-  // Remove stale cached keys only after the new snapshot has been verified.
   previousKeys.forEach((key) => {
     if (!written.includes(key)) rawRemove(storage, key);
   });
@@ -112,24 +211,6 @@ const readSnapshot = (storage: Storage, prefix: string): Array<[string, string]>
   rawEntries(storage)
     .filter(([key]) => key.startsWith(prefix))
     .map(([key, value]) => [decodeURIComponent(key.slice(prefix.length)), value]);
-
-const clearSnapshot = (storage: Storage, prefix: string): void => {
-  rawEntries(storage)
-    .filter(([key]) => key.startsWith(prefix))
-    .forEach(([key]) => rawRemove(storage, key));
-};
-
-const restoreSnapshot = (storage: Storage, uid: string): void => {
-  const prefix = userCachePrefix(uid);
-  const entries = readSnapshot(storage, prefix);
-  entries.forEach(([key, value]) => rawSet(storage, key, value));
-  entries.forEach(([key, value]) => {
-    if (rawGet(storage, key) !== value) {
-      throw new Error('ACHIEVER could not restore all of this account’s local records.');
-    }
-  });
-  clearSnapshot(storage, prefix);
-};
 
 const clearActiveUserData = (storage: Storage): void => {
   getUserDataEntries(storage).forEach(([key]) => rawRemove(storage, key));
@@ -147,8 +228,12 @@ export const getLegacyDataOwnerUid = (): string | null => {
 
 export const hasUnassignedLegacyData = (): boolean => {
   if (typeof window === 'undefined') return false;
-  return rawEntries(getStorage()).some(([key]) => key.startsWith(UNASSIGNED_PREFIX));
+  const storage = getStorage();
+  return rawGet(storage, LEGACY_OWNER_KEY) === '__unassigned__' ||
+    rawEntries(storage).some(([key]) => key.startsWith(UNASSIGNED_PREFIX));
 };
+
+export const getActiveUserStorageUid = (): string | null => activeStorageUid;
 
 export interface UserStorageActivationResult {
   uid: string;
@@ -157,64 +242,59 @@ export interface UserStorageActivationResult {
 }
 
 /**
- * Move the current logical key/value store into the authenticated user's cache
- * before any protected ACHIEVER component is mounted.
- *
- * A prior Cloud Sync ACTIVE_UID_KEY is the only reliable legacy ownership
- * evidence available in the old architecture. With no owner UID, the old data
- * is quarantined and never copied to the first account that signs in.
+ * Associate legacy unprefixed data only when the prior Cloud Sync UID is a
+ * reliable owner marker. Cached records remain under their UID prefix instead
+ * of being copied back to a shared unprefixed key, so multiple tabs cannot
+ * expose one account's data to another account.
  */
 const activateUserStorageInternal = (uid: string): UserStorageActivationResult => {
   const storage = getStorage();
   const previousUid = rawGet(storage, ACTIVE_UID_KEY);
   const currentEntries = getUserDataEntries(storage);
   let quarantinedLegacyData = false;
-  let restoredCachedData = false;
 
   if (previousUid === uid) {
-    // Existing Cloud Sync users retain their already-associated records.
     if (!rawGet(storage, LEGACY_OWNER_KEY)) rawSet(storage, LEGACY_OWNER_KEY, uid);
     if (currentEntries.length > 0) {
       writeSnapshot(storage, userCachePrefix(uid), currentEntries);
-    } else if (readSnapshot(storage, userCachePrefix(uid)).length > 0) {
-      restoreSnapshot(storage, uid);
-      restoredCachedData = true;
+      clearActiveUserData(storage);
     }
   } else {
     if (currentEntries.length > 0) {
       if (previousUid) {
+        if (!rawGet(storage, LEGACY_OWNER_KEY)) rawSet(storage, LEGACY_OWNER_KEY, previousUid);
         writeSnapshot(storage, userCachePrefix(previousUid), currentEntries);
       } else {
-        // No authenticated owner marker exists; keep this data out of the new account.
         writeSnapshot(storage, UNASSIGNED_PREFIX, currentEntries);
         quarantinedLegacyData = true;
         if (!rawGet(storage, LEGACY_OWNER_KEY)) rawSet(storage, LEGACY_OWNER_KEY, '__unassigned__');
       }
       clearActiveUserData(storage);
-    } else if (!previousUid && !rawGet(storage, LEGACY_OWNER_KEY)) {
-      // Also quarantine any legacy IndexedDB blobs: there is no reliable owner.
+    } else if (previousUid) {
+      if (!rawGet(storage, LEGACY_OWNER_KEY)) rawSet(storage, LEGACY_OWNER_KEY, previousUid);
+    } else if (!rawGet(storage, LEGACY_OWNER_KEY)) {
+      // There may be legacy IndexedDB files even when no localStorage records exist.
       rawSet(storage, LEGACY_OWNER_KEY, '__unassigned__');
-    }
-
-    const cachedEntries = readSnapshot(storage, userCachePrefix(uid));
-    if (cachedEntries.length > 0) {
-      restoreSnapshot(storage, uid);
-      restoredCachedData = true;
     }
   }
 
+  const restoredCachedData = readSnapshot(storage, userCachePrefix(uid)).length > 0;
   rawSet(storage, ACTIVE_UID_KEY, uid);
   activeStorageUid = uid;
   return { uid, quarantinedLegacyData, restoredCachedData };
 };
 
-/** Serialize storage transitions so auth state listeners cannot race each other. */
+/** Serialize same-tab storage transitions so auth callbacks cannot race. */
 export const activateUserStorage = async (uid: string): Promise<UserStorageActivationResult> => {
   if (!uid) throw new Error('A verified Firebase UID is required to activate private storage.');
   let result: UserStorageActivationResult | null = null;
   const operation = storageOperation.then(() => {
     if (activeStorageUid === uid) {
-      result = { uid, quarantinedLegacyData: false, restoredCachedData: false };
+      result = {
+        uid,
+        quarantinedLegacyData: false,
+        restoredCachedData: readSnapshot(getStorage(), userCachePrefix(uid)).length > 0,
+      };
       return;
     }
     result = activateUserStorageInternal(uid);
@@ -225,15 +305,9 @@ export const activateUserStorage = async (uid: string): Promise<UserStorageActiv
 };
 
 const deactivateUserStorageInternal = (uid: string): void => {
-  const storage = getStorage();
-  const activeUid = rawGet(storage, ACTIVE_UID_KEY);
-  if (activeUid !== uid) return;
-  const entries = getUserDataEntries(storage);
-  if (entries.length > 0) {
-    writeSnapshot(storage, userCachePrefix(uid), entries);
-    clearActiveUserData(storage);
-  }
-  activeStorageUid = null;
+  // User records already live in UID-prefixed keys. Deactivation only removes
+  // this tab's logical view; it never copies data into a shared namespace.
+  if (activeStorageUid === uid) activeStorageUid = null;
 };
 
 export const deactivateUserStorage = async (uid: string): Promise<void> => {
