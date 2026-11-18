@@ -1,8 +1,9 @@
 services:
+  # Existing ACHIEVER static application. Only the AI Mentor gateway URL is added.
   - type: web
     name: gate-2027-prep-tracker
     runtime: static
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     staticPublishPath: ./dist
     routes:
       - type: rewrite
@@ -11,3 +12,35 @@ services:
     envVars:
       - key: VITE_GEMINI_API_KEY
         sync: false
+      - key: VITE_AI_GATEWAY_URL
+        fromService:
+          name: achiever-ai-gateway
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+
+  # Dedicated Node gateway for AI Mentor-only vision, image, document and search routes.
+  - type: web
+    name: achiever-ai-gateway
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: node server/ai-gateway.mjs
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_IMAGE_MODEL
+        value: gemini-nano-banana-2.1
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        value: gate-2027-a8850
+      - key: ACHIEVER_REQUIRE_AUTH
+        value: "true"
+      - key: ACHIEVER_ALLOWED_ORIGINS
+        fromService:
+          name: gate-2027-prep-tracker
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL

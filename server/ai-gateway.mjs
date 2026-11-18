@@ -28,8 +28,9 @@ function loadLocalEnv() {
 
 loadLocalEnv();
 
-const PORT = Number(process.env.ACHIEVER_AI_GATEWAY_PORT || 8787);
-const HOST = process.env.ACHIEVER_AI_GATEWAY_HOST || '127.0.0.1';
+const PORT = Number(process.env.PORT || process.env.ACHIEVER_AI_GATEWAY_PORT || 8787);
+const HOST = process.env.ACHIEVER_AI_GATEWAY_HOST || '0.0.0.0';
+const ALLOWED_ORIGINS = (process.env.ACHIEVER_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
 const DEFAULT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b';
 const MAX_PROMPT_CHARS = Number(process.env.ACHIEVER_AI_MAX_PROMPT_CHARS || 24000);
 const REQUEST_TIMEOUT_MS = Number(process.env.ACHIEVER_AI_TIMEOUT_MS || 120000);
@@ -284,6 +285,17 @@ function getActiveProvider() {
 const responseCache = new Map();
 const rateLimitBuckets = new Map();
 
+function applyCors(request, response) {
+  const origin = request.headers.origin;
+  const allowed = !origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin);
+  if (allowed && origin) {
+    response.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGINS.length ? origin : '*');
+    response.setHeader('Vary', 'Origin');
+  }
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+}
+
 function sendJson(response, status, body) {
   const payload = JSON.stringify(body);
   response.writeHead(status, {
@@ -293,12 +305,12 @@ function sendJson(response, status, body) {
   response.end(payload);
 }
 
-async function readJson(request) {
+async function readJson(request, maximumBytes = 256 * 1024) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 256 * 1024) {
+    if (size > maximumBytes) {
       throw new Error('Request body is too large.');
     }
     chunks.push(chunk);
@@ -468,14 +480,630 @@ async function handleChat(request, response) {
   }
 }
 
+
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+const MAX_IMAGES_PER_REQUEST = 4;
+const MAX_IMAGE_REQUEST_BYTES = 20 * 1024 * 1024;
+const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+function validateImageInputs(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > MAX_IMAGES_PER_REQUEST) {
+    throw new Error('Attach no more than four images per request.');
+  }
+
+  let totalBytes = 0;
+  return value.map((image) => {
+    const mimeType = typeof image?.mimeType === 'string' ? image.mimeType.toLowerCase() : '';
+    const data = typeof image?.data === 'string' ? image.data : '';
+    if (!ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) {
+      throw new Error('Unsupported image format. Use PNG, JPG/JPEG, or WEBP.');
+    }
+    if (!data || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+      throw new Error('An uploaded image is invalid or could not be decoded.');
+    }
+    const bytes = Buffer.from(data, 'base64');
+    if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) {
+      throw new Error('Each image must be 3 MB or smaller.');
+    }
+    totalBytes += bytes.length;
+    return { mimeType, data, bytes };
+  }).filter((image) => {
+    if (totalBytes > MAX_IMAGE_BYTES * MAX_IMAGES_PER_REQUEST) {
+      throw new Error('The combined image upload is too large.');
+    }
+    return Boolean(image.data);
+  });
+}
+
+async function handleVision(request, response) {
+  const started = Date.now();
+  metrics.requestCount += 1;
+  try {
+    if (isRateLimited(request)) {
+      sendJson(response, 429, { error: 'rate_limit_exceeded' });
+      return;
+    }
+
+    const body = await readJson(request, MAX_IMAGE_REQUEST_BYTES);
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const system = typeof body.system === 'string' ? body.system.trim() : '';
+    const history = Array.isArray(body.history) ? body.history.slice(-10) : [];
+    const images = validateImageInputs(body.images);
+
+    if (!prompt) throw new Error('A question or instruction is required for image analysis.');
+    if (!images.length) throw new Error('Attach at least one image to analyze.');
+    if (!providers.gemini.isConfigured()) {
+      throw new Error('Image understanding requires GEMINI_API_KEY on the server or a Gemini key saved in AI Mentor settings.');
+    }
+
+    const contents = history
+      .filter((message) =>
+        message &&
+        (message.role === 'user' || message.role === 'assistant') &&
+        typeof message.content === 'string'
+      )
+      .map((message) => ({
+        role: message.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: message.content.slice(0, 4000) }],
+      }));
+    contents.push({
+      role: 'user',
+      parts: [
+        { text: prompt },
+        ...images.map((image) => ({
+          inline_data: { mime_type: image.mimeType, data: image.data },
+        })),
+      ],
+    });
+
+    const models = [
+      providers.gemini.primaryModel,
+      ...providers.gemini.fallbackModels.filter((model) => model !== providers.gemini.primaryModel),
+    ];
+    let lastError = null;
+
+    for (const model of models) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        const payload = {
+          contents,
+          generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+          ...(system ? { system_instruction: { parts: [{ text: system }] } } : {}),
+        };
+        const providerResponse = await fetch(
+          'https://generativelanguage.googleapis.com/v1beta/models/' +
+            model +
+            ':generateContent?key=' +
+            encodeURIComponent(providers.gemini.apiKey),
+          {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }
+        );
+        const data = await providerResponse.json().catch(() => null);
+        if (!providerResponse.ok) {
+          const message = data?.error?.message || providerResponse.statusText;
+          lastError = new Error('Google Gemini vision returned HTTP ' + providerResponse.status + ': ' + message);
+          if (providerResponse.status === 404 || providerResponse.status === 503) continue;
+          throw lastError;
+        }
+
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const resultText = parts
+          .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+          .filter(Boolean)
+          .join('\n')
+          .trim();
+        if (!resultText) {
+          lastError = new Error('Google Gemini returned no readable response for the uploaded image.');
+          continue;
+        }
+
+        metrics.successCount += 1;
+        metrics.lastError = null;
+        metrics.lastModel = model;
+        metrics.promptChars += prompt.length;
+        metrics.completionChars += resultText.length;
+        if (typeof data?.usageMetadata?.totalTokenCount === 'number') {
+          metrics.totalTokens += data.usageMetadata.totalTokenCount;
+        }
+        sendJson(response, 200, {
+          content: resultText,
+          model,
+          provider: 'gemini-vision',
+          usage: data.usageMetadata || null,
+        });
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    throw lastError || new Error('All configured Gemini models failed to analyze the image.');
+  } catch (error) {
+    metrics.failureCount += 1;
+    metrics.lastError = error instanceof Error ? error.message : String(error);
+    sendJson(response, 503, {
+      error: 'ai_vision_unavailable',
+      detail: metrics.lastError,
+    });
+  } finally {
+    metrics.totalLatencyMs += Date.now() - started;
+  }
+}
+
+async function handleImageGeneration(request, response) {
+  const started = Date.now();
+  metrics.requestCount += 1;
+  try {
+    if (isRateLimited(request)) {
+      sendJson(response, 429, { error: 'rate_limit_exceeded' });
+      return;
+    }
+
+    const body = await readJson(request, MAX_IMAGE_REQUEST_BYTES);
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const images = validateImageInputs(body.images);
+    if (!prompt) throw new Error('Describe the image you want to generate.');
+    if (prompt.length > MAX_PROMPT_CHARS) throw new Error('Image prompt is too long.');
+    if (!providers.gemini.isConfigured()) {
+      throw new Error('Image generation requires GEMINI_API_KEY on the server or a Gemini key saved in AI Mentor settings.');
+    }
+
+    const imageModel = (process.env.GEMINI_IMAGE_MODEL || 'gemini-nano-banana-2.1').trim();
+    const parts = [
+      { text: prompt },
+      ...images.map((image) => ({
+        inline_data: { mime_type: image.mimeType, data: image.data },
+      })),
+    ];
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const providerResponse = await fetch(
+        'https://generativelanguage.googleapis.com/v1/models/' +
+          imageModel +
+          ':generateContent?key=' +
+          encodeURIComponent(providers.gemini.apiKey),
+        {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts }],
+          }),
+        }
+      );
+      const data = await providerResponse.json().catch(() => null);
+      if (!providerResponse.ok) {
+        const message = data?.error?.message || providerResponse.statusText;
+        throw new Error('Gemini image generation returned HTTP ' + providerResponse.status + ': ' + message);
+      }
+
+      const responseParts = data?.candidates?.[0]?.content?.parts || [];
+      const generatedPart = responseParts.find((part) => part?.inline_data?.data || part?.inlineData?.data);
+      const generatedData = generatedPart?.inline_data?.data || generatedPart?.inlineData?.data;
+      const mimeType = generatedPart?.inline_data?.mime_type || generatedPart?.inlineData?.mimeType || 'image/png';
+      const textContent = responseParts
+        .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+
+      if (typeof generatedData !== 'string' || !generatedData) {
+        throw new Error(textContent || 'The image model did not return an image. Try a clearer educational prompt.');
+      }
+
+      metrics.successCount += 1;
+      metrics.lastError = null;
+      metrics.lastModel = imageModel;
+      metrics.promptChars += prompt.length;
+      metrics.completionChars += textContent.length;
+      sendJson(response, 200, {
+        image: { data: generatedData, mimeType },
+        content: textContent,
+        model: imageModel,
+        provider: 'gemini-image',
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error) {
+    metrics.failureCount += 1;
+    metrics.lastError = error instanceof Error ? error.message : String(error);
+    sendJson(response, 503, {
+      error: 'ai_image_generation_unavailable',
+      detail: metrics.lastError,
+    });
+  } finally {
+    metrics.totalLatencyMs += Date.now() - started;
+  }
+}
+
+
+
+const MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
+const MAX_DOCUMENT_REQUEST_BYTES = 12 * 1024 * 1024;
+const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
+
+function validateDocumentInput(value) {
+  const mimeType = typeof value?.mimeType === 'string' ? value.mimeType.toLowerCase() : '';
+  const data = typeof value?.data === 'string' ? value.data : '';
+  if (!ALLOWED_DOCUMENT_MIME_TYPES.has(mimeType)) {
+    throw new Error('Unsupported document type. Use PDF, PNG, JPG/JPEG, or WEBP.');
+  }
+  if (!data || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+    throw new Error('The uploaded document is empty or could not be decoded.');
+  }
+  const bytes = Buffer.from(data, 'base64');
+  if (!bytes.length || bytes.length > MAX_DOCUMENT_BYTES) {
+    throw new Error('The original file must be 8 MB or smaller.');
+  }
+  return { mimeType, data, bytes };
+}
+
+async function handleDocumentAnalysis(request, response) {
+  const started = Date.now();
+  metrics.requestCount += 1;
+  try {
+    if (isRateLimited(request)) {
+      sendJson(response, 429, { error: 'rate_limit_exceeded' });
+      return;
+    }
+    const body = await readJson(request, MAX_DOCUMENT_REQUEST_BYTES);
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const system = typeof body.system === 'string' ? body.system.trim() : '';
+    const file = validateDocumentInput(body.file);
+    if (!prompt) throw new Error('A document extraction instruction is required.');
+    if (prompt.length > MAX_PROMPT_CHARS) throw new Error('The document analysis prompt is too long.');
+    if (!providers.gemini.isConfigured()) {
+      throw new Error('Document analysis requires GEMINI_API_KEY on the AI gateway or a Gemini key configured in AI Mentor settings.');
+    }
+
+    const models = [
+      providers.gemini.primaryModel,
+      ...providers.gemini.fallbackModels.filter((model) => model !== providers.gemini.primaryModel),
+    ];
+    let lastError = null;
+    for (const model of models) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        const providerResponse = await fetch(
+          'https://generativelanguage.googleapis.com/v1beta/models/' + model +
+          ':generateContent?key=' + encodeURIComponent(providers.gemini.apiKey),
+          {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                role: 'user',
+                parts: [
+                  { text: prompt },
+                  { inline_data: { mime_type: file.mimeType, data: file.data } },
+                ],
+              }],
+              ...(system ? { system_instruction: { parts: [{ text: system }] } } : {}),
+              generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+            }),
+          }
+        );
+        const data = await providerResponse.json().catch(() => null);
+        if (!providerResponse.ok) {
+          const message = data?.error?.message || providerResponse.statusText;
+          lastError = new Error('Google Gemini document analysis returned HTTP ' + providerResponse.status + ': ' + message);
+          if ([404, 429, 503].includes(providerResponse.status)) continue;
+          throw lastError;
+        }
+        const content = (data?.candidates?.[0]?.content?.parts || [])
+          .map((part) => typeof part?.text === 'string' ? part.text : '')
+          .filter(Boolean)
+          .join('\n')
+          .trim();
+        if (!content) {
+          lastError = new Error('Gemini returned no readable document content.');
+          continue;
+        }
+        metrics.successCount += 1;
+        metrics.lastError = null;
+        metrics.lastModel = model;
+        metrics.promptChars += prompt.length;
+        metrics.completionChars += content.length;
+        sendJson(response, 200, {
+          content,
+          model,
+          provider: 'gemini-document',
+          usage: data.usageMetadata || null,
+        });
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+    throw lastError || new Error('All configured document-analysis models failed.');
+  } catch (error) {
+    metrics.failureCount += 1;
+    metrics.lastError = error instanceof Error ? error.message : String(error);
+    sendJson(response, 503, { error: 'ai_document_analysis_unavailable', detail: metrics.lastError });
+  } finally {
+    metrics.totalLatencyMs += Date.now() - started;
+  }
+}
+
+function cleanSearchResult(item) {
+  const url = typeof item?.url === 'string' ? item.url : '';
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return {
+      title: String(item.title || parsed.hostname).slice(0, 300),
+      url: parsed.toString(),
+      domain: parsed.hostname,
+      publishedAt: String(item.published_date || item.age || '').slice(0, 80) || undefined,
+      snippet: String(item.content || item.description || '').slice(0, 1200),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function handleWebSearch(request, response) {
+  if (isRateLimited(request)) {
+    sendJson(response, 429, { error: 'rate_limit_exceeded' });
+    return;
+  }
+  const body = await readJson(request);
+  const query = typeof body.query === 'string' ? body.query.trim() : '';
+  const limit = Math.max(1, Math.min(10, Number(body.limit) || 6));
+  if (!query) {
+    sendJson(response, 400, { error: 'search_query_required' });
+    return;
+  }
+  if (query.length > 800) {
+    sendJson(response, 413, { error: 'search_query_too_long' });
+    return;
+  }
+
+  try {
+    let raw = [];
+    let provider = '';
+    if (process.env.TAVILY_API_KEY) {
+      provider = 'tavily';
+      const result = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: process.env.TAVILY_API_KEY,
+          query,
+          search_depth: 'advanced',
+          max_results: limit,
+          include_answer: false,
+          include_raw_content: false,
+        }),
+      });
+      const data = await result.json().catch(() => null);
+      if (!result.ok) throw new Error(data?.detail || data?.message || 'Tavily search returned HTTP ' + result.status);
+      raw = Array.isArray(data?.results) ? data.results : [];
+    } else if (process.env.BRAVE_SEARCH_API_KEY) {
+      provider = 'brave';
+      const url = new URL('https://api.search.brave.com/res/v1/web/search');
+      url.searchParams.set('q', query);
+      url.searchParams.set('count', String(limit));
+      const result = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          'X-Subscription-Token': process.env.BRAVE_SEARCH_API_KEY,
+        },
+      });
+      const data = await result.json().catch(() => null);
+      if (!result.ok) throw new Error(data?.message || 'Brave Search returned HTTP ' + result.status);
+      raw = (data?.web?.results || []).map((item) => ({
+        title: item.title,
+        url: item.url,
+        content: item.description,
+        age: item.age,
+      }));
+    } else {
+      sendJson(response, 503, {
+        error: 'web_search_not_configured',
+        detail: 'Web Search is unavailable. Configure TAVILY_API_KEY or BRAVE_SEARCH_API_KEY on the AI gateway service.',
+        configured: false,
+      });
+      return;
+    }
+
+    const sources = raw.map(cleanSearchResult).filter(Boolean).slice(0, limit);
+    sendJson(response, 200, { configured: true, provider, sources });
+  } catch (error) {
+    sendJson(response, 503, {
+      error: 'web_search_unavailable',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gate-2027-a8850';
+const REQUIRE_GATEWAY_AUTH = String(process.env.ACHIEVER_REQUIRE_AUTH || '').toLowerCase() === 'true';
+const FIREBASE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
+let firebaseJwksCache = { expiresAt: 0, keys: new Map() };
+
+const isAllowedOrigin = (origin) =>
+  !origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin);
+
+async function getFirebasePublicKeys() {
+  if (Date.now() < firebaseJwksCache.expiresAt && firebaseJwksCache.keys.size) {
+    return firebaseJwksCache.keys;
+  }
+  const response = await fetch(FIREBASE_JWKS_URL, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error('Firebase verification keys could not be loaded.');
+  const data = await response.json();
+  const keys = new Map((data.keys || []).filter((key) => key.kid).map((key) => [key.kid, key]));
+  if (!keys.size) throw new Error('Firebase returned no signing keys.');
+  const cacheControl = response.headers.get('cache-control') || '';
+  const maxAgeMatch = cacheControl.match(/max-age=(\d+)/i);
+  const maxAgeSeconds = maxAgeMatch ? Number(maxAgeMatch[1]) : 3600;
+  firebaseJwksCache = { keys, expiresAt: Date.now() + Math.max(60, maxAgeSeconds) * 1000 };
+  return keys;
+}
+
+async function verifyFirebaseIdToken(token) {
+  const pieces = String(token || '').split('.');
+  if (pieces.length !== 3) throw new Error('Missing or invalid Firebase ID token.');
+  let header;
+  let claims;
+  try {
+    header = JSON.parse(Buffer.from(pieces[0], 'base64url').toString('utf8'));
+    claims = JSON.parse(Buffer.from(pieces[1], 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('Firebase ID token is malformed.');
+  }
+  if (header.alg !== 'RS256' || typeof header.kid !== 'string') {
+    throw new Error('Firebase ID token signing algorithm is not supported.');
+  }
+  const keys = await getFirebasePublicKeys();
+  const jwk = keys.get(header.kid);
+  if (!jwk) throw new Error('Firebase ID token uses an unknown signing key.');
+  const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+  const signedContent = Buffer.from(pieces[0] + '.' + pieces[1], 'utf8');
+  const signature = Buffer.from(pieces[2], 'base64url');
+  if (!crypto.verify('RSA-SHA256', signedContent, publicKey, signature)) {
+    throw new Error('Firebase ID token signature is invalid.');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const expectedIssuer = 'https://securetoken.google.com/' + FIREBASE_PROJECT_ID;
+  const audienceValid = claims.aud === FIREBASE_PROJECT_ID ||
+    (Array.isArray(claims.aud) && claims.aud.includes(FIREBASE_PROJECT_ID));
+  if (
+    !audienceValid ||
+    claims.iss !== expectedIssuer ||
+    typeof claims.sub !== 'string' ||
+    !claims.sub ||
+    claims.sub.length > 128 ||
+    !Number.isFinite(claims.exp) ||
+    claims.exp <= now ||
+    !Number.isFinite(claims.iat) ||
+    claims.iat > now + 60 ||
+    (typeof claims.auth_time === 'number' && claims.auth_time > now + 60)
+  ) {
+    throw new Error('Firebase ID token has invalid or expired claims.');
+  }
+  return { uid: claims.sub, email: typeof claims.email === 'string' ? claims.email : null };
+}
+
+async function authenticateGatewayRequest(request) {
+  if (!REQUIRE_GATEWAY_AUTH) return { authenticated: true, user: null };
+  const header = request.headers.authorization || '';
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match) return { authenticated: false, user: null };
+  try {
+    const user = await verifyFirebaseIdToken(match[1]);
+    return { authenticated: true, user };
+  } catch (error) {
+    console.warn('[AI Gateway] Firebase token verification failed:', error instanceof Error ? error.message : String(error));
+    return { authenticated: false, user: null };
+  }
+}
+
+function publicCapabilities() {
+  const configured = providers.gemini.isConfigured();
+  return {
+    chat: configured || providers.nemotron.isConfigured(),
+    vision: configured,
+    imageGeneration: configured,
+    documentAnalysis: configured,
+    webSearch: Boolean(process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY),
+  };
+}
+
 const server = http.createServer(async (request, response) => {
-  if (request.method === 'GET' && request.url === '/api/ai/status') {
+  applyCors(request, response);
+  if (request.method === 'OPTIONS') {
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+
+  const requestPath = new URL(request.url || '/', 'http://' + (request.headers.host || 'localhost')).pathname;
+  if (!isAllowedOrigin(request.headers.origin)) {
+    sendJson(response, 403, { error: 'origin_not_allowed', detail: 'This browser origin is not authorised to use the AI gateway.' });
+    return;
+  }
+
+  const protectedRoutes = new Set([
+    '/api/ai/chat',
+    '/api/ai/vision',
+    '/api/ai/image',
+    '/api/ai/document',
+    '/api/ai/search',
+  ]);
+  if (protectedRoutes.has(requestPath)) {
+    const auth = await authenticateGatewayRequest(request);
+    if (!auth.authenticated) {
+      sendJson(response, 401, {
+        error: 'authentication_required',
+        detail: 'Sign in to ACHIEVER with your Google account to use the AI Mentor server gateway.',
+      });
+      return;
+    }
+  }
+
+  if (request.method === 'GET' && requestPath === '/health') {
+    sendJson(response, 200, { ok: true, service: 'achiever-ai-gateway' });
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/ai/capabilities') {
+    sendJson(response, 200, publicCapabilities());
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/ai/status') {
     sendJson(response, 200, publicStatus());
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/ai/chat') {
+  if (request.method === 'POST' && requestPath === '/api/ai/chat') {
     await handleChat(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/ai/vision') {
+    await handleVision(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/ai/image') {
+    await handleImageGeneration(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/ai/document') {
+    await handleDocumentAnalysis(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/ai/search') {
+    try {
+      await handleWebSearch(request, response);
+    } catch (error) {
+      sendJson(response, 503, { error: 'web_search_unavailable', detail: error instanceof Error ? error.message : String(error) });
+    }
     return;
   }
 

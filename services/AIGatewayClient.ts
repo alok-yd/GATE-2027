@@ -31,6 +31,382 @@ export interface AIGatewayStatus {
   };
 }
 
+export interface AIGatewayImageInput {
+  mimeType: string;
+  data: string;
+}
+
+export interface AIGatewayVisionMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface AIGatewayGeneratedImage {
+  data: string;
+  mimeType: string;
+  model?: string;
+  content?: string;
+}
+
+const getImageParts = (parts: unknown[]) => {
+  const text = parts
+    .map((part) => (part && typeof part === 'object' ? (part as Record<string, unknown>).text : ''))
+    .filter((value): value is string => typeof value === 'string')
+    .join('\n')
+    .trim();
+  const imagePart = parts.find((part) => {
+    if (!part || typeof part !== 'object') return false;
+    const item = part as Record<string, unknown>;
+    return Boolean(item.inlineData || item.inline_data);
+  }) as Record<string, unknown> | undefined;
+  const imageData = (imagePart?.inlineData || imagePart?.inline_data) as Record<string, unknown> | undefined;
+  return {
+    text,
+    image: imageData && typeof imageData.data === 'string'
+      ? {
+          data: imageData.data,
+          mimeType: String(imageData.mimeType || imageData.mime_type || 'image/png'),
+        }
+      : null,
+  };
+};
+
+/**
+ * Send actual image bytes to the server-side Gemini vision route. If the
+ * gateway is not configured with a Gemini key, fall back to the user's
+ * existing Gemini key without exposing it to the server.
+ */
+export const generateGatewayVision = async ({
+  prompt,
+  system,
+  history = [],
+  images,
+  signal,
+}: {
+  prompt: string;
+  system?: string;
+  history?: AIGatewayVisionMessage[];
+  images: AIGatewayImageInput[];
+  signal?: AbortSignal;
+}): Promise<AIGatewayChatResult> => {
+  if (!images.length) throw new Error('Attach at least one image to use image understanding.');
+
+  let gatewayError: Error | null = null;
+  try {
+    const response = await fetch(getGatewayBaseUrl() + '/vision', {
+      method: 'POST',
+      headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ prompt, system, history: history.slice(-10), images }),
+      signal,
+    });
+    const data = await response.json().catch(() => null);
+    if (response.ok && typeof data?.content === 'string' && data.content.trim()) {
+      return data as AIGatewayChatResult;
+    }
+    gatewayError = new Error(data?.detail || data?.error || ('AI vision gateway returned HTTP ' + response.status + '.'));
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    gatewayError = error instanceof Error ? error : new Error(String(error));
+  }
+
+  const key = getGeminiApiKey();
+  if (!key) {
+    throw gatewayError || new Error('Image understanding needs a configured Gemini API key.');
+  }
+
+  const modelChain = getModelAttemptChain();
+  let lastError: Error | null = gatewayError;
+  for (const model of modelChain) {
+    const contents: Array<Record<string, unknown>> = history.slice(-10).map((message) => ({
+      role: message.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: message.content.slice(0, 4000) }],
+    }));
+    contents.push({
+      role: 'user',
+      parts: [
+        { text: prompt },
+        ...images.map((image) => ({
+          inline_data: { mime_type: image.mimeType, data: image.data },
+        })),
+      ],
+    });
+
+    try {
+      const response = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents,
+            ...(system ? { system_instruction: { parts: [{ text: system }] } } : {}),
+            generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+          }),
+          signal,
+        }
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        lastError = new Error(data?.error?.message || ('Gemini vision returned HTTP ' + response.status + '.'));
+        if (response.status === 404 || response.status === 503) continue;
+        throw lastError;
+      }
+      const parts = data?.candidates?.[0]?.content?.parts || [];
+      const result = getImageParts(parts);
+      if (!result.text) throw new Error('Gemini vision returned no readable explanation.');
+      return { content: result.text, model, provider: 'gemini-vision', usage: data.usageMetadata || null };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError || new Error('Image understanding is unavailable. Check the Gemini API configuration.');
+};
+
+/** Generate an image with Gemini Nano Banana and return its original bytes. */
+export const generateGatewayImage = async ({
+  prompt,
+  images = [],
+  signal,
+}: {
+  prompt: string;
+  images?: AIGatewayImageInput[];
+  signal?: AbortSignal;
+}): Promise<AIGatewayGeneratedImage> => {
+  let gatewayError: Error | null = null;
+  try {
+    const response = await fetch(getGatewayBaseUrl() + '/image', {
+      method: 'POST',
+      headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ prompt, images }),
+      signal,
+    });
+    const data = await response.json().catch(() => null);
+    if (
+      response.ok &&
+      typeof data?.image?.data === 'string' &&
+      typeof data?.image?.mimeType === 'string'
+    ) {
+      return {
+        data: data.image.data,
+        mimeType: data.image.mimeType,
+        model: data.model,
+        content: typeof data.content === 'string' ? data.content : '',
+      };
+    }
+    gatewayError = new Error(data?.detail || data?.error || ('AI image gateway returned HTTP ' + response.status + '.'));
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    gatewayError = error instanceof Error ? error : new Error(String(error));
+  }
+
+  const key = getGeminiApiKey();
+  if (!key) {
+    throw gatewayError || new Error('Image generation needs a configured Gemini API key on the AI gateway or in AI Mentor settings.');
+  }
+
+  const imageModel =
+    ((typeof import.meta !== 'undefined' && import.meta.env && (import.meta.env.VITE_GEMINI_IMAGE_MODEL as string)) || '').trim() ||
+    'gemini-nano-banana-2.1';
+  const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+  images.forEach((image) => {
+    parts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
+  });
+
+  const response = await fetch(
+    'https://generativelanguage.googleapis.com/v1/models/' + imageModel + ':generateContent?key=' + encodeURIComponent(key),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts }] }),
+      signal,
+    }
+  );
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.error?.message || gatewayError?.message || ('Gemini image generation returned HTTP ' + response.status + '.'));
+  }
+
+  const result = getImageParts(data?.candidates?.[0]?.content?.parts || []);
+  if (!result.image) {
+    throw new Error(result.text || 'The image model returned no image. Try a more specific prompt.');
+  }
+  return {
+    ...result.image,
+    model: imageModel,
+    content: result.text,
+  };
+};
+
+
+export interface AIGatewayDocumentInput {
+  mimeType: string;
+  data: string;
+  name?: string;
+}
+
+export interface AIGatewaySearchSource {
+  title: string;
+  url: string;
+  domain: string;
+  publishedAt?: string;
+  snippet: string;
+}
+
+export interface AIGatewaySearchResult {
+  configured: boolean;
+  provider?: string;
+  sources: AIGatewaySearchSource[];
+  message?: string;
+}
+
+export interface AIMentorCapabilities {
+  chat: boolean;
+  vision: boolean;
+  imageGeneration: boolean;
+  documentAnalysis: boolean;
+  webSearch: boolean;
+}
+
+export const getAIMentorCapabilities = async (): Promise<AIMentorCapabilities> => {
+  try {
+    const response = await fetch(getGatewayBaseUrl() + '/capabilities', { headers: { Accept: 'application/json' } });
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        chat: data.chat === true,
+        vision: data.vision === true,
+        imageGeneration: data.imageGeneration === true,
+        documentAnalysis: data.documentAnalysis === true,
+        webSearch: data.webSearch === true,
+      };
+    }
+  } catch {
+    // The static app may be running without the optional server gateway.
+  }
+  const keyAvailable = Boolean(getGeminiApiKey());
+  return {
+    chat: keyAvailable,
+    vision: keyAvailable,
+    imageGeneration: keyAvailable,
+    documentAnalysis: keyAvailable,
+    webSearch: false,
+  };
+};
+
+/**
+ * Send the real PDF/image payload to a document-capable Gemini model.
+ * The local text fallback is intentionally not treated as successful extraction.
+ */
+export const generateGatewayDocument = async ({
+  prompt,
+  system,
+  file,
+  signal,
+}: {
+  prompt: string;
+  system?: string;
+  file: AIGatewayDocumentInput;
+  signal?: AbortSignal;
+}): Promise<AIGatewayChatResult> => {
+  const allowedTypes = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
+  if (!allowedTypes.has(file.mimeType.toLowerCase())) {
+    throw new Error('Unsupported document analysis format.');
+  }
+
+  let gatewayError: Error | null = null;
+  try {
+    const response = await fetch(getGatewayBaseUrl() + '/document', {
+      method: 'POST',
+      headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ prompt, system, file }),
+      signal,
+    });
+    const data = await response.json().catch(() => null);
+    if (response.ok && typeof data?.content === 'string' && data.content.trim()) {
+      return data as AIGatewayChatResult;
+    }
+    gatewayError = new Error(data?.detail || data?.error || ('Document analysis gateway returned HTTP ' + response.status + '.'));
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    gatewayError = error instanceof Error ? error : new Error(String(error));
+  }
+
+  const key = getGeminiApiKey();
+  if (!key) {
+    throw gatewayError || new Error('PDF/image understanding requires a configured Gemini provider.');
+  }
+  const models = getModelAttemptChain();
+  let lastError: Error | null = gatewayError;
+  for (const model of models) {
+    try {
+      const response = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/' + model +
+        ':generateContent?key=' + encodeURIComponent(key),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: file.mimeType, data: file.data } },
+              ],
+            }],
+            ...(system ? { system_instruction: { parts: [{ text: system }] } } : {}),
+            generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+          }),
+          signal,
+        }
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        lastError = new Error(data?.error?.message || ('Gemini document analysis returned HTTP ' + response.status + '.'));
+        if (response.status === 404 || response.status === 503 || response.status === 429) continue;
+        throw lastError;
+      }
+      const text = (data?.candidates?.[0]?.content?.parts || [])
+        .map((part: Record<string, unknown>) => typeof part.text === 'string' ? part.text : '')
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+      if (!text) throw new Error('Gemini returned no extracted document content.');
+      return { content: text, model, provider: 'gemini-document', usage: data.usageMetadata || null };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  throw lastError || new Error('Document analysis is unavailable.');
+};
+
+export const searchGatewayWeb = async (
+  query: string,
+  limit = 6,
+  signal?: AbortSignal
+): Promise<AIGatewaySearchResult> => {
+  const trimmed = query.trim();
+  if (!trimmed) throw new Error('Enter a search query first.');
+  const response = await fetch(getGatewayBaseUrl() + '/search', {
+    method: 'POST',
+    headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ query: trimmed, limit: Math.max(1, Math.min(10, limit)) }),
+    signal,
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.detail || data?.error || 'Web search is not configured. Add a supported search-provider key to the server environment.');
+  }
+  return {
+    configured: data?.configured === true,
+    provider: data?.provider,
+    sources: Array.isArray(data?.sources) ? data.sources : [],
+    message: typeof data?.message === 'string' ? data.message : undefined,
+  };
+};
+
 export const DEFAULT_GEMINI_API_KEY = '';
 export const GEMINI_STORAGE_KEY = 'gate_gemini_api_key';
 
@@ -117,12 +493,35 @@ export const testGeminiKeyConnection = async (
   };
 };
 
-const getGatewayBaseUrl = () =>
-  (
+const getGatewayAuthHeaders = async (headers: Record<string, string> = {}): Promise<Record<string, string>> => {
+  const nextHeaders = { ...headers };
+  try {
+    // Cloud Sync owns the authenticated Firebase session used by ACHIEVER.
+    // Send its short-lived ID token to the AI gateway; never send API keys.
+    const [{ cloudAuth }, mainFirebase] = await Promise.all([
+      import('./CloudSyncService'),
+      import('./firebase'),
+    ]);
+    // Prefer the Cloud Sync identity, then the app's existing default Firebase
+    // auth session. Both belong to the same Firebase project.
+    const user = cloudAuth.currentUser || mainFirebase.auth.currentUser;
+    if (user) {
+      nextHeaders.Authorization = 'Bearer ' + await user.getIdToken();
+    }
+  } catch {
+    // Local-only sessions can still use the user's configured Gemini key fallback.
+  }
+  return nextHeaders;
+};
+
+const getGatewayBaseUrl = () => {
+  const configured =
     (typeof import.meta !== 'undefined' && import.meta.env && (import.meta.env.VITE_AI_GATEWAY_URL as string)) ||
     (typeof process !== 'undefined' && process.env?.VITE_AI_GATEWAY_URL) ||
-    '/api/ai'
-  ).replace(/\/$/, '');
+    '/api/ai';
+  const base = configured.replace(/\/$/, '');
+  return base.endsWith('/api/ai') ? base : base + '/api/ai';
+};
 
 export const cleanGatewayJson = (text: string): string => {
   return extractJsonSubstring(text);
@@ -306,7 +705,7 @@ export const generateGatewayText = ({
     try {
       const response = await fetch(`${getGatewayBaseUrl()}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ prompt, system }),
       });
 
