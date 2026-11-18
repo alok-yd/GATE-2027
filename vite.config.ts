@@ -169,6 +169,26 @@ export default defineConfig(({ mode }) => {
             target: `http://127.0.0.1:${aiGatewayPort}`,
             changeOrigin: true,
           },
+          '/api/ai/vision': {
+            target: `http://127.0.0.1:${aiGatewayPort}`,
+            changeOrigin: true,
+          },
+          '/api/ai/image': {
+            target: `http://127.0.0.1:${aiGatewayPort}`,
+            changeOrigin: true,
+          },
+          '/api/ai/document': {
+            target: `http://127.0.0.1:${aiGatewayPort}`,
+            changeOrigin: true,
+          },
+          '/api/ai/search': {
+            target: `http://127.0.0.1:${aiGatewayPort}`,
+            changeOrigin: true,
+          },
+          '/api/ai/capabilities': {
+            target: `http://127.0.0.1:${aiGatewayPort}`,
+            changeOrigin: true,
+          },
         },
       },
       plugins: [react(), aiGatewayDevPlugin(geminiKey)],
