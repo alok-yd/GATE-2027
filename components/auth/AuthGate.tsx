@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { LoaderCircle, ShieldCheck } from 'lucide-react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { cloudAuth } from '../../services/CloudSyncService';
+import { cloudAuth, waitForCloudSyncAccountReady } from '../../services/CloudSyncService';
 import { activateUserStorage, deactivateUserStorage, hasUnassignedLegacyData } from '../../services/UserScopedStorage';
 import {
   completeAchieverGoogleRedirect,
@@ -84,6 +84,9 @@ const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
                 }
               }
 
+              // Hydrate this UID's Firestore records before private modules
+              // mount, so a new device does not briefly show empty/default data.
+              await waitForCloudSyncAccountReady(user.uid);
               previousUid = user.uid;
               if (active) setGate({ status: 'authenticated', user, error: '' });
             } catch (error) {
