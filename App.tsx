@@ -15,6 +15,7 @@ import SpeakingDashboard from './components/SpeakingDashboard';
 import AINativeWorkbench from './components/AINativeWorkbench';
 import FocusTracker from './components/FocusTracker';
 import SectionErrorBoundary from './components/SectionErrorBoundary';
+import AuthGate from './components/auth/AuthGate';
 
 const protectSection = (sectionName: string, content: React.ReactNode) => (
   <SectionErrorBoundary sectionName={sectionName}>{content}</SectionErrorBoundary>
@@ -23,6 +24,7 @@ const protectSection = (sectionName: string, content: React.ReactNode) => (
 const App: React.FC = () => {
   return (
     <Router>
+      <AuthGate>
       <Layout>
         <Routes>
           <Route path="/" element={protectSection('Dashboard', <Dashboard />)} />
@@ -41,6 +43,7 @@ const App: React.FC = () => {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>
+      </AuthGate>
     </Router>
   );
 };
