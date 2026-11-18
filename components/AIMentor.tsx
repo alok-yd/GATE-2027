@@ -791,7 +791,7 @@ These are the current browser tracker records. Ask your next question and I’ll
         rejected += 1;
         return;
       }
-      validFiles.push(file);
+      validFiles.push(file.type === inferredType ? file : new File([file], file.name, { type: inferredType, lastModified: file.lastModified }));
     });
 
     const combinedSize = pendingImages.reduce((sum, item) => sum + item.file.size, 0) +
