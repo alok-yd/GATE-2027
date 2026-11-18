@@ -11,6 +11,7 @@ const ACTIVE_UID_KEY = 'achiever_cloud_sync_active_uid_v1';
 const LEGACY_OWNER_KEY = 'achiever_legacy_data_owner_uid_v1';
 const CACHE_PREFIX = '__achiever_user_cache_v1__:';
 const UNASSIGNED_PREFIX = '__achiever_unassigned_legacy_v1__:';
+const LEGACY_BACKUP_PREFIX = '__achiever_legacy_backup_v1__:';
 const SYSTEM_KEYS = new Set([
   'achiever_cloud_sync_meta_v1',
   'achiever_cloud_sync_device_id_v1',
@@ -67,6 +68,7 @@ const isSystemKey = (key: string): boolean =>
   SYSTEM_KEYS.has(key) ||
   key.startsWith(CACHE_PREFIX) ||
   key.startsWith(UNASSIGNED_PREFIX) ||
+  key.startsWith(LEGACY_BACKUP_PREFIX) ||
   key.startsWith('firebase:') ||
   key.startsWith('firebaseLocalStorage') ||
   /app.?check|recaptcha/i.test(key);
@@ -76,6 +78,21 @@ const getUserDataEntries = (storage: Storage): Array<[string, string]> =>
 
 const userCachePrefix = (uid: string): string =>
   CACHE_PREFIX + encodeURIComponent(uid) + ':';
+
+const legacyBackupPrefix = (uid: string): string =>
+  LEGACY_BACKUP_PREFIX + encodeURIComponent(uid) + ':';
+
+const ensureLegacyBackup = (
+  storage: Storage,
+  uid: string,
+  entries: Array<[string, string]>
+): void => {
+  const backupPrefix = legacyBackupPrefix(uid);
+  const alreadyBackedUp = rawEntries(storage).some(([key]) => key.startsWith(backupPrefix));
+  if (!alreadyBackedUp && entries.length > 0) {
+    writeSnapshot(storage, backupPrefix, entries);
+  }
+};
 
 const userPhysicalKey = (uid: string, logicalKey: string): string =>
   userCachePrefix(uid) + encodeURIComponent(logicalKey);
@@ -303,6 +320,7 @@ const activateUserStorageInternal = (uid: string): UserStorageActivationResult =
   if (previousUid === uid) {
     if (!rawGet(storage, LEGACY_OWNER_KEY)) rawSet(storage, LEGACY_OWNER_KEY, uid);
     if (currentEntries.length > 0) {
+      ensureLegacyBackup(storage, uid, currentEntries);
       writeSnapshot(storage, userCachePrefix(uid), currentEntries);
       clearActiveUserData(storage);
     }
@@ -310,6 +328,7 @@ const activateUserStorageInternal = (uid: string): UserStorageActivationResult =
     if (currentEntries.length > 0) {
       if (previousUid) {
         if (!rawGet(storage, LEGACY_OWNER_KEY)) rawSet(storage, LEGACY_OWNER_KEY, previousUid);
+        ensureLegacyBackup(storage, previousUid, currentEntries);
         writeSnapshot(storage, userCachePrefix(previousUid), currentEntries);
       } else {
         writeSnapshot(storage, UNASSIGNED_PREFIX, currentEntries);
