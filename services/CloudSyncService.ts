@@ -24,11 +24,15 @@ import {
   type Unsubscribe as FirestoreUnsubscribe,
 } from 'firebase/firestore';
 import { firebaseConfig } from '../firebase';
+import { initializeFirebaseAppCheck } from './firebaseAppCheck';
 
 const CLOUD_APP_NAME = 'achiever-cloud-sync';
 const cloudApp =
   getApps().find((candidate) => candidate.name === CLOUD_APP_NAME) ??
   initializeApp(firebaseConfig, CLOUD_APP_NAME);
+
+// Protect the named Cloud Sync app before Auth and Firestore are initialized.
+export const cloudAppCheck = initializeFirebaseAppCheck(cloudApp);
 
 /**
  * A separate named Firebase app keeps Cloud Sync authentication independent
