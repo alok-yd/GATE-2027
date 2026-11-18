@@ -352,6 +352,17 @@ Your voice assistant and this full AI Mentor workspace share the same conversati
   timestamp: new Date().toISOString(),
 });
 
+const getSelectedFiles = (fileList: FileList | null): File[] => {
+  const files: File[] = [];
+  if (fileList) {
+    for (let index = 0; index < fileList.length; index += 1) {
+      const selectedFile = fileList.item(index);
+      if (selectedFile) files.push(selectedFile);
+    }
+  }
+  return files;
+};
+
 const createMessage = (
   role: MentorStoredMessage['role'],
   content: string,
@@ -1490,7 +1501,7 @@ These are the current browser tracker records. Ask your next question and I’ll
   };
 
   const handleChatFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.currentTarget.files ? Array.from(event.currentTarget.files) : [];
+    const files = getSelectedFiles(event.currentTarget.files);
     event.currentTarget.value = '';
     if (files.length) stageChatFiles(files);
   };
@@ -1582,7 +1593,7 @@ These are the current browser tracker records. Ask your next question and I’ll
   };
 
   const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.currentTarget.files ? Array.from(event.currentTarget.files) : [];
+    const files = getSelectedFiles(event.currentTarget.files);
     event.currentTarget.value = '';
     if (!files.length || uploading) return;
     setUploading(true);
