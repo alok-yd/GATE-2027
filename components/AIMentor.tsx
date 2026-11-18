@@ -686,6 +686,59 @@ const AIMentor: React.FC = () => {
     setMessages(messagesRef.current);
   };
 
+  const handleDeleteConversation = async (conversation: MentorConversation) => {
+    if (loading || deletingConversationId) return;
+    const conversationTitle = conversation.title || 'Untitled conversation';
+    if (!window.confirm(
+      'Delete the conversation "' + conversationTitle + '" and all of its messages and image attachments? This cannot be undone. Other conversations and uploaded workspace documents will remain.'
+    )) return;
+
+    const isActiveConversation = activeConversationIdRef.current === conversation.id;
+    setDeletingConversationId(conversation.id);
+
+    try {
+      const attachmentIds = conversation.messages.flatMap((message) =>
+        (message.attachments || [])
+          .map((attachment) => attachment.id)
+          .filter((id): id is string => Boolean(id))
+      );
+      // Remove locally stored image bytes before removing the history record,
+      // so a storage error does not leave the chat half-deleted.
+      await deleteMentorAttachments(attachmentIds);
+
+      const nextConversations = removeMentorConversation(conversation.id);
+      conversationsRef.current = nextConversations;
+      setConversations(nextConversations);
+
+      if (isActiveConversation) {
+        const nextActive = nextConversations[0] || createMentorConversation([createWelcomeMessage()]);
+        const finalConversations = nextConversations.length
+          ? nextConversations
+          : saveMentorConversations([nextActive]);
+
+        conversationsRef.current = finalConversations;
+        setConversations(finalConversations);
+        activeConversationIdRef.current = nextActive.id;
+        setActiveConversationId(nextActive.id);
+        setActiveMentorConversationId(nextActive.id);
+        messagesRef.current = nextActive.messages.length ? nextActive.messages : [createWelcomeMessage()];
+        setMessages(messagesRef.current);
+      }
+
+      setUploadFeedback('Deleted conversation "' + conversationTitle + '" and its saved image attachments.');
+    } catch (error) {
+      console.error('[AIMentor] Could not delete conversation:', error);
+      setUploadFeedback(
+        error instanceof Error
+          ? 'Could not delete this conversation: ' + error.message
+          : 'Could not delete this conversation. Please try again.'
+      );
+    } finally {
+      setDeletingConversationId(null);
+      window.setTimeout(() => setUploadFeedback(null), 4000);
+    }
+  };
+
   const clearCurrentConversation = () => {
     const conversationId = activeConversationIdRef.current;
     const current = conversationsRef.current.find((conversation) => conversation.id === conversationId);
