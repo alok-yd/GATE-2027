@@ -1,8 +1,17 @@
+export interface MentorStoredAttachment {
+  id?: string;
+  name: string;
+  mimeType: string;
+  kind: 'image' | 'generated-image';
+}
+
 export interface MentorStoredMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  /** Metadata only; image bytes live in IndexedDB, never in localStorage. */
+  attachments?: MentorStoredAttachment[];
 }
 
 export interface MentorConversation {
@@ -52,10 +61,31 @@ const sanitiseConversation = (value: unknown): MentorConversation | null => {
   const messages = candidate.messages
     .filter(isStoredMessage)
     .slice(-MAX_MESSAGES_PER_CONVERSATION)
-    .map((message) => ({
-      ...message,
-      content: message.content.slice(0, MAX_MESSAGE_CHARS),
-    }));
+    .map((message) => {
+      const rawAttachments = Array.isArray((message as MentorStoredMessage).attachments)
+        ? (message as MentorStoredMessage).attachments
+        : [];
+      const attachments = rawAttachments
+        .filter((attachment) =>
+          attachment &&
+          typeof attachment.name === 'string' &&
+          typeof attachment.mimeType === 'string' &&
+          (attachment.kind === 'image' || attachment.kind === 'generated-image')
+        )
+        .slice(0, 4)
+        .map((attachment) => ({
+          ...(typeof attachment.id === 'string' ? { id: attachment.id } : {}),
+          name: attachment.name.slice(0, 180),
+          mimeType: attachment.mimeType.slice(0, 80),
+          kind: attachment.kind,
+        }));
+
+      return {
+        ...message,
+        content: message.content.slice(0, MAX_MESSAGE_CHARS),
+        ...(attachments.length ? { attachments } : {}),
+      };
+    });
 
   const firstUserMessage = messages.find((message) => message.role === 'user')?.content || '';
   const fallbackTitle = firstUserMessage.replace(/\s+/g, ' ').trim().slice(0, 52);
