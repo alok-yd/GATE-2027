@@ -9,8 +9,12 @@ import {
   OAuthCredential
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { initializeFirebaseAppCheck } from '../../../services/firebaseAppCheck';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// This module reuses the default Firebase app; the shared initializer prevents
+// duplicate App Check activation if services/firebase.ts already ran.
+export const appCheck = initializeFirebaseAppCheck(app);
 export const auth = getAuth(app);
 
 // In-memory access token cache (MANDATORY: Never store access token in localStorage/sessionStorage)

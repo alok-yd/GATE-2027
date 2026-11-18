@@ -1,6 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    <script>
+      (function enableFirebaseAppCheckDebugTokenOnLocalhost() {
+        var hostname = window.location.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+          console.info('[ACHIEVER] Firebase App Check debug-token mode is enabled for localhost only. Register the generated token in Firebase Console > App Check > Apps > Manage debug tokens.');
+        }
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Achiever — AI Learning &amp; Intelligence</title>
