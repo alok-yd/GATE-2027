@@ -359,6 +359,14 @@ const AIMentor: React.FC = () => {
   const [chatSearch, setChatSearch] = useState('');
   const [showConversationActions, setShowConversationActions] = useState(false);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
+  const [showQuizBuilder, setShowQuizBuilder] = useState(false);
+  const [quizSubject, setQuizSubject] = useState('Computer Organization and Architecture');
+  const [quizTopic, setQuizTopic] = useState('');
+  const [quizDifficulty, setQuizDifficulty] = useState<'easy' | 'medium' | 'hard' | 'mixed'>('medium');
+  const [quizCount, setQuizCount] = useState(10);
+  const [quizQuestionType, setQuizQuestionType] = useState<MentorQuizQuestionType | 'mixed'>('mixed');
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState('');
   const [utilityPanel, setUtilityPanel] = useState<'settings' | 'documents' | null>(null);
   const [memories, setMemories] = useState<AIMemoryRecord[]>(() => listMemories());
   const [editingMemory, setEditingMemory] = useState<{ id: string; title: string; content: string } | null>(null);
@@ -398,13 +406,13 @@ const AIMentor: React.FC = () => {
     conversationId: string,
     nextMessages: MentorStoredMessage[]
   ) => {
-    const boundedMessages = nextMessages.slice(-60);
+    const boundedMessages = nextMessages.slice(-120);
     const current = conversationsRef.current.find((conversation) => conversation.id === conversationId);
     const base = current || createMentorConversation([createWelcomeMessage()]);
     const firstUser = boundedMessages.find((message) => message.role === 'user')?.content || '';
     const updated: MentorConversation = {
       ...base,
-      title: firstUser.replace(/\s+/g, ' ').trim().slice(0, 52) || 'New conversation',
+      title: base.titleIsCustom ? base.title : (firstUser.replace(/\s+/g, ' ').trim().slice(0, 52) || 'New conversation'),
       updatedAt: new Date().toISOString(),
       messages: boundedMessages,
     };
@@ -1055,6 +1063,220 @@ These are the current browser tracker records. Ask your next question and I’ll
     setEditingMemory(null);
     setUploadFeedback('Saved memory updated.');
     window.setTimeout(() => setUploadFeedback(null), 2500);
+  };
+
+
+  const updateQuizMessage = (messageId: string, quiz: MentorQuizPayload) => {
+    const conversationId = activeConversationIdRef.current;
+    const current = conversationsRef.current.find((item) => item.id === conversationId);
+    if (!current) return;
+    const next = current.messages.map((message) =>
+      message.id === messageId
+        ? { ...message, interactive: { kind: 'quiz' as const, quiz } }
+        : message
+    );
+    persistMessagesForConversation(conversationId, next);
+  };
+
+  const createQuiz = async () => {
+    const subject = quizSubject.trim();
+    const topic = quizTopic.trim();
+    if (!subject || !topic) {
+      setUploadFeedback('Enter a subject and topic before generating a quiz.');
+      return;
+    }
+    if (loading) return;
+
+    const conversationId = activeConversationIdRef.current;
+    const current = conversationsRef.current.find((item) => item.id === conversationId);
+    const baseMessages = current?.messages || messagesRef.current;
+    const requestText = 'Create a ' + quizDifficulty + ' GATE-style practice quiz on ' + subject + ' — ' + topic +
+      ' (' + quizCount + ' questions; question type: ' + quizQuestionType + ').';
+    const userMessage = createMessage('user', requestText);
+    persistMessagesForConversation(conversationId, [...baseMessages, userMessage]);
+    setShowQuizBuilder(false);
+    setLoading(true);
+    setGenerationStatus('Generating questions and reviewing the answer key…');
+
+    try {
+      const typeInstruction = quizQuestionType === 'mixed'
+        ? 'Use a sensible mix of single-correct MCQ, multiple-correct MSQ, numerical-answer (NAT), and true/false questions.'
+        : 'Every question must use question type "' + quizQuestionType + '".';
+      const generated = await generateGatewayJson<{
+        title?: string;
+        questions?: Array<{
+          type?: string;
+          prompt?: string;
+          options?: Array<{ id?: string; text?: string }>;
+          correctAnswers?: string[];
+          explanation?: string;
+          marks?: number;
+          negativeMarks?: number;
+        }>;
+      }>({
+        system: [
+          'You are an expert GATE CS/IT/DA question setter and answer-key reviewer.',
+          'Return valid JSON only, without Markdown fences.',
+          'Questions must be original, unambiguous, technically accurate and appropriate to the requested GATE topic and difficulty.',
+          'For MCQs use four options with ids A, B, C, D. For MSQs there may be more than one correct option.',
+          'For NAT, options must be an empty array and correctAnswers must contain the expected numeric answer as a string.',
+          'For true_false use options A=True and B=False.',
+          'Every question must include a step-by-step, self-contained explanation and marks/negativeMarks.',
+          'Use GATE-style negative marking for MCQ where appropriate; do not apply negative marking to MSQ or NAT.',
+          'Do not claim a question is an official previous-year question.',
+        ].join(' '),
+        prompt:
+          'Generate exactly ' + quizCount + ' questions.\\n' +
+          'Subject: ' + subject + '\\nTopic: ' + topic + '\\nDifficulty: ' + quizDifficulty +
+          '\\nQuestion format: ' + typeInstruction + '\\n\\n' +
+          'Return this JSON shape: { "title":"Short quiz title", "questions":[{' +
+          '"type":"single | multiple | nat | true_false", "prompt":"Question statement with equations", ' +
+          '"options":[{"id":"A","text":"..."},{"id":"B","text":"..."},{"id":"C","text":"..."},{"id":"D","text":"..."}], ' +
+          '"correctAnswers":["A"], "explanation":"Reasoned solution", "marks":1, "negativeMarks":0.33}] }. ' +
+          'For NAT, set options=[] and put the numeric answer in correctAnswers. Ensure all items have valid answer keys.',
+      });
+
+      if (!generated || !Array.isArray(generated.questions) || generated.questions.length < 1) {
+        throw new Error('The question generator returned an invalid quiz structure. Please retry.');
+      }
+
+      const questions: MentorQuizQuestion[] = generated.questions.slice(0, quizCount).map((raw, index) => {
+        const type = raw.type === 'multiple' || raw.type === 'nat' || raw.type === 'true_false' ? raw.type : 'single';
+        const options = Array.isArray(raw.options) ? raw.options.slice(0, 6).map((option, optionIndex) => ({
+          id: String(option.id || String.fromCharCode(65 + optionIndex)).slice(0, 12),
+          text: String(option.text || '').trim(),
+        })) : [];
+        const correctAnswers = Array.isArray(raw.correctAnswers) ? raw.correctAnswers.map((answer) => String(answer).trim()).filter(Boolean) : [];
+        if (!String(raw.prompt || '').trim() || !correctAnswers.length || (type !== 'nat' && options.length < 2)) {
+          throw new Error('Question ' + (index + 1) + ' is missing its prompt, options or answer key. Please regenerate the quiz.');
+        }
+        if (type !== 'nat' && correctAnswers.some((answer) => !options.some((option) => option.id === answer))) {
+          throw new Error('Question ' + (index + 1) + ' contains an answer key that does not match its options.');
+        }
+        return {
+          id: 'q_' + (index + 1) + '_' + Date.now().toString(36),
+          type,
+          prompt: String(raw.prompt).trim(),
+          options,
+          correctAnswers,
+          explanation: String(raw.explanation || 'No explanation was returned. Review this item before relying on the answer key.'),
+          marks: Math.max(1, Math.min(5, Number(raw.marks) || 1)),
+          negativeMarks: type === 'single' ? Math.max(0, Math.min(2, Number(raw.negativeMarks) || 0)) : 0,
+        };
+      });
+
+      // A second model pass checks consistency of the generated questions and answer keys.
+      const review = await generateGatewayJson<{
+        checks?: Array<{ index?: number; correctAnswers?: string[]; explanation?: string; verified?: boolean }>;
+      }>({
+        system: 'You are a strict independent GATE answer-key auditor. Re-solve every question from first principles. Return JSON only. Do not assume the supplied answer key is correct.',
+        prompt: 'Audit these generated practice questions. For every question, solve it independently, check for ambiguity, and return corrected correctAnswers and explanation. Return JSON shape {"checks":[{"index":1,"verified":true,"correctAnswers":["A"],"explanation":"..."}]}. Set verified=false if ambiguous or unable to verify. Never invent a correction.\\n\\nQUESTIONS:\\n' + JSON.stringify(questions),
+      });
+
+      const reviewedQuestions = questions.map((question, index) => {
+        const check = review?.checks?.find((item) => Number(item.index) === index + 1) || review?.checks?.[index];
+        if (!check || check.verified !== true || !Array.isArray(check.correctAnswers) || !check.correctAnswers.length) {
+          return {
+            ...question,
+            explanation: question.explanation + '\\n\\n**Answer-key note:** The automated second-pass review could not independently confirm this answer. Verify the calculation before using it for exam scoring.',
+          };
+        }
+        const correctedAnswers = check.correctAnswers.map(String);
+        if (question.type !== 'nat' && correctedAnswers.some((answer) => !question.options.some((option) => option.id === answer))) {
+          return {
+            ...question,
+            explanation: question.explanation + '\\n\\n**Answer-key note:** The second-pass review returned an invalid option reference. Verify this item manually.',
+          };
+        }
+        return {
+          ...question,
+          correctAnswers: correctedAnswers,
+          explanation: String(check.explanation || question.explanation),
+        };
+      });
+
+      const quiz: MentorQuizPayload = {
+        id: 'quiz_' + Date.now().toString(36),
+        title: String(generated.title || (subject + ': ' + topic + ' Practice')).slice(0, 120),
+        subject,
+        topic,
+        difficulty: quizDifficulty,
+        questions: reviewedQuestions,
+        responses: {},
+        markedForReview: [],
+        currentIndex: 0,
+        submitted: false,
+        createdAt: new Date().toISOString(),
+      };
+      const latest = conversationsRef.current.find((item) => item.id === conversationId);
+      const assistantMessage: MentorStoredMessage = {
+        ...createMessage('assistant', 'Your interactive practice quiz is ready. Select answers, mark questions for review and submit when you finish.'),
+        interactive: { kind: 'quiz', quiz },
+      };
+      persistMessagesForConversation(conversationId, [
+        ...(latest?.messages || [...baseMessages, userMessage]),
+        assistantMessage,
+      ]);
+    } catch (error) {
+      const latest = conversationsRef.current.find((item) => item.id === conversationId);
+      const message = error instanceof Error ? error.message : describeAIGatewayError(error);
+      persistMessagesForConversation(conversationId, [
+        ...(latest?.messages || [...baseMessages, userMessage]),
+        createMessage('assistant', 'I could not create a reliable quiz. ' + message),
+      ]);
+    } finally {
+      setLoading(false);
+      setGenerationStatus('');
+    }
+  };
+
+  const handleRenameConversation = () => {
+    const current = conversationsRef.current.find((item) => item.id === activeConversationIdRef.current);
+    if (!current) return;
+    const nextTitle = window.prompt('Rename this conversation:', current.title);
+    if (nextTitle == null) return;
+    try {
+      const renamed = renameMentorConversation(current.id, nextTitle);
+      if (renamed) {
+        const next = loadMentorConversations();
+        conversationsRef.current = next;
+        setConversations(next);
+        setUploadFeedback('Conversation renamed.');
+        window.setTimeout(() => setUploadFeedback(null), 2500);
+      }
+    } catch (error) {
+      setUploadFeedback(error instanceof Error ? error.message : 'Could not rename this conversation.');
+    }
+  };
+
+  const setMessageFeedback = (messageId: string, feedback: 'up' | 'down') => {
+    const conversationId = activeConversationIdRef.current;
+    const current = conversationsRef.current.find((item) => item.id === conversationId);
+    if (!current) return;
+    const nextMessages = current.messages.map((message) =>
+      message.id === messageId
+        ? { ...message, feedback: message.feedback === feedback ? undefined : feedback }
+        : message
+    );
+    persistMessagesForConversation(conversationId, nextMessages);
+  };
+
+  const beginEditUserMessage = (message: MentorStoredMessage) => {
+    if (message.role !== 'user' || message.attachments?.length) return;
+    setEditingMessageId(message.id);
+    setEditingMessageText(message.content);
+  };
+
+  const resendEditedMessage = async (index: number) => {
+    const text = editingMessageText.trim();
+    const conversationId = activeConversationIdRef.current;
+    const current = conversationsRef.current.find((item) => item.id === conversationId);
+    if (!text || !current) return;
+    const priorMessages = current.messages.slice(0, index);
+    persistMessagesForConversation(conversationId, priorMessages);
+    setEditingMessageId(null);
+    setEditingMessageText('');
+    await runMentorPrompt(text, mode);
   };
 
   const handleCopyMessage = async (content: string) => {
