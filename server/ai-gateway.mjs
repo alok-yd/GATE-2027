@@ -938,7 +938,9 @@ async function handleWebSearch(request, response) {
 
 
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gate-2027-a8850';
-const REQUIRE_GATEWAY_AUTH = String(process.env.ACHIEVER_REQUIRE_AUTH || '').toLowerCase() === 'true';
+// Every AI operation is private to a signed-in ACHIEVER user. Do not expose
+// an environment switch that can accidentally disable ID-token verification.
+const REQUIRE_GATEWAY_AUTH = true;
 const FIREBASE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
 let firebaseJwksCache = { expiresAt: 0, keys: new Map() };
 
