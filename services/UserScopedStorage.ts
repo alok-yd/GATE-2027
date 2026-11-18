@@ -111,7 +111,11 @@ const visibleLocalStorageKeys = (storage: Storage): string[] => {
       return;
     }
 
-    if (physicalKey.startsWith(CACHE_PREFIX) || physicalKey.startsWith(UNASSIGNED_PREFIX)) return;
+    if (
+      physicalKey.startsWith(CACHE_PREFIX) ||
+      physicalKey.startsWith(UNASSIGNED_PREFIX) ||
+      physicalKey.startsWith(LEGACY_BACKUP_PREFIX)
+    ) return;
     if (isSystemKey(physicalKey)) keys.push(physicalKey);
   });
 
