@@ -1083,6 +1083,16 @@ You can now ask me to search this material. I’ll include local chunk identifie
 
   const documentsForPanel = useMemo(() => listDocuments(), [documentsCount]);
 
+  const getDocumentPreview = (document: StoredDocument) => {
+    const preview = (document.summary || '').replace(/\\s+/g, ' ').trim();
+    // Some PDF parsers return raw object/stream syntax instead of readable text.
+    // Keep the document available, but do not expose that binary-like dump in the UI.
+    if (!preview || /%PDF-\\d|endstream|\\/Type\\/ObjStm|<<\\s*\\/Filter|\\/DecodeParms/i.test(preview)) {
+      return 'No clean text preview is available. Ask AI Mentor to search the indexed content of this file.';
+    }
+    return preview;
+  };
+
   const toggleSidebar = () => {
     const next = !sidebarCollapsed;
     setSidebarCollapsed(next);
@@ -1111,7 +1121,9 @@ You can now ask me to search this material. I’ll include local chunk identifie
   };
 
   return (
-    <div className="relative flex h-[calc(100vh-112px)] min-h-[680px] w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-800 shadow-sm">
+    <div className="ai-mentor-chatgpt relative flex h-[calc(100vh-112px)] min-h-[680px] w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-800 shadow-sm">
+      <style>{"\n.ai-mentor-chatgpt {\n  border: 1px solid #e2e8f0 !important;\n  border-radius: 24px !important;\n  background: #ffffff !important;\n  box-shadow: 0 18px 60px rgba(15, 23, 42, .09) !important;\n  isolation: isolate;\n}\n.ai-mentor-chatgpt > aside:first-of-type {\n  background: linear-gradient(180deg, #111827 0%, #151f31 100%) !important;\n  border-color: rgba(255,255,255,.08) !important;\n  color: #e5e7eb !important;\n}\n.ai-mentor-chatgpt > aside:first-of-type > div:first-child {\n  border-color: rgba(255,255,255,.09) !important;\n  background: rgba(255,255,255,.015);\n}\n.ai-mentor-chatgpt > aside:first-of-type [class*=\"text-slate-900\"],\n.ai-mentor-chatgpt > aside:first-of-type [class*=\"text-slate-800\"] { color: #f8fafc !important; }\n.ai-mentor-chatgpt > aside:first-of-type [class*=\"text-slate-700\"],\n.ai-mentor-chatgpt > aside:first-of-type [class*=\"text-slate-600\"],\n.ai-mentor-chatgpt > aside:first-of-type [class*=\"text-slate-500\"] { color: #cbd5e1 !important; }\n.ai-mentor-chatgpt > aside:first-of-type [class*=\"text-slate-400\"] { color: #94a3b8 !important; }\n.ai-mentor-chatgpt > aside:first-of-type [class*=\"border-slate-200\"],\n.ai-mentor-chatgpt > aside:first-of-type [class*=\"border-slate-100\"] { border-color: rgba(255,255,255,.10) !important; }\n.ai-mentor-chatgpt > aside:first-of-type input {\n  color: #f8fafc !important;\n  background: rgba(255,255,255,.07) !important;\n  border-color: rgba(255,255,255,.12) !important;\n}\n.ai-mentor-chatgpt > aside:first-of-type input::placeholder { color: #94a3b8 !important; }\n.ai-mentor-chatgpt > aside:first-of-type button:hover { background-color: rgba(255,255,255,.075) !important; }\n.ai-mentor-chatgpt > aside:first-of-type button[title=\"New chat\"] {\n  background: linear-gradient(135deg, #4f46e5, #6d5ce8) !important;\n  color: #ffffff !important;\n  box-shadow: 0 7px 22px rgba(79,70,229,.22) !important;\n}\n.ai-mentor-chatgpt > aside:first-of-type .group:has(.text-indigo-700) {\n  background: rgba(99,102,241,.20) !important;\n  box-shadow: inset 0 0 0 1px rgba(165,180,252,.16) !important;\n}\n.ai-mentor-chatgpt > aside:first-of-type .group:has(.text-indigo-700) .text-indigo-700 { color: #e0e7ff !important; }\n.ai-mentor-chatgpt > aside:first-of-type .rounded-lg.bg-white,\n.ai-mentor-chatgpt > aside:first-of-type .rounded-lg.bg-white.ring-1 {\n  background: rgba(255,255,255,.075) !important;\n  box-shadow: inset 0 0 0 1px rgba(255,255,255,.07) !important;\n}\n.ai-mentor-chatgpt > aside:first-of-type .mt-3.flex.items-center.gap-2.rounded-lg.bg-white {\n  background: rgba(255,255,255,.055) !important;\n}\n.ai-mentor-chatgpt > main { background: #ffffff !important; }\n.ai-mentor-chatgpt > main > header {\n  min-height: 70px;\n  background: rgba(255,255,255,.94) !important;\n  border-color: #e8edf4 !important;\n  box-shadow: 0 2px 12px rgba(15,23,42,.025);\n}\n.ai-mentor-chatgpt > main > header h1 { letter-spacing: -.025em; }\n.ai-mentor-chatgpt > main > div.relative.flex.min-h-0.flex-1 > div.flex-1.overflow-y-auto {\n  background: radial-gradient(ellipse at 50% 0%, rgba(99,102,241,.055), transparent 52%), #f8fafc !important;\n  scrollbar-color: #cbd5e1 transparent;\n}\n.ai-mentor-chatgpt .mentor-suggestion-card {\n  border-color: #e5eaf2 !important;\n  border-radius: 18px !important;\n  background: rgba(255,255,255,.92) !important;\n  box-shadow: 0 3px 15px rgba(15,23,42,.035) !important;\n}\n.ai-mentor-chatgpt .mentor-suggestion-card:hover {\n  border-color: #a5b4fc !important;\n  box-shadow: 0 12px 28px rgba(79,70,229,.09) !important;\n}\n.ai-mentor-chatgpt .mentor-user-message {\n  border: 1px solid #dfe5ff;\n  background: linear-gradient(135deg, #eef2ff, #e9edff) !important;\n  box-shadow: 0 3px 12px rgba(79,70,229,.045);\n}\n.ai-mentor-chatgpt .mentor-assistant-message { border-bottom: 1px solid #edf0f5; padding-bottom: 14px !important; }\n.ai-mentor-chatgpt .mentor-composer {\n  border: 1px solid #dce3ed !important;\n  border-radius: 24px !important;\n  background: #ffffff !important;\n  box-shadow: 0 9px 34px rgba(15,23,42,.075) !important;\n}\n.ai-mentor-chatgpt .mentor-composer:focus-within {\n  border-color: #a5b4fc !important;\n  box-shadow: 0 0 0 4px rgba(99,102,241,.09), 0 12px 36px rgba(15,23,42,.08) !important;\n}\n.ai-mentor-chatgpt .mentor-composer button[aria-label=\"Send message\"],\n.ai-mentor-chatgpt .mentor-composer button[aria-label=\"Generate image\"] {\n  background: linear-gradient(135deg, #4f46e5, #6658e8) !important;\n  box-shadow: 0 5px 16px rgba(79,70,229,.22);\n}\n.ai-mentor-chatgpt .mentor-composer select { background: #f8fafc !important; border-color: #e2e8f0 !important; }\n.ai-mentor-chatgpt main > div.absolute.inset-0 > aside {\n  border-color: #e5eaf2 !important;\n  box-shadow: -24px 0 70px rgba(15,23,42,.16) !important;\n}\n.ai-mentor-chatgpt .mentor-document-card {\n  border-color: #e3e9f2 !important;\n  border-radius: 16px !important;\n  background: #ffffff !important;\n  box-shadow: 0 2px 10px rgba(15,23,42,.025);\n}\n.ai-mentor-chatgpt .mentor-document-remove {\n  min-height: 30px;\n  border-radius: 9px !important;\n  background: #fff7f7;\n  border-color: #fee2e2 !important;\n  font-weight: 700;\n  white-space: nowrap;\n}\n@media (max-width: 767px) {\n  .ai-mentor-chatgpt { border-radius: 18px !important; }\n  .ai-mentor-chatgpt > aside:first-of-type { border-radius: 18px 0 0 18px; }\n}\n"}</style>
+
       {mobileSidebarOpen && (
         <button
           type="button"
@@ -1369,7 +1381,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
                       type="button"
                       disabled={loading}
                       onClick={() => void runMentorPrompt(suggestion.prompt, suggestion.mode)}
-                      className="group min-h-[126px] rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition duration-150 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-md disabled:opacity-60"
+                      className="mentor-suggestion-card group min-h-[126px] rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition duration-150 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-md disabled:opacity-60"
                     >
                       <div className="mb-4 flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 transition group-hover:bg-indigo-600 group-hover:text-white">
                         <suggestion.icon size={18} />
@@ -1384,7 +1396,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
               <div className="mx-auto w-full max-w-[900px] space-y-7 px-5 py-8">
                 {messages.map((message, index) => (
                   <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-                    <div className={message.role === 'user' ? 'max-w-[92%] rounded-[22px] rounded-br-md bg-[#edf0ff] px-5 py-3.5 text-slate-900 sm:max-w-[78%]' : 'w-full max-w-[850px] px-1 py-1 text-slate-800'}>
+                    <div className={message.role === 'user' ? 'mentor-user-message max-w-[92%] rounded-[22px] rounded-br-md bg-[#edf0ff] px-5 py-3.5 text-slate-900 sm:max-w-[78%]' : 'mentor-assistant-message w-full max-w-[850px] px-1 py-1 text-slate-800'}>
                       {message.role === 'assistant' && message.id !== 'welcome' && (
                         <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-slate-500">
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white"><Sparkles size={14} /></span>
@@ -1526,7 +1538,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
                 </div>
               )}
 
-              <div className="rounded-[24px] border border-slate-300 bg-white p-3 shadow-[0_5px_24px_rgba(15,23,42,0.06)] transition focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-50">
+              <div className="mentor-composer rounded-[24px] border border-slate-300 bg-white p-3 shadow-[0_5px_24px_rgba(15,23,42,0.06)] transition focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-50">
                 <textarea
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
@@ -1537,7 +1549,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
                     }
                   }}
                   rows={2}
-                  placeholder={imageGenerationMode ? 'Describe the image or diagram you want to generate…' : 'Message AI Mentor…'}
+                  placeholder={imageGenerationMode ? 'Describe the image or diagram you want to generate…' : 'Ask anything about GATE, your progress, or your study material…'}
                   aria-label="Message AI Mentor"
                   className="max-h-40 min-h-[54px] w-full resize-y border-0 bg-transparent px-2 py-2 text-sm leading-6 text-slate-800 outline-none placeholder:text-slate-400 focus:ring-0"
                   disabled={loading}
@@ -1666,13 +1678,23 @@ You can now ask me to search this material. I’ll include local chunk identifie
                   {documentsForPanel.length === 0 ? (
                     <p className="rounded-xl border border-dashed border-slate-300 p-5 text-center text-xs text-slate-500">No documents have been indexed in this browser yet.</p>
                   ) : documentsForPanel.map((document: StoredDocument) => (
-                    <div key={document.id} className="rounded-xl border border-slate-200 p-3">
+                    <div key={document.id} className="mentor-document-card rounded-xl border border-slate-200 p-3">
                       <div className="flex items-start gap-3">
                         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600"><FileText size={17} /></span>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
                             <p className="break-words text-sm font-semibold text-slate-800">{document.name}</p>
-                            <div className="relative shrink-0">
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteDocument(document)}
+                                aria-label={'Remove uploaded document: ' + document.name}
+                                title="Remove this uploaded document"
+                                className="mentor-document-remove inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
+                              >
+                                <Trash2 size={13} /> Remove
+                              </button>
+                              <div className="relative shrink-0">
                               <button
                                 type="button"
                                 onClick={() => setDocumentActionsId((current) => current === document.id ? null : document.id)}
@@ -1696,18 +1718,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
                             </div>
                           </div>
                           <p className="mt-1 text-[10px] text-slate-400">{document.kind.toUpperCase()} · {document.purpose.replace(/_/g, ' ')} · {new Date(document.createdAt).toLocaleDateString()}</p>
-                          <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{document.summary || 'No summary available.'}</p>
-                          <div className="mt-3 flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteDocument(document)}
-                              aria-label={'Remove uploaded document: ' + document.name}
-                              title="Remove this uploaded document"
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-100 px-2.5 py-1.5 text-xs font-semibold text-rose-600 transition hover:border-rose-200 hover:bg-rose-50"
-                            >
-                              <Trash2 size={13} /> Remove
-                            </button>
-                          </div>
+                          <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{getDocumentPreview(document)}</p>
                         </div>
                       </div>
                     </div>
