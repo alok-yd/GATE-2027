@@ -293,12 +293,12 @@ function sendJson(response, status, body) {
   response.end(payload);
 }
 
-async function readJson(request) {
+async function readJson(request, maximumBytes = 256 * 1024) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 256 * 1024) {
+    if (size > maximumBytes) {
       throw new Error('Request body is too large.');
     }
     chunks.push(chunk);
@@ -468,6 +468,252 @@ async function handleChat(request, response) {
   }
 }
 
+
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+const MAX_IMAGES_PER_REQUEST = 4;
+const MAX_IMAGE_REQUEST_BYTES = 20 * 1024 * 1024;
+const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+function validateImageInputs(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > MAX_IMAGES_PER_REQUEST) {
+    throw new Error('Attach no more than four images per request.');
+  }
+
+  let totalBytes = 0;
+  return value.map((image) => {
+    const mimeType = typeof image?.mimeType === 'string' ? image.mimeType.toLowerCase() : '';
+    const data = typeof image?.data === 'string' ? image.data : '';
+    if (!ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) {
+      throw new Error('Unsupported image format. Use PNG, JPG/JPEG, or WEBP.');
+    }
+    if (!data || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+      throw new Error('An uploaded image is invalid or could not be decoded.');
+    }
+    const bytes = Buffer.from(data, 'base64');
+    if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) {
+      throw new Error('Each image must be 3 MB or smaller.');
+    }
+    totalBytes += bytes.length;
+    return { mimeType, data, bytes };
+  }).filter((image) => {
+    if (totalBytes > MAX_IMAGE_BYTES * MAX_IMAGES_PER_REQUEST) {
+      throw new Error('The combined image upload is too large.');
+    }
+    return Boolean(image.data);
+  });
+}
+
+async function handleVision(request, response) {
+  const started = Date.now();
+  metrics.requestCount += 1;
+  try {
+    if (isRateLimited(request)) {
+      sendJson(response, 429, { error: 'rate_limit_exceeded' });
+      return;
+    }
+
+    const body = await readJson(request, MAX_IMAGE_REQUEST_BYTES);
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const system = typeof body.system === 'string' ? body.system.trim() : '';
+    const history = Array.isArray(body.history) ? body.history.slice(-10) : [];
+    const images = validateImageInputs(body.images);
+
+    if (!prompt) throw new Error('A question or instruction is required for image analysis.');
+    if (!images.length) throw new Error('Attach at least one image to analyze.');
+    if (!providers.gemini.isConfigured()) {
+      throw new Error('Image understanding requires GEMINI_API_KEY on the server or a Gemini key saved in AI Mentor settings.');
+    }
+
+    const contents = history
+      .filter((message) =>
+        message &&
+        (message.role === 'user' || message.role === 'assistant') &&
+        typeof message.content === 'string'
+      )
+      .map((message) => ({
+        role: message.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: message.content.slice(0, 4000) }],
+      }));
+    contents.push({
+      role: 'user',
+      parts: [
+        { text: prompt },
+        ...images.map((image) => ({
+          inline_data: { mime_type: image.mimeType, data: image.data },
+        })),
+      ],
+    });
+
+    const models = [
+      providers.gemini.primaryModel,
+      ...providers.gemini.fallbackModels.filter((model) => model !== providers.gemini.primaryModel),
+    ];
+    let lastError = null;
+
+    for (const model of models) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        const payload = {
+          contents,
+          generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+          ...(system ? { system_instruction: { parts: [{ text: system }] } } : {}),
+        };
+        const providerResponse = await fetch(
+          'https://generativelanguage.googleapis.com/v1beta/models/' +
+            model +
+            ':generateContent?key=' +
+            encodeURIComponent(providers.gemini.apiKey),
+          {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }
+        );
+        const data = await providerResponse.json().catch(() => null);
+        if (!providerResponse.ok) {
+          const message = data?.error?.message || providerResponse.statusText;
+          lastError = new Error('Google Gemini vision returned HTTP ' + providerResponse.status + ': ' + message);
+          if (providerResponse.status === 404 || providerResponse.status === 503) continue;
+          throw lastError;
+        }
+
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const resultText = parts
+          .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+          .filter(Boolean)
+          .join('\n')
+          .trim();
+        if (!resultText) {
+          lastError = new Error('Google Gemini returned no readable response for the uploaded image.');
+          continue;
+        }
+
+        metrics.successCount += 1;
+        metrics.lastError = null;
+        metrics.lastModel = model;
+        metrics.promptChars += prompt.length;
+        metrics.completionChars += resultText.length;
+        if (typeof data?.usageMetadata?.totalTokenCount === 'number') {
+          metrics.totalTokens += data.usageMetadata.totalTokenCount;
+        }
+        sendJson(response, 200, {
+          content: resultText,
+          model,
+          provider: 'gemini-vision',
+          usage: data.usageMetadata || null,
+        });
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    throw lastError || new Error('All configured Gemini models failed to analyze the image.');
+  } catch (error) {
+    metrics.failureCount += 1;
+    metrics.lastError = error instanceof Error ? error.message : String(error);
+    sendJson(response, 503, {
+      error: 'ai_vision_unavailable',
+      detail: metrics.lastError,
+    });
+  } finally {
+    metrics.totalLatencyMs += Date.now() - started;
+  }
+}
+
+async function handleImageGeneration(request, response) {
+  const started = Date.now();
+  metrics.requestCount += 1;
+  try {
+    if (isRateLimited(request)) {
+      sendJson(response, 429, { error: 'rate_limit_exceeded' });
+      return;
+    }
+
+    const body = await readJson(request, MAX_IMAGE_REQUEST_BYTES);
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const images = validateImageInputs(body.images);
+    if (!prompt) throw new Error('Describe the image you want to generate.');
+    if (prompt.length > MAX_PROMPT_CHARS) throw new Error('Image prompt is too long.');
+    if (!providers.gemini.isConfigured()) {
+      throw new Error('Image generation requires GEMINI_API_KEY on the server or a Gemini key saved in AI Mentor settings.');
+    }
+
+    const imageModel = (process.env.GEMINI_IMAGE_MODEL || 'gemini-nano-banana-2.1').trim();
+    const parts = [
+      { text: prompt },
+      ...images.map((image) => ({
+        inline_data: { mime_type: image.mimeType, data: image.data },
+      })),
+    ];
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const providerResponse = await fetch(
+        'https://generativelanguage.googleapis.com/v1/models/' +
+          imageModel +
+          ':generateContent?key=' +
+          encodeURIComponent(providers.gemini.apiKey),
+        {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts }],
+          }),
+        }
+      );
+      const data = await providerResponse.json().catch(() => null);
+      if (!providerResponse.ok) {
+        const message = data?.error?.message || providerResponse.statusText;
+        throw new Error('Gemini image generation returned HTTP ' + providerResponse.status + ': ' + message);
+      }
+
+      const responseParts = data?.candidates?.[0]?.content?.parts || [];
+      const generatedPart = responseParts.find((part) => part?.inline_data?.data || part?.inlineData?.data);
+      const generatedData = generatedPart?.inline_data?.data || generatedPart?.inlineData?.data;
+      const mimeType = generatedPart?.inline_data?.mime_type || generatedPart?.inlineData?.mimeType || 'image/png';
+      const textContent = responseParts
+        .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+
+      if (typeof generatedData !== 'string' || !generatedData) {
+        throw new Error(textContent || 'The image model did not return an image. Try a clearer educational prompt.');
+      }
+
+      metrics.successCount += 1;
+      metrics.lastError = null;
+      metrics.lastModel = imageModel;
+      metrics.promptChars += prompt.length;
+      metrics.completionChars += textContent.length;
+      sendJson(response, 200, {
+        image: { data: generatedData, mimeType },
+        content: textContent,
+        model: imageModel,
+        provider: 'gemini-image',
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error) {
+    metrics.failureCount += 1;
+    metrics.lastError = error instanceof Error ? error.message : String(error);
+    sendJson(response, 503, {
+      error: 'ai_image_generation_unavailable',
+      detail: metrics.lastError,
+    });
+  } finally {
+    metrics.totalLatencyMs += Date.now() - started;
+  }
+}
+
 const server = http.createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/api/ai/status') {
     sendJson(response, 200, publicStatus());
@@ -476,6 +722,16 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === 'POST' && request.url === '/api/ai/chat') {
     await handleChat(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && request.url === '/api/ai/vision') {
+    await handleVision(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && request.url === '/api/ai/image') {
+    await handleImageGeneration(request, response);
     return;
   }
 
