@@ -421,9 +421,20 @@ const AIMentor: React.FC = () => {
     const conversationId = activeConversationIdRef.current;
     const currentConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId);
     const baseMessages = currentConversation?.messages || messagesRef.current;
+    const previousVisualAttachments = attachedImages.length
+      ? []
+      : ([...baseMessages].reverse().find((message) =>
+          message.role === 'user' &&
+          message.attachments?.some((attachment) =>
+            attachment.kind === 'image' || attachment.kind === 'generated-image'
+          )
+        )?.attachments || []).filter((attachment) =>
+          attachment.kind === 'image' || attachment.kind === 'generated-image'
+        ).slice(0, 4);
+    const hasVisualContext = attachedImages.length > 0 || previousVisualAttachments.length > 0;
     let requestHistory = baseMessages;
     setLoading(true);
-    setGenerationStatus(attachedImages.length ? 'Preparing images for visual analysis…' : 'Planning the best route for your question…');
+    setGenerationStatus(hasVisualContext ? 'Preparing images for visual analysis…' : 'Planning the best route for your question…');
     const requestStartedAt = performance.now();
 
     const controller = new AbortController();
@@ -437,7 +448,30 @@ const AIMentor: React.FC = () => {
       requestHistory = [...baseMessages, userMessage];
       persistMessagesForConversation(conversationId, requestHistory);
 
-      const response = attachedImages.length
+      const visionImages = attachedImages.length
+        ? await Promise.all(
+            attachedImages.map(async (file) => ({
+              mimeType: file.type,
+              data: await blobToBase64(file),
+            }))
+          )
+        : await Promise.all(
+            previousVisualAttachments.map(async (attachment) => {
+              if (!attachment.id) {
+                throw new Error('The earlier image attachment is unavailable. Please attach the image again.');
+              }
+              const blob = await readMentorAttachment(attachment.id);
+              if (!blob) {
+                throw new Error('The earlier image is no longer available in this browser. Please attach it again.');
+              }
+              return {
+                mimeType: blob.type || attachment.mimeType,
+                data: await blobToBase64(blob),
+              };
+            })
+          );
+
+      const response = hasVisualContext
         ? await generateGatewayVision({
             prompt: effectivePrompt,
             system: [
@@ -457,12 +491,7 @@ const AIMentor: React.FC = () => {
               .filter((message) => message.id !== 'welcome')
               .slice(-10)
               .map((message) => ({ role: message.role, content: message.content })),
-            images: await Promise.all(
-              attachedImages.map(async (file) => ({
-                mimeType: file.type,
-                data: await blobToBase64(file),
-              }))
-            ),
+            images: visionImages,
             signal: controller.signal,
           })
         : await orchestrateJarvisMessage({
