@@ -587,17 +587,26 @@ const mergeInitialCloudData = async (
   }
 
   if (!isStillCurrent()) return;
-  await setDoc(profileDocument(user.uid), {
+  const existingProfile = profileSnapshot.exists() ? profileSnapshot.data() : {};
+  const existingDisplayName =
+    (typeof existingProfile.displayName === 'string' && existingProfile.displayName.trim()) ||
+    (typeof existingProfile.name === 'string' && existingProfile.name.trim()) ||
+    '';
+  const resolvedDisplayName = user.displayName?.trim() || existingDisplayName;
+  const profilePatch: Record<string, unknown> = {
     uid: user.uid,
     email: user.email || null,
     phoneNumber: user.phoneNumber || null,
-    displayName: user.displayName || null,
     photoURL: user.photoURL || null,
     providerIds: user.providerData.map((provider) => provider.providerId),
     cloudSyncVersion: SCHEMA_VERSION,
     cloudSyncInitialisedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  }, { merge: true });
+  };
+  // Never replace an existing profile name with null from phone authentication.
+  if (resolvedDisplayName) profilePatch.displayName = resolvedDisplayName;
+
+  await setDoc(profileDocument(user.uid), profilePatch, { merge: true });
 
   // Reconcile local writes that happened while the initial cloud read was in flight.
   const latestMeta = readLocalMeta();
