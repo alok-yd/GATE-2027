@@ -58,12 +58,12 @@ From the repository root, with Firebase CLI authenticated to an account authoriz
 
 ```bash
 npx firebase-tools login
-npx firebase-tools deploy --only firestore:rules,storage --project gate-2027-a8850
+npx firebase-tools deploy --only storage --project gate-2027-a8850
 ```
 
-The command deploys the owner-scoped `firestore.rules` and new owner-scoped `storage.rules`. It does not change Authentication providers or enable App Check enforcement. The CLI deployment must complete successfully before claiming production database/file isolation is enforced.
+This command deploys only the new owner-scoped `storage.rules`. The existing `firestore.rules` file and its UID-owner checks are intentionally unchanged, as are Authentication providers and App Check enforcement. The Storage rules deployment must complete successfully before claiming production AI Mentor file isolation is enforced.
 
-Firestore's rule structure remains under `users/{uid}`; root profile writes require the profile's `uid` field to match its path. The Cloud Sync `appData` records and `chunks` remain owner-only. Storage has an equivalent UID ownership check for AI Mentor file objects.
+The existing Firestore rule structure remains unchanged under `users/{uid}`: it already requires `auth.uid == userId` for the user's profile, `appData` records and `chunks`. Storage has a new equivalent UID ownership check for AI Mentor file objects.
 
 ## User sign-in and data behaviour
 
@@ -129,7 +129,7 @@ Use Firebase Rules Playground or the Firebase Emulator Suite for rule checks whe
 - Ensure authorized domains and phone SMS region policy are configured.
 - Ensure Firebase Storage is provisioned.
 - Add `VITE_FIREBASE_APPCHECK_SITE_KEY` to the Render static app's environment and deploy a new build.
-- Deploy Firestore and Storage rules with the Firebase CLI command above.
+- Deploy the new Firebase Storage rules with the Firebase CLI command above. Existing Firestore rules are left as they are.
 - Register a localhost App Check debug token in Firebase Console when doing local development.
 - Run real Google/phone sign-in, OTP, two-account isolation, Firestore/Storage-denial, and cross-device smoke tests.
 
