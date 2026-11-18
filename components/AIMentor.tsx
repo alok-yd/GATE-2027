@@ -8,7 +8,9 @@ import {
   CheckCircle2,
   ChevronDown,
   Copy,
+  Download,
   FileText,
+  ImagePlus,
   Lightbulb,
   Menu,
   MessageSquare,
@@ -27,6 +29,7 @@ import {
   Square,
   Target,
   Trash2,
+  WandSparkles,
   X,
   Zap,
 } from 'lucide-react';
@@ -36,11 +39,14 @@ import {
   setGeminiApiKey,
   testGeminiKeyConnection,
   describeAIGatewayError,
+  generateGatewayImage,
+  generateGatewayVision,
 } from '../services/AIGatewayClient';
 import { AI_MODEL_CONFIG } from '../services/ai/modelConfig';
 import { getStudentProfile } from '../services/DataExtractor';
 import {
   createMemory,
+  deleteDocument,
   deleteMemory,
   listDocuments,
   listMemories,
@@ -55,13 +61,53 @@ import {
   saveMentorConversations,
   setActiveMentorConversationId,
 } from '../services/mentor/MentorStorage';
-import type { MentorConversation, MentorStoredMessage } from '../services/mentor/MentorStorage';
+import type { MentorConversation, MentorStoredAttachment, MentorStoredMessage } from '../services/mentor/MentorStorage';
+import { base64ToBlob, blobToBase64, readMentorAttachment, saveMentorAttachment } from '../services/mentor/MentorAttachmentStorage';
 import { summarizeMentorConversation } from '../services/mentor/MentorAgent';
 import type { MentorMode } from '../services/mentor/MentorAgent';
 import { orchestrateJarvisMessage } from '../services/assistant/JarvisOrchestrator';
 import type { JarvisProgressStage } from '../services/assistant/JarvisOrchestrator';
 import { MentorMarkdown } from './mentor/MentorMarkdown';
 import type { StudentProfile } from '../types';
+
+const StoredMentorImage: React.FC<{ attachment: MentorStoredAttachment }> = ({ attachment }) => {
+  const [source, setSource] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = '';
+    if (!attachment.id) return;
+    readMentorAttachment(attachment.id)
+      .then((blob) => {
+        if (!blob || cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSource(objectUrl);
+      })
+      .catch((error) => console.warn('[AIMentor] Could not load saved image:', error));
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachment.id]);
+
+  if (!source) {
+    return <div className="my-2 rounded-xl border border-dashed border-slate-300 px-3 py-4 text-xs text-slate-400">Loading image: {attachment.name}</div>;
+  }
+
+  return (
+    <div className="my-3 max-w-full overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <a href={source} target="_blank" rel="noreferrer" title="Open image">
+        <img src={source} alt={attachment.name} className="max-h-[520px] max-w-full object-contain" loading="lazy" />
+      </a>
+      <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-3 py-2">
+        <span className="min-w-0 truncate text-[10px] text-slate-500">{attachment.name}</span>
+        <a href={source} download={attachment.name} className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50">
+          <Download size={13} /> Download
+        </a>
+      </div>
+    </div>
+  );
+};
 
 const createWelcomeMessage = (): MentorStoredMessage => ({
   id: 'welcome',
@@ -79,11 +125,16 @@ Your voice assistant and this full AI Mentor workspace share the same conversati
   timestamp: new Date().toISOString(),
 });
 
-const createMessage = (role: MentorStoredMessage['role'], content: string): MentorStoredMessage => ({
+const createMessage = (
+  role: MentorStoredMessage['role'],
+  content: string,
+  attachments: MentorStoredAttachment[] = []
+): MentorStoredMessage => ({
   id: `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
   role,
   content,
   timestamp: new Date().toISOString(),
+  ...(attachments.length ? { attachments } : {}),
 });
 
 const AIMentor: React.FC = () => {
@@ -127,8 +178,12 @@ const AIMentor: React.FC = () => {
   const [memories, setMemories] = useState<AIMemoryRecord[]>(() => listMemories());
   const [editingMemory, setEditingMemory] = useState<{ id: string; title: string; content: string } | null>(null);
   const [documentsCount, setDocumentsCount] = useState(() => listDocuments().length);
+  const [documentActionsId, setDocumentActionsId] = useState<string | null>(null);
+  const [pendingImages, setPendingImages] = useState<Array<{ file: File; previewUrl: string }>>([]);
+  const [imageGenerationMode, setImageGenerationMode] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(messages);
   const conversationsRef = useRef(conversations);
