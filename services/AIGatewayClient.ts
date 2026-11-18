@@ -117,7 +117,7 @@ export const generateGatewayVision = async ({
   const modelChain = getModelAttemptChain();
   let lastError: Error | null = gatewayError;
   for (const model of modelChain) {
-    const contents = history.slice(-10).map((message) => ({
+    const contents: Array<Record<string, unknown>> = history.slice(-10).map((message) => ({
       role: message.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: message.content.slice(0, 4000) }],
     }));
