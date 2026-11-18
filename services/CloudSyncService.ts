@@ -960,6 +960,7 @@ export const signInForCloudSync = async (): Promise<CloudSyncUser> => {
   return {
     uid: credential.user.uid,
     email: credential.user.email,
+    phoneNumber: credential.user.phoneNumber,
     displayName: credential.user.displayName,
     photoURL: credential.user.photoURL,
   };
