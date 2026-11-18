@@ -598,9 +598,20 @@ const AIMentor: React.FC = () => {
 
   const handleSend = async () => {
     const prompt = input.trim();
-    if (!prompt || loading) return;
+    if (loading || (!prompt && pendingImages.length === 0)) return;
+    const images = pendingImages.map((item) => item.file);
+    pendingImages.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    setPendingImages([]);
     setInput('');
-    await runMentorPrompt(prompt, mode);
+
+    if (imageGenerationMode) {
+      await runImageGeneration(
+        prompt || 'Create a clean, accurate educational version of the attached reference image.',
+        images
+      );
+    } else {
+      await runMentorPrompt(prompt, mode, images);
+    }
   };
 
   const stopGeneration = () => {
@@ -757,6 +768,77 @@ These are the current browser tracker records. Ask your next question and I’ll
       setUploadFeedback('Clipboard access was blocked by this browser.');
     }
     window.setTimeout(() => setUploadFeedback(null), 2500);
+  };
+
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length) return;
+
+    const validFiles: File[] = [];
+    const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
+    let rejected = 0;
+    files.forEach((file) => {
+      const extension = file.name.toLowerCase().split('.').pop() || '';
+      const inferredType = extension === 'jpg' || extension === 'jpeg'
+        ? 'image/jpeg'
+        : extension === 'png'
+          ? 'image/png'
+          : extension === 'webp'
+            ? 'image/webp'
+            : file.type;
+      if (!allowedTypes.has(inferredType) || file.size <= 0 || file.size > 3 * 1024 * 1024) {
+        rejected += 1;
+        return;
+      }
+      validFiles.push(file);
+    });
+
+    const combinedSize = pendingImages.reduce((sum, item) => sum + item.file.size, 0) +
+      validFiles.reduce((sum, file) => sum + file.size, 0);
+    if (pendingImages.length + validFiles.length > 4 || combinedSize > 12 * 1024 * 1024) {
+      setUploadFeedback('Attach up to 4 images, with a maximum of 3 MB per image and 12 MB combined.');
+      return;
+    }
+
+    if (validFiles.length) {
+      setPendingImages((current) => [
+        ...current,
+        ...validFiles.map((file) => ({ file, previewUrl: URL.createObjectURL(file) })),
+      ]);
+    }
+    setUploadFeedback(
+      validFiles.length
+        ? validFiles.length + ' image(s) ready to attach. Add a question and press Send.'
+        : 'Choose PNG, JPG/JPEG, or WEBP images up to 3 MB each.'
+    );
+    if (rejected) {
+      setUploadFeedback((current) => (current || '') + ' ' + rejected + ' unsupported or oversized image(s) skipped.');
+    }
+  };
+
+  const removePendingImage = (previewUrl: string) => {
+    setPendingImages((current) => {
+      const item = current.find((entry) => entry.previewUrl === previewUrl);
+      if (item) URL.revokeObjectURL(item.previewUrl);
+      return current.filter((entry) => entry.previewUrl !== previewUrl);
+    });
+  };
+
+  const handleDeleteDocument = (document: StoredDocument) => {
+    if (!window.confirm(
+      'Remove "' + document.name + '" from AI Mentor Workspace? Its indexed text, chunks, and document-derived records will also be removed. Other documents and saved memories will remain.'
+    )) return;
+
+    const removed = deleteDocument(document.id);
+    setDocumentActionsId(null);
+    if (removed) {
+      setDocumentsCount(listDocuments().length);
+      setUploadFeedback('Removed "' + document.name + '" and its associated indexed data.');
+    } else {
+      setUploadFeedback('This document was already removed or could not be found.');
+    }
+    window.setTimeout(() => setUploadFeedback(null), 3500);
   };
 
   const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
