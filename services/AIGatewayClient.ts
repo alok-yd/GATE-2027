@@ -498,8 +498,13 @@ const getGatewayAuthHeaders = async (headers: Record<string, string> = {}): Prom
   try {
     // Cloud Sync owns the authenticated Firebase session used by ACHIEVER.
     // Send its short-lived ID token to the AI gateway; never send API keys.
-    const { cloudAuth } = await import('./CloudSyncService');
-    const user = cloudAuth.currentUser;
+    const [{ cloudAuth }, mainFirebase] = await Promise.all([
+      import('./CloudSyncService'),
+      import('./firebase'),
+    ]);
+    // Prefer the Cloud Sync identity, then the app's existing default Firebase
+    // auth session. Both belong to the same Firebase project.
+    const user = cloudAuth.currentUser || mainFirebase.auth.currentUser;
     if (user) {
       nextHeaders.Authorization = 'Bearer ' + await user.getIdToken();
     }
