@@ -121,7 +121,7 @@ const Dashboard: React.FC = () => {
         <div className="relative z-10">
           <div className="flex justify-between items-start">
              <div>
-                <h2 className="text-3xl font-bold mb-4">Hello, {displayName ? `Mr. ${displayName.toLocaleUpperCase()}` : ''} 👋</h2>
+                <h2 className="text-3xl font-bold mb-4">Hello, {displayName ? `Mr. ${displayName.toLocaleUpperCase()}` : 'Student'} 👋</h2>
                 <p className="text-blue-100 max-w-xl text-lg mb-8">
                   You are targeting <span className="font-bold text-amber-300">AIR 1</span> in GATE 2027.
                   Syllabus is complete. Now the mission is PYQs, revision cycles, mock analysis, and error-log repair.
