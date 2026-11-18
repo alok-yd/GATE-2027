@@ -106,6 +106,25 @@ export const deleteMentorAttachment = async (id: string): Promise<void> => {
   }
 };
 
+export const deleteMentorAttachments = async (ids: string[]): Promise<void> => {
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  if (uniqueIds.length === 0) return;
+  const database = await openDatabase();
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      uniqueIds.forEach((id) => store.delete(id));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Could not remove this conversation’s saved images.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Image cleanup was interrupted.'));
+    });
+  } finally {
+    database.close();
+  }
+};
+
 export const blobToBase64 = (blob: Blob): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
