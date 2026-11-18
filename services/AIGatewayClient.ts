@@ -493,12 +493,14 @@ export const testGeminiKeyConnection = async (
   };
 };
 
-const getGatewayBaseUrl = () =>
-  (
+const getGatewayBaseUrl = () => {
+  const configured =
     (typeof import.meta !== 'undefined' && import.meta.env && (import.meta.env.VITE_AI_GATEWAY_URL as string)) ||
     (typeof process !== 'undefined' && process.env?.VITE_AI_GATEWAY_URL) ||
-    '/api/ai'
-  ).replace(/\/$/, '');
+    '/api/ai';
+  const base = configured.replace(/\/$/, '');
+  return base.endsWith('/api/ai') ? base : base + '/api/ai';
+};
 
 export const cleanGatewayJson = (text: string): string => {
   return extractJsonSubstring(text);
