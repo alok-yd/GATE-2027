@@ -1059,7 +1059,7 @@ const server = http.createServer(async (request, response) => {
     if (!auth.authenticated) {
       sendJson(response, 401, {
         error: 'authentication_required',
-        detail: 'Sign in to ACHIEVER with your Google account to use the AI Mentor server gateway.',
+        detail: 'Sign in to ACHIEVER with Google or Phone Authentication to use the AI Mentor server gateway.',
       });
       return;
     }
