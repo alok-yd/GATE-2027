@@ -685,8 +685,11 @@ You can now ask me to search this material. I’ll include local chunk identifie
     ];
 
     conversations.forEach((conversation) => {
-      const lastUserText = [...conversation.messages].reverse().find((message) => message.role === 'user')?.content || '';
-      if (query && !conversation.title.toLowerCase().includes(query) && !lastUserText.toLowerCase().includes(query)) {
+      const searchableConversationText = conversation.messages
+        .map((message) => message.content)
+        .join(' ')
+        .toLowerCase();
+      if (query && !conversation.title.toLowerCase().includes(query) && !searchableConversationText.includes(query)) {
         return;
       }
       const updatedAt = new Date(conversation.updatedAt);
