@@ -739,21 +739,39 @@ const AIMentor: React.FC = () => {
     }
   };
 
-  const clearCurrentConversation = () => {
+  const clearCurrentConversation = async () => {
     const conversationId = activeConversationIdRef.current;
     const current = conversationsRef.current.find((conversation) => conversation.id === conversationId);
-    if (!current || !window.confirm('Clear messages and summary from this conversation?')) return;
-    const cleared: MentorConversation = {
-      ...current,
-      summary: '',
-      summarizedMessageCount: 0,
-      updatedAt: new Date().toISOString(),
-    };
-    updateConversationList([
-      cleared,
-      ...conversationsRef.current.filter((conversation) => conversation.id !== conversationId),
-    ]);
-    persistMessagesForConversation(conversationId, [createWelcomeMessage()]);
+    if (!current || loading || !window.confirm('Clear all messages and saved image attachments from this conversation?')) return;
+
+    try {
+      const attachmentIds = current.messages.flatMap((message) =>
+        (message.attachments || [])
+          .map((attachment) => attachment.id)
+          .filter((id): id is string => Boolean(id))
+      );
+      await deleteMentorAttachments(attachmentIds);
+
+      const cleared: MentorConversation = {
+        ...current,
+        summary: '',
+        summarizedMessageCount: 0,
+        updatedAt: new Date().toISOString(),
+      };
+      updateConversationList([
+        cleared,
+        ...conversationsRef.current.filter((conversation) => conversation.id !== conversationId),
+      ]);
+      persistMessagesForConversation(conversationId, [createWelcomeMessage()]);
+      setUploadFeedback('Cleared this conversation and removed its saved image attachments.');
+    } catch (error) {
+      setUploadFeedback(
+        error instanceof Error
+          ? 'Could not clear this conversation: ' + error.message
+          : 'Could not clear this conversation. Please try again.'
+      );
+    }
+    window.setTimeout(() => setUploadFeedback(null), 4000);
   };
 
   const exportCurrentConversation = () => {
