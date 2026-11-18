@@ -26,7 +26,7 @@ import {
 import { getStorage } from 'firebase/storage';
 import { firebaseConfig } from '../firebase';
 import { initializeFirebaseAppCheck } from './firebaseAppCheck';
-import { activateUserStorage, deactivateUserStorage } from './UserScopedStorage';
+import { activateUserStorage, deactivateUserStorage, getActiveUserStorageUid } from './UserScopedStorage';
 
 const CLOUD_APP_NAME = 'achiever-cloud-sync';
 export const cloudApp =
@@ -651,9 +651,9 @@ const startUserSync = async (user: User): Promise<void> => {
   }
   if (currentUser?.uid !== user.uid || generation !== authGeneration) return;
 
-  const activeUid = window.localStorage.getItem(ACTIVE_UID_KEY);
+  const activeUid = getActiveUserStorageUid();
   if (activeUid !== user.uid) {
-    throw new Error('ACHIEVER local storage is not activated for this account. Reload the app and sign in again.');
+    throw new Error('ACHIEVER private browser storage is not activated for this account. Reload the app and sign in again.');
   }
 
   syncReady = false;
