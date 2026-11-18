@@ -294,6 +294,48 @@ const MentorQuizCard: React.FC<{
   );
 };
 
+
+const StoredMentorFile: React.FC<{ attachment: MentorStoredAttachment }> = ({ attachment }) => {
+  const [source, setSource] = useState('');
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = '';
+    if (!attachment.id) return;
+    readMentorAttachment(attachment.id)
+      .then((blob) => {
+        if (!blob || cancelled) {
+          if (!blob) setFailed(true);
+          return;
+        }
+        objectUrl = URL.createObjectURL(blob);
+        setSource(objectUrl);
+      })
+      .catch(() => setFailed(true));
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachment.id]);
+
+  return (
+    <div className="my-2 flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600"><FileText size={18} /></span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-semibold text-slate-800">{attachment.name}</p>
+        <p className="mt-1 text-[10px] text-slate-400">{failed ? 'File preview unavailable' : attachment.mimeType + (attachment.size ? ' · ' + (attachment.size / 1024).toFixed(0) + ' KB' : '')}</p>
+      </div>
+      {source && (
+        <a href={source} target="_blank" rel="noreferrer" className="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50">Open</a>
+      )}
+      {source && (
+        <a href={source} download={attachment.name} className="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50">Download</a>
+      )}
+    </div>
+  );
+};
+
 const createWelcomeMessage = (): MentorStoredMessage => ({
   id: 'welcome',
   role: 'assistant',
