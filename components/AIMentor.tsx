@@ -1716,6 +1716,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
                                 </div>
                               )}
                             </div>
+                            </div>
                           </div>
                           <p className="mt-1 text-[10px] text-slate-400">{document.kind.toUpperCase()} · {document.purpose.replace(/_/g, ' ')} · {new Date(document.createdAt).toLocaleDateString()}</p>
                           <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{getDocumentPreview(document)}</p>
