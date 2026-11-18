@@ -80,7 +80,7 @@ export const saveAchieverUserDisplayName = async (
   user: User,
   submittedName: string
 ): Promise<void> => {
-  const normalizedSubmittedName = submittedName.trim().replace(/\\s+/g, ' ');
+  const normalizedSubmittedName = submittedName.trim().replace(/\s+/g, ' ');
   if (!normalizedSubmittedName) {
     throw new Error('Enter your full name to finish setting up your ACHIEVER account.');
   }
