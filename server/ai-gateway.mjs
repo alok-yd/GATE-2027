@@ -293,7 +293,7 @@ function applyCors(request, response) {
     response.setHeader('Vary', 'Origin');
   }
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
 }
 
 function sendJson(response, status, body) {
@@ -936,6 +936,90 @@ async function handleWebSearch(request, response) {
   }
 }
 
+
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gate-2027-a8850';
+const REQUIRE_GATEWAY_AUTH = String(process.env.ACHIEVER_REQUIRE_AUTH || '').toLowerCase() === 'true';
+const FIREBASE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
+let firebaseJwksCache = { expiresAt: 0, keys: new Map() };
+
+const isAllowedOrigin = (origin) =>
+  !origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin);
+
+async function getFirebasePublicKeys() {
+  if (Date.now() < firebaseJwksCache.expiresAt && firebaseJwksCache.keys.size) {
+    return firebaseJwksCache.keys;
+  }
+  const response = await fetch(FIREBASE_JWKS_URL, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error('Firebase verification keys could not be loaded.');
+  const data = await response.json();
+  const keys = new Map((data.keys || []).filter((key) => key.kid).map((key) => [key.kid, key]));
+  if (!keys.size) throw new Error('Firebase returned no signing keys.');
+  const cacheControl = response.headers.get('cache-control') || '';
+  const maxAgeMatch = cacheControl.match(/max-age=(\d+)/i);
+  const maxAgeSeconds = maxAgeMatch ? Number(maxAgeMatch[1]) : 3600;
+  firebaseJwksCache = { keys, expiresAt: Date.now() + Math.max(60, maxAgeSeconds) * 1000 };
+  return keys;
+}
+
+async function verifyFirebaseIdToken(token) {
+  const pieces = String(token || '').split('.');
+  if (pieces.length !== 3) throw new Error('Missing or invalid Firebase ID token.');
+  let header;
+  let claims;
+  try {
+    header = JSON.parse(Buffer.from(pieces[0], 'base64url').toString('utf8'));
+    claims = JSON.parse(Buffer.from(pieces[1], 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('Firebase ID token is malformed.');
+  }
+  if (header.alg !== 'RS256' || typeof header.kid !== 'string') {
+    throw new Error('Firebase ID token signing algorithm is not supported.');
+  }
+  const keys = await getFirebasePublicKeys();
+  const jwk = keys.get(header.kid);
+  if (!jwk) throw new Error('Firebase ID token uses an unknown signing key.');
+  const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+  const signedContent = Buffer.from(pieces[0] + '.' + pieces[1], 'utf8');
+  const signature = Buffer.from(pieces[2], 'base64url');
+  if (!crypto.verify('RSA-SHA256', signedContent, publicKey, signature)) {
+    throw new Error('Firebase ID token signature is invalid.');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const expectedIssuer = 'https://securetoken.google.com/' + FIREBASE_PROJECT_ID;
+  const audienceValid = claims.aud === FIREBASE_PROJECT_ID ||
+    (Array.isArray(claims.aud) && claims.aud.includes(FIREBASE_PROJECT_ID));
+  if (
+    !audienceValid ||
+    claims.iss !== expectedIssuer ||
+    typeof claims.sub !== 'string' ||
+    !claims.sub ||
+    claims.sub.length > 128 ||
+    !Number.isFinite(claims.exp) ||
+    claims.exp <= now ||
+    !Number.isFinite(claims.iat) ||
+    claims.iat > now + 60 ||
+    (typeof claims.auth_time === 'number' && claims.auth_time > now + 60)
+  ) {
+    throw new Error('Firebase ID token has invalid or expired claims.');
+  }
+  return { uid: claims.sub, email: typeof claims.email === 'string' ? claims.email : null };
+}
+
+async function authenticateGatewayRequest(request) {
+  if (!REQUIRE_GATEWAY_AUTH) return { authenticated: true, user: null };
+  const header = request.headers.authorization || '';
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match) return { authenticated: false, user: null };
+  try {
+    const user = await verifyFirebaseIdToken(match[1]);
+    return { authenticated: true, user };
+  } catch (error) {
+    console.warn('[AI Gateway] Firebase token verification failed:', error instanceof Error ? error.message : String(error));
+    return { authenticated: false, user: null };
+  }
+}
+
 function publicCapabilities() {
   const configured = providers.gemini.isConfigured();
   return {
@@ -955,42 +1039,66 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'GET' && request.url === '/health') {
+  const requestPath = new URL(request.url || '/', 'http://' + (request.headers.host || 'localhost')).pathname;
+  if (!isAllowedOrigin(request.headers.origin)) {
+    sendJson(response, 403, { error: 'origin_not_allowed', detail: 'This browser origin is not authorised to use the AI gateway.' });
+    return;
+  }
+
+  const protectedRoutes = new Set([
+    '/api/ai/chat',
+    '/api/ai/vision',
+    '/api/ai/image',
+    '/api/ai/document',
+    '/api/ai/search',
+  ]);
+  if (protectedRoutes.has(requestPath)) {
+    const auth = await authenticateGatewayRequest(request);
+    if (!auth.authenticated) {
+      sendJson(response, 401, {
+        error: 'authentication_required',
+        detail: 'Sign in to ACHIEVER with your Google account to use the AI Mentor server gateway.',
+      });
+      return;
+    }
+  }
+
+  if (request.method === 'GET' && requestPath === '/health') {
     sendJson(response, 200, { ok: true, service: 'achiever-ai-gateway' });
     return;
   }
 
-  if (request.method === 'GET' && request.url === '/api/ai/capabilities') {
+  if (request.method === 'GET' && requestPath === '/api/ai/capabilities') {
     sendJson(response, 200, publicCapabilities());
     return;
   }
 
-  if (request.method === 'GET' && request.url === '/api/ai/status') {
+  if (request.method === 'GET' && requestPath === '/api/ai/status') {
     sendJson(response, 200, publicStatus());
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/ai/chat') {
+  if (request.method === 'POST' && requestPath === '/api/ai/chat') {
     await handleChat(request, response);
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/ai/vision') {
+  if (request.method === 'POST' && requestPath === '/api/ai/vision') {
     await handleVision(request, response);
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/ai/image') {
+  if (request.method === 'POST' && requestPath === '/api/ai/image') {
     await handleImageGeneration(request, response);
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/ai/document') {
+  if (request.method === 'POST' && requestPath === '/api/ai/document') {
     await handleDocumentAnalysis(request, response);
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/ai/search') {
+  if (request.method === 'POST' && requestPath === '/api/ai/search') {
     try {
       await handleWebSearch(request, response);
     } catch (error) {
