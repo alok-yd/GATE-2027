@@ -407,46 +407,76 @@ const AIMentor: React.FC = () => {
     }
   };
 
-  const runMentorPrompt = async (prompt: string, currentMode: MentorMode) => {
-    if (!prompt.trim() || loading) return;
+  const runMentorPrompt = async (
+    prompt: string,
+    currentMode: MentorMode,
+    attachedImages: File[] = []
+  ) => {
+    const effectivePrompt =
+      prompt.trim() ||
+      'Please analyze the attached image(s), explain the important details, and solve any visible GATE question step by step.';
+    if (loading || (!effectivePrompt && attachedImages.length === 0)) return;
 
     const conversationId = activeConversationIdRef.current;
     const currentConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId);
     const baseMessages = currentConversation?.messages || messagesRef.current;
-    const userMessage = createMessage('user', prompt.trim());
-    const requestHistory = [...baseMessages, userMessage];
-    persistMessagesForConversation(conversationId, requestHistory);
+    let requestHistory = baseMessages;
     setLoading(true);
-    setGenerationStatus('Planning the best route for your question…');
+    setGenerationStatus(attachedImages.length ? 'Preparing images for visual analysis…' : 'Planning the best route for your question…');
     const requestStartedAt = performance.now();
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     try {
-      const response = await orchestrateJarvisMessage({
-        prompt: prompt.trim(),
-        messages: requestHistory.map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
-        conversationMode: currentMode,
-        responseChannel: 'text',
-        summary: currentConversation?.summary || '',
-        signal: controller.signal,
-        onProgress: (stage: JarvisProgressStage) => {
-          const progressMessages: Record<JarvisProgressStage, string> = {
-            planning: 'Planning the best route for your question…',
-            retrieving: 'Retrieving relevant ACHIEVER records…',
-            analysing: 'Analysing the available evidence…',
-            synthesising: 'Combining findings into your answer…',
-            generating: 'Preparing your response…',
-          };
-          setGenerationStatus(progressMessages[stage]);
-        },
-      });
+      const storedAttachments = await Promise.all(
+        attachedImages.map((file) => saveMentorAttachment(file, file.name, file.type, 'image'))
+      );
+      const userMessage = createMessage('user', effectivePrompt, storedAttachments);
+      requestHistory = [...baseMessages, userMessage];
+      persistMessagesForConversation(conversationId, requestHistory);
+
+      const response = attachedImages.length
+        ? await generateGatewayVision({
+            prompt: effectivePrompt,
+            system:
+              'You are ACHIEVER AI Mentor, an expert GATE CS/IT/DA teacher. Carefully inspect the actual attached image pixels. Read visible text and equations, explain diagrams and tables, show calculations step by step, and distinguish clearly readable details from uncertain ones. Do not invent labels or values that are not visible. Teach in beginner-friendly language and highlight relevant GATE examination points.',
+            history: baseMessages
+              .filter((message) => message.id !== 'welcome')
+              .slice(-10)
+              .map((message) => ({ role: message.role, content: message.content })),
+            images: await Promise.all(
+              attachedImages.map(async (file) => ({
+                mimeType: file.type,
+                data: await blobToBase64(file),
+              }))
+            ),
+            signal: controller.signal,
+          })
+        : await orchestrateJarvisMessage({
+            prompt: effectivePrompt,
+            messages: requestHistory.map((message) => ({
+              role: message.role,
+              content: message.content,
+            })),
+            conversationMode: currentMode,
+            responseChannel: 'text',
+            summary: currentConversation?.summary || '',
+            signal: controller.signal,
+            onProgress: (stage: JarvisProgressStage) => {
+              const progressMessages: Record<JarvisProgressStage, string> = {
+                planning: 'Planning the best route for your question…',
+                retrieving: 'Retrieving relevant ACHIEVER records…',
+                analysing: 'Analysing the available evidence…',
+                synthesising: 'Combining findings into your answer…',
+                generating: 'Preparing your response…',
+              };
+              setGenerationStatus(progressMessages[stage]);
+            },
+          });
+
       setLastRequestLatencyMs(Math.max(0, Math.round(performance.now() - requestStartedAt)));
-      setActiveModel(response.model);
+      setActiveModel(response.model || activeModel);
       const latest = conversationsRef.current.find((conversation) => conversation.id === conversationId);
       const completedMessages = [
         ...(latest?.messages || requestHistory),
@@ -464,10 +494,97 @@ const AIMentor: React.FC = () => {
       const failureMessage =
         error instanceof DOMException && error.name === 'AbortError'
           ? 'Generation stopped. Your conversation is saved; send another message when ready.'
-          : `I couldn't complete that response. ${describeAIGatewayError(error)}\n\nYour message and conversation history are preserved.`;
+          : 'I could not complete that response. ' +
+            describeAIGatewayError(error) +
+            '\n\nYour message and conversation history are preserved.';
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
         console.error('[AIMentor] Generation failed:', error);
       }
+      persistMessagesForConversation(conversationId, [
+        ...existingMessages,
+        createMessage('assistant', failureMessage),
+      ]);
+    } finally {
+      abortControllerRef.current = null;
+      setLoading(false);
+      setGenerationStatus('');
+    }
+  };
+
+  const runImageGeneration = async (prompt: string, attachedImages: File[] = []) => {
+    if (!prompt.trim() || loading) return;
+
+    const conversationId = activeConversationIdRef.current;
+    const currentConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId);
+    const baseMessages = currentConversation?.messages || messagesRef.current;
+    let requestHistory = baseMessages;
+    setLoading(true);
+    setGenerationStatus('Creating your educational image…');
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const storedAttachments = await Promise.all(
+        attachedImages.map((file) => saveMentorAttachment(file, file.name, file.type, 'image'))
+      );
+      const userMessage = createMessage('user', prompt.trim(), storedAttachments);
+      requestHistory = [...baseMessages, userMessage];
+      persistMessagesForConversation(conversationId, requestHistory);
+
+      let imageInputs = await Promise.all(
+        attachedImages.map(async (file) => ({
+          mimeType: file.type,
+          data: await blobToBase64(file),
+        }))
+      );
+
+      // When the user asks for a refinement without re-uploading, use the
+      // most recent generated image as the visual reference.
+      if (imageInputs.length === 0) {
+        const previousGenerated = [...baseMessages]
+          .reverse()
+          .flatMap((message) => message.attachments || [])
+          .find((attachment) => attachment.kind === 'generated-image' && attachment.id);
+        if (previousGenerated?.id) {
+          const previousBlob = await readMentorAttachment(previousGenerated.id);
+          if (previousBlob) {
+            imageInputs = [{
+              mimeType: previousBlob.type || previousGenerated.mimeType,
+              data: await blobToBase64(previousBlob),
+            }];
+          }
+        }
+      }
+
+      const generated = await generateGatewayImage({
+        prompt: prompt.trim(),
+        images: imageInputs,
+        signal: controller.signal,
+      });
+      const imageBlob = base64ToBlob(generated.data, generated.mimeType);
+      const extension = generated.mimeType.includes('jpeg') ? 'jpg' : generated.mimeType.split('/')[1] || 'png';
+      const generatedAttachment = await saveMentorAttachment(
+        imageBlob,
+        'achiever-ai-mentor-' + Date.now() + '.' + extension,
+        generated.mimeType,
+        'generated-image'
+      );
+      setActiveModel(generated.model || activeModel);
+
+      const latest = conversationsRef.current.find((conversation) => conversation.id === conversationId);
+      const answer = generated.content?.trim() ||
+        'Your image is ready. Ask me to refine the layout, labels, colours, or level of detail.';
+      persistMessagesForConversation(conversationId, [
+        ...(latest?.messages || requestHistory),
+        createMessage('assistant', answer, [generatedAttachment]),
+      ]);
+    } catch (error) {
+      const latest = conversationsRef.current.find((conversation) => conversation.id === conversationId);
+      const existingMessages = latest?.messages || requestHistory;
+      const failureMessage =
+        error instanceof DOMException && error.name === 'AbortError'
+          ? 'Image generation stopped. Your conversation is saved.'
+          : 'I could not generate the image. ' + describeAIGatewayError(error);
       persistMessagesForConversation(conversationId, [
         ...existingMessages,
         createMessage('assistant', failureMessage),
