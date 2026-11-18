@@ -37,6 +37,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
         await completeAchieverGoogleRedirect();
       } catch (error) {
         if (active) setGate({ status: 'error', user: null, error: getAchieverAuthError(error) });
+        return undefined;
       }
 
       if (!active) return undefined;
