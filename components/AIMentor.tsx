@@ -1084,10 +1084,10 @@ You can now ask me to search this material. I’ll include local chunk identifie
   const documentsForPanel = useMemo(() => listDocuments(), [documentsCount]);
 
   const getDocumentPreview = (document: StoredDocument) => {
-    const preview = (document.summary || '').replace(/\\s+/g, ' ').trim();
+    const preview = (document.summary || '').replace(/\s+/g, ' ').trim();
     // Some PDF parsers return raw object/stream syntax instead of readable text.
     // Keep the document available, but do not expose that binary-like dump in the UI.
-    if (!preview || /%PDF-\\d|endstream|\\/Type\\/ObjStm|<<\\s*\\/Filter|\\/DecodeParms/i.test(preview)) {
+    if (!preview || /%PDF-\d|endstream|\/Type\/ObjStm|<<\s*\/Filter|\/DecodeParms/i.test(preview)) {
       return 'No clean text preview is available. Ask AI Mentor to search the indexed content of this file.';
     }
     return preview;
