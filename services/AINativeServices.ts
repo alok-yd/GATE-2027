@@ -522,6 +522,43 @@ const serializeProfileForSearch = (profile: StudentProfile) =>
   ].join('\n');
 
 export const listDocuments = () => readList<StoredDocument>(DOCUMENTS_KEY);
+
+/**
+ * Remove one uploaded document and its indexed/automatically-derived records.
+ * Independent tracker data and user-authored memories are intentionally kept.
+ */
+export const deleteDocument = (documentId: string): boolean => {
+  const document = listDocuments().find((item) => item.id === documentId);
+  if (!document) return false;
+
+  writeList(
+    DOCUMENTS_KEY,
+    listDocuments().filter((item) => item.id !== documentId)
+  );
+  writeList(
+    CHUNKS_KEY,
+    listDocumentChunks().filter((chunk) => chunk.documentId !== documentId)
+  );
+  writeList(
+    PLANNER_IMPORTS_KEY,
+    listPlannerImports().filter((item) => item.documentId !== documentId)
+  );
+  writeList(
+    ROADMAP_IMPORTS_KEY,
+    listRoadmapImports().filter((item) => item.documentId !== documentId)
+  );
+  writeList(
+    TEST_ANALYSES_KEY,
+    listTestAnalyses().filter((item) => item.documentId !== documentId)
+  );
+  writeList(
+    MISTAKES_KEY,
+    listMistakes().filter((item) => item.sourceDocumentId !== documentId)
+  );
+
+  return true;
+};
+
 export const listDocumentChunks = () => readList<DocumentChunk>(CHUNKS_KEY);
 export const listPlannerImports = () => readList<PlannerImportPreview>(PLANNER_IMPORTS_KEY);
 export const listRoadmapImports = () => readList<RoadmapImportPreview>(ROADMAP_IMPORTS_KEY);
