@@ -1,0 +1,30 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // AI Mentor attachments are private to the Firebase Authentication UID.
+    // Storage paths are: users/{uid}/ai-mentor/{attachmentId}
+    match /users/{userId}/ai-mentor/{attachmentId} {
+      function isOwner() {
+        return request.auth != null && request.auth.uid == userId;
+      }
+
+      allow read: if isOwner();
+      allow delete: if isOwner();
+
+      allow create, update: if isOwner()
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType in [
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/json',
+          'image/png',
+          'image/jpeg',
+          'image/webp',
+          'text/plain',
+          'text/markdown',
+          'text/csv'
+        ];
+    }
+  }
+}
