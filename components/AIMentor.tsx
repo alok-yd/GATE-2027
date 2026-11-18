@@ -123,7 +123,7 @@ const StoredMentorImage: React.FC<{ attachment: MentorStoredAttachment }> = ({ a
 
 
 const normaliseQuizAnswer = (value: string) =>
-  value.toLowerCase().replace(/\\s+/g, '').replace(/,/g, '').trim();
+  value.toLowerCase().replace(/\s+/g, '').replace(/,/g, '').trim();
 
 const getQuizQuestionCorrect = (question: MentorQuizQuestion, selected: string[]) => {
   const expected = question.correctAnswers.map(normaliseQuizAnswer).sort();
@@ -2459,6 +2459,59 @@ These are the current browser tracker records. Ask your next question and I’ll
         )}
 
       </main>
+
+      {showQuizBuilder && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+          <section className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between bg-gradient-to-r from-indigo-600 to-violet-700 px-5 py-4 text-white">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-100">ACHIEVER · AI Mentor</p>
+                <h2 className="mt-1 text-lg font-bold">Create GATE practice quiz</h2>
+              </div>
+              <button type="button" onClick={() => setShowQuizBuilder(false)} aria-label="Close quiz builder" className="rounded-lg p-2 text-white/80 hover:bg-white/10 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="grid gap-4 p-5 sm:grid-cols-2">
+              <label className="space-y-1.5 sm:col-span-2">
+                <span className="text-xs font-semibold text-slate-600">Subject</span>
+                <input value={quizSubject} onChange={(event) => setQuizSubject(event.target.value)} placeholder="e.g. Computer Organization and Architecture" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50" />
+              </label>
+              <label className="space-y-1.5 sm:col-span-2">
+                <span className="text-xs font-semibold text-slate-600">Topic</span>
+                <input value={quizTopic} onChange={(event) => setQuizTopic(event.target.value)} placeholder="e.g. Cache memory, direct mapping, AMAT" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50" />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-slate-600">Difficulty</span>
+                <select value={quizDifficulty} onChange={(event) => setQuizDifficulty(event.target.value as typeof quizDifficulty)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-400">
+                  <option value="easy">Easy</option><option value="medium">GATE standard</option><option value="hard">Advanced</option><option value="mixed">Mixed</option>
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-slate-600">Number of questions</span>
+                <select value={quizCount} onChange={(event) => setQuizCount(Number(event.target.value))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-400">
+                  {[5, 10, 15, 20, 25, 30].map((count) => <option key={count} value={count}>{count} questions</option>)}
+                </select>
+              </label>
+              <label className="space-y-1.5 sm:col-span-2">
+                <span className="text-xs font-semibold text-slate-600">Question type</span>
+                <select value={quizQuestionType} onChange={(event) => setQuizQuestionType(event.target.value as MentorQuizQuestionType | 'mixed')} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-400">
+                  <option value="mixed">Mixed (MCQ, MSQ, NAT and True/False)</option>
+                  <option value="single">Single-correct MCQ</option>
+                  <option value="multiple">Multiple-correct MSQ</option>
+                  <option value="nat">Numerical answer (NAT)</option>
+                  <option value="true_false">True / False</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50 px-5 py-4">
+              <p className="max-w-xs text-[10px] leading-4 text-slate-500">AI-generated practice questions are not official GATE PYQs. Answer keys receive a second-pass model review; flagged items are marked for manual verification.</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setShowQuizBuilder(false)} className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-white">Cancel</button>
+                <button type="button" onClick={() => void createQuiz()} disabled={loading || !quizSubject.trim() || !quizTopic.trim()} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300">Generate quiz</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* Existing Gemini key configuration UI, retained without changing its handlers. */}
       {showKeyModal && (
