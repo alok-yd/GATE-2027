@@ -1379,6 +1379,41 @@ These are the current browser tracker records. Ask your next question and I’ll
     await runMentorPrompt(text, mode);
   };
 
+  const runWebSearch = async () => {
+    const query = input.trim();
+    if (!query) {
+      setUploadFeedback('Enter a research topic in the message box before using Web Search.');
+      return;
+    }
+    if (loading) return;
+    setInput('');
+    setShowToolsMenu(false);
+    try {
+      setUploadFeedback('Searching the web for current sources…');
+      const result = await searchGatewayWeb(query, 6);
+      if (!result.configured || !result.sources.length) {
+        setUploadFeedback(result.message || 'The configured search provider returned no usable sources.');
+        return;
+      }
+      const sourceContext = result.sources.map((source, index) =>
+        '[' + (index + 1) + '] ' + source.title +
+        '\\nURL: ' + source.url +
+        '\\nDomain: ' + source.domain +
+        (source.publishedAt ? '\\nDate: ' + source.publishedAt : '') +
+        '\\nExtract: ' + source.snippet
+      ).join('\\n\\n');
+      await runMentorPrompt(
+        'Research this topic using the following web search result excerpts: ' + query +
+        '\\n\\nUse the source snippets as evidence, distinguish sourced claims from your own explanation, cite claims inline as [1], [2], etc., and finish with a Sources section containing the exact clickable source links. Do not state facts that are not supported by the excerpts as if they were verified.\\n\\n' + sourceContext,
+        'chat'
+      );
+    } catch (error) {
+      setUploadFeedback(error instanceof Error ? error.message : 'Web Search is currently unavailable.');
+    } finally {
+      window.setTimeout(() => setUploadFeedback(null), 5000);
+    }
+  };
+
   const handleCopyMessage = async (content: string) => {
     try {
       await navigator.clipboard.writeText(content);
@@ -2066,9 +2101,18 @@ These are the current browser tracker records. Ask your next question and I’ll
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.txt,.md,.csv,.json"
+                accept=".pdf,.docx,.txt,.md,.csv,.json"
+                multiple
                 className="hidden"
                 onChange={handleDocumentUpload}
+              />
+              <input
+                ref={messageFileInputRef}
+                type="file"
+                accept=".pdf,.docx,.txt,.md,.csv,.json,image/png,image/jpeg,image/webp"
+                multiple
+                className="hidden"
+                onChange={handleChatFileUpload}
               />
               <input
                 ref={imageInputRef}
@@ -2079,6 +2123,20 @@ These are the current browser tracker records. Ask your next question and I’ll
                 onChange={handleImageUpload}
               />
 
+              {pendingDocuments.length > 0 && (
+                <div className="mb-3 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  {pendingDocuments.map((item) => (
+                    <div key={item.previewUrl} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600"><FileText size={16} /></span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-slate-700">{item.file.name}</p>
+                        <p className="text-[10px] text-slate-400">{(item.file.size / 1024).toFixed(0)} KB · {item.file.type || 'Document'}</p>
+                      </div>
+                      <button type="button" onClick={() => removePendingDocument(item.previewUrl)} aria-label={'Remove ' + item.file.name} title="Remove attachment" className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><X size={14} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
               {pendingImages.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                   {pendingImages.map((item) => (
@@ -2123,6 +2181,13 @@ These are the current browser tracker records. Ask your next question and I’ll
                         {item.label}
                       </button>
                     ))}
+                    <button type="button" disabled={loading} onClick={() => { setShowToolsMenu(false); setShowQuizBuilder(true); }} className="rounded-lg px-3 py-2 text-left text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:opacity-50">Create interactive GATE quiz</button>
+                    <button type="button" disabled={loading} onClick={() => { setShowToolsMenu(false); void runMentorPrompt('Create concise, exam-ready flashcards from the relevant uploaded study material or topic in my previous message. Format each as Front / Back and include only accurate, independently explainable facts.', 'concept'); }} className="rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-indigo-50 disabled:opacity-50">Generate flashcards</button>
+                    <button type="button" disabled={loading} onClick={() => { setShowToolsMenu(false); void runMentorPrompt('Create structured GATE revision notes for the selected topic or uploaded material. Include definitions, key formulas, worked examples, common traps and a short recap. Cite uploaded sources accurately.', 'concept'); }} className="rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-indigo-50 disabled:opacity-50">Create study notes</button>
+                    <button type="button" disabled={loading} onClick={() => { setShowToolsMenu(false); void runMentorPrompt('Solve the mathematical problem I provide step by step. Define variables, show derivation, verify calculations and state any assumptions.', 'problem'); }} className="rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-indigo-50 disabled:opacity-50">Solve mathematical problem</button>
+                    <button type="button" disabled={loading} onClick={() => { setShowToolsMenu(false); void runMentorPrompt('Act as a programming and algorithms assistant. Explain, write or debug the code I provide, include edge cases and analyse time and space complexity. Do not claim that code was executed.', 'problem'); }} className="rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-indigo-50 disabled:opacity-50">Coding assistant</button>
+                    <button type="button" disabled={loading} onClick={() => { setShowToolsMenu(false); void runMentorPrompt('Analyse the uploaded document(s) and the existing AI Mentor document workspace. Summarise key concepts, retrieve relevant passages and cite exact source filenames. Do not invent page references.', 'concept'); }} className="rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-indigo-50 disabled:opacity-50">Analyse document</button>
+                    <button type="button" disabled={loading} onClick={() => void runWebSearch()} className="rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-indigo-50 disabled:opacity-50">Web search &amp; research</button>
                     <button
                       type="button"
                       disabled={loading}
@@ -2153,7 +2218,14 @@ These are the current browser tracker records. Ask your next question and I’ll
                 </div>
               )}
 
-              <div className="mentor-composer rounded-[24px] border border-slate-300 bg-white p-3 shadow-[0_5px_24px_rgba(15,23,42,0.06)] transition focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-50">
+              <div
+                className="mentor-composer rounded-[24px] border border-slate-300 bg-white p-3 shadow-[0_5px_24px_rgba(15,23,42,0.06)] transition focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-50"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (event.dataTransfer.files?.length) stageChatFiles(Array.from(event.dataTransfer.files));
+                }}
+              >
                 <textarea
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
@@ -2173,13 +2245,13 @@ These are the current browser tracker records. Ask your next question and I’ll
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploading}
-                      title="Upload notes or PDF"
+                      onClick={() => messageFileInputRef.current?.click()}
+                      disabled={loading || uploading}
+                      title="Attach PDF, DOCX, notes or images"
                       className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50"
                     >
                       <Paperclip size={15} />
-                      <span className="hidden sm:inline">{uploading ? 'Indexing…' : 'Attach'}</span>
+                      <span className="hidden sm:inline">Attach</span>
                     </button>
                     <button
                       type="button"
@@ -2223,7 +2295,7 @@ These are the current browser tracker records. Ask your next question and I’ll
                   <button
                     type="button"
                     onClick={handleSend}
-                    disabled={loading || (!input.trim() && pendingImages.length === 0)}
+                    disabled={loading || (!input.trim() && pendingImages.length === 0 && pendingDocuments.length === 0)}
                     aria-label={imageGenerationMode ? 'Generate image' : 'Send message'}
                     className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
