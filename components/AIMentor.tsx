@@ -1938,7 +1938,8 @@ These are the current browser tracker records. Ask your next question and I’ll
               </button>
               {showConversationActions && (
                 <div className="absolute right-0 top-11 z-30 w-48 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                  <button type="button" onClick={() => { exportCurrentConversation(); setShowConversationActions(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"><FileText size={14} /> Export conversation</button>
+                  <button type="button" onClick={() => { handleRenameConversation(); setShowConversationActions(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"><FileText size={14} /> Rename conversation</button>
+                  <button type="button" onClick={() => { exportCurrentConversation(); setShowConversationActions(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"><Download size={14} /> Export conversation</button>
                   <button type="button" onClick={() => { syncData(); setShowConversationActions(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"><RefreshCw size={14} /> Sync Data</button>
                   <button type="button" onClick={() => { clearCurrentConversation(); setShowConversationActions(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-rose-600 hover:bg-rose-50"><Trash2 size={14} /> Clear conversation</button>
                 </div>
@@ -1989,19 +1990,48 @@ These are the current browser tracker records. Ask your next question and I’ll
                         </div>
                       )}
                       {message.attachments?.map((attachment, attachmentIndex) => (
-                        <StoredMentorImage key={attachment.id || attachment.name + attachmentIndex} attachment={attachment} />
+                        attachment.kind === 'document'
+                          ? <StoredMentorFile key={attachment.id || attachment.name + attachmentIndex} attachment={attachment} />
+                          : <StoredMentorImage key={attachment.id || attachment.name + attachmentIndex} attachment={attachment} />
                       ))}
-                      <MentorMarkdown content={message.content} className={message.role === 'user' ? 'text-slate-900' : 'text-slate-800'} />
+                      {editingMessageId === message.id ? (
+                        <div className="space-y-2">
+                          <textarea
+                            value={editingMessageText}
+                            onChange={(event) => setEditingMessageText(event.target.value)}
+                            rows={Math.min(8, Math.max(3, editingMessageText.split('\\n').length))}
+                            aria-label="Edit your message"
+                            className="w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm leading-6 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50"
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button type="button" onClick={() => { setEditingMessageId(null); setEditingMessageText(''); }} className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100">Cancel</button>
+                            <button type="button" onClick={() => void resendEditedMessage(index)} disabled={!editingMessageText.trim() || loading} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-40">Save &amp; resend</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <MentorMarkdown content={message.content} className={message.role === 'user' ? 'text-slate-900' : 'text-slate-800'} />
+                      )}
+                      {message.interactive?.kind === 'quiz' && (
+                        <MentorQuizCard
+                          quiz={message.interactive.quiz}
+                          onChange={(quiz) => updateQuizMessage(message.id, quiz)}
+                        />
+                      )}
                       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                         <p className="text-[10px] text-slate-400">
                           {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </p>
+                        {message.role === 'user' && !message.attachments?.length && editingMessageId !== message.id && (
+                          <button type="button" onClick={() => beginEditUserMessage(message)} title="Edit and resend message" aria-label="Edit message" className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600">Edit</button>
+                        )}
                         {message.role === 'assistant' && message.id !== 'welcome' && (
                           <div className="flex items-center gap-1">
                             <button type="button" onClick={() => void handleCopyMessage(message.content)} title="Copy response" aria-label="Copy response" className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600"><Copy size={14} /></button>
                             {index === messages.length - 1 && (
                               <button type="button" onClick={regenerateLastResponse} title="Regenerate response" aria-label="Regenerate response" className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600"><RotateCcw size={14} /></button>
                             )}
+                            <button type="button" onClick={() => setMessageFeedback(message.id, 'up')} title="Helpful response" aria-label="Helpful response" className={message.feedback === 'up' ? 'rounded-lg bg-emerald-50 p-2 text-emerald-600' : 'rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-emerald-600'}>👍</button>
+                            <button type="button" onClick={() => setMessageFeedback(message.id, 'down')} title="Not helpful" aria-label="Not helpful" className={message.feedback === 'down' ? 'rounded-lg bg-rose-50 p-2 text-rose-600' : 'rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-rose-600'}>👎</button>
                             <button type="button" onClick={() => saveAnswerAsMemory(index)} title="Save memory" aria-label="Save memory" className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600"><Bookmark size={14} /></button>
                           </div>
                         )}
