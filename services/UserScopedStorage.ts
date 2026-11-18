@@ -292,9 +292,10 @@ export const getLegacyDataOwnerUid = (): string | null => {
 
 export const hasUnassignedLegacyData = (): boolean => {
   if (typeof window === 'undefined') return false;
-  const storage = getStorage();
-  return rawGet(storage, LEGACY_OWNER_KEY) === '__unassigned__' ||
-    rawEntries(storage).some(([key]) => key.startsWith(UNASSIGNED_PREFIX));
+  // The __unassigned__ owner marker also prevents unknown legacy IndexedDB
+  // blobs from being claimed, but by itself does not prove that any files or
+  // localStorage records actually exist on this device.
+  return rawEntries(getStorage()).some(([key]) => key.startsWith(UNASSIGNED_PREFIX));
 };
 
 export const getActiveUserStorageUid = (): string | null => activeStorageUid;
