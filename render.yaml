@@ -35,5 +35,12 @@ services:
         sync: false
       - key: BRAVE_SEARCH_API_KEY
         sync: false
+      - key: FIREBASE_PROJECT_ID
+        value: gate-2027-a8850
+      - key: ACHIEVER_REQUIRE_AUTH
+        value: "true"
       - key: ACHIEVER_ALLOWED_ORIGINS
-        sync: false
+        fromService:
+          name: gate-2027-prep-tracker
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
