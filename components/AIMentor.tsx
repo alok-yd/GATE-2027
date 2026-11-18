@@ -1252,6 +1252,9 @@ You can now ask me to search this material. I’ll include local chunk identifie
                           <span>J.A.R.V.I.S.</span>
                         </div>
                       )}
+                      {message.attachments?.map((attachment, attachmentIndex) => (
+                        <StoredMentorImage key={attachment.id || attachment.name + attachmentIndex} attachment={attachment} />
+                      ))}
                       <MentorMarkdown content={message.content} className={message.role === 'user' ? 'text-slate-900' : 'text-slate-800'} />
                       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                         <p className="text-[10px] text-slate-400">
@@ -1301,6 +1304,43 @@ You can now ask me to search this material. I’ll include local chunk identifie
                 className="hidden"
                 onChange={handleDocumentUpload}
               />
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+                className="hidden"
+                onChange={handleImageUpload}
+              />
+
+              {pendingImages.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  {pendingImages.map((item) => (
+                    <div key={item.previewUrl} className="relative h-20 w-20 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                      <img src={item.previewUrl} alt={item.file.name} className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removePendingImage(item.previewUrl)}
+                        aria-label={'Remove ' + item.file.name}
+                        title="Remove image"
+                        className="absolute right-1 top-1 rounded-full bg-slate-900/80 p-1 text-white hover:bg-rose-600"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex min-w-[130px] flex-col justify-center">
+                    <p className="text-xs font-semibold text-slate-700">{pendingImages.length} image(s) attached</p>
+                    <p className="mt-1 text-[10px] text-slate-500">PNG, JPG, or WEBP · up to 3 MB each</p>
+                  </div>
+                </div>
+              )}
+              {imageGenerationMode && (
+                <div className="mb-2 flex items-center gap-2 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-xs text-violet-700">
+                  <WandSparkles size={14} />
+                  <span><strong>Image generation mode</strong> — describe the educational visual you want to create or refine.</span>
+                </div>
+              )}
 
               {showToolsMenu && (
                 <div className="absolute bottom-[112px] left-4 z-20 w-[min(340px,calc(100%-32px))] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
@@ -1358,7 +1398,7 @@ You can now ask me to search this material. I’ll include local chunk identifie
                     }
                   }}
                   rows={2}
-                  placeholder="Message AI Mentor..."
+                  placeholder={imageGenerationMode ? 'Describe the image or diagram you want to generate…' : 'Message AI Mentor…'}
                   aria-label="Message AI Mentor"
                   className="max-h-40 min-h-[54px] w-full resize-y border-0 bg-transparent px-2 py-2 text-sm leading-6 text-slate-800 outline-none placeholder:text-slate-400 focus:ring-0"
                   disabled={loading}
@@ -1374,6 +1414,26 @@ You can now ask me to search this material. I’ll include local chunk identifie
                     >
                       <Paperclip size={15} />
                       <span className="hidden sm:inline">{uploading ? 'Indexing…' : 'Attach'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => imageInputRef.current?.click()}
+                      disabled={loading || pendingImages.length >= 4}
+                      title="Attach image for visual analysis"
+                      className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50"
+                    >
+                      <ImagePlus size={15} /> <span className="hidden sm:inline">Image</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setImageGenerationMode((value) => !value)}
+                      aria-pressed={imageGenerationMode}
+                      title="Generate or edit an educational image"
+                      className={imageGenerationMode
+                        ? 'inline-flex items-center gap-1.5 rounded-lg bg-violet-100 px-2.5 py-2 text-xs font-semibold text-violet-700'
+                        : 'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800'}
+                    >
+                      <WandSparkles size={14} /> <span className="hidden sm:inline">Generate</span>
                     </button>
                     <button
                       type="button"
@@ -1397,8 +1457,8 @@ You can now ask me to search this material. I’ll include local chunk identifie
                   <button
                     type="button"
                     onClick={handleSend}
-                    disabled={loading || !input.trim()}
-                    aria-label="Send message"
+                    disabled={loading || (!input.trim() && pendingImages.length === 0)}
+                    aria-label={imageGenerationMode ? 'Generate image' : 'Send message'}
                     className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
                     <Send size={17} />
@@ -1471,7 +1531,31 @@ You can now ask me to search this material. I’ll include local chunk identifie
                       <div className="flex items-start gap-3">
                         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600"><FileText size={17} /></span>
                         <div className="min-w-0 flex-1">
-                          <p className="break-words text-sm font-semibold text-slate-800">{document.name}</p>
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="break-words text-sm font-semibold text-slate-800">{document.name}</p>
+                            <div className="relative shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setDocumentActionsId((current) => current === document.id ? null : document.id)}
+                                aria-label={'Options for ' + document.name}
+                                title="Document options"
+                                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                              >
+                                <MoreHorizontal size={17} />
+                              </button>
+                              {documentActionsId === document.id && (
+                                <div className="absolute right-0 top-8 z-20 min-w-[170px] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteDocument(document)}
+                                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
+                                  >
+                                    <Trash2 size={14} /> Remove Document
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                           <p className="mt-1 text-[10px] text-slate-400">{document.kind.toUpperCase()} · {document.purpose.replace(/_/g, ' ')} · {new Date(document.createdAt).toLocaleDateString()}</p>
                           <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{document.summary || 'No summary available.'}</p>
                         </div>
