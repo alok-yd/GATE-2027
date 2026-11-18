@@ -498,18 +498,16 @@ const getGatewayAuthHeaders = async (headers: Record<string, string> = {}): Prom
   try {
     // Cloud Sync owns the authenticated Firebase session used by ACHIEVER.
     // Send its short-lived ID token to the AI gateway; never send API keys.
-    const [{ cloudAuth }, mainFirebase] = await Promise.all([
-      import('./CloudSyncService'),
-      import('./firebase'),
-    ]);
-    // Prefer the Cloud Sync identity, then the app's existing default Firebase
-    // auth session. Both belong to the same Firebase project.
-    const user = cloudAuth.currentUser || mainFirebase.auth.currentUser;
+    const { cloudAuth } = await import('./CloudSyncService');
+    // Use the mandatory ACHIEVER application session only. The separate
+    // Google Calendar auth session must never substitute for the app UID.
+    const user = cloudAuth.currentUser;
     if (user) {
       nextHeaders.Authorization = 'Bearer ' + await user.getIdToken();
     }
   } catch {
-    // Local-only sessions can still use the user's configured Gemini key fallback.
+    // Do not substitute the separate Calendar auth session. The gateway will reject
+    // missing ID tokens; direct provider fallback remains separate and unchanged.
   }
   return nextHeaders;
 };
