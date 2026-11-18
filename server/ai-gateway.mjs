@@ -28,8 +28,9 @@ function loadLocalEnv() {
 
 loadLocalEnv();
 
-const PORT = Number(process.env.ACHIEVER_AI_GATEWAY_PORT || 8787);
-const HOST = process.env.ACHIEVER_AI_GATEWAY_HOST || '127.0.0.1';
+const PORT = Number(process.env.PORT || process.env.ACHIEVER_AI_GATEWAY_PORT || 8787);
+const HOST = process.env.ACHIEVER_AI_GATEWAY_HOST || '0.0.0.0';
+const ALLOWED_ORIGINS = (process.env.ACHIEVER_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
 const DEFAULT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b';
 const MAX_PROMPT_CHARS = Number(process.env.ACHIEVER_AI_MAX_PROMPT_CHARS || 24000);
 const REQUEST_TIMEOUT_MS = Number(process.env.ACHIEVER_AI_TIMEOUT_MS || 120000);
@@ -283,6 +284,17 @@ function getActiveProvider() {
 
 const responseCache = new Map();
 const rateLimitBuckets = new Map();
+
+function applyCors(request, response) {
+  const origin = request.headers.origin;
+  const allowed = !origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin);
+  if (allowed && origin) {
+    response.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGINS.length ? origin : '*');
+    response.setHeader('Vary', 'Origin');
+  }
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+}
 
 function sendJson(response, status, body) {
   const payload = JSON.stringify(body);
@@ -714,7 +726,245 @@ async function handleImageGeneration(request, response) {
   }
 }
 
+
+
+const MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
+const MAX_DOCUMENT_REQUEST_BYTES = 12 * 1024 * 1024;
+const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
+
+function validateDocumentInput(value) {
+  const mimeType = typeof value?.mimeType === 'string' ? value.mimeType.toLowerCase() : '';
+  const data = typeof value?.data === 'string' ? value.data : '';
+  if (!ALLOWED_DOCUMENT_MIME_TYPES.has(mimeType)) {
+    throw new Error('Unsupported document type. Use PDF, PNG, JPG/JPEG, or WEBP.');
+  }
+  if (!data || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+    throw new Error('The uploaded document is empty or could not be decoded.');
+  }
+  const bytes = Buffer.from(data, 'base64');
+  if (!bytes.length || bytes.length > MAX_DOCUMENT_BYTES) {
+    throw new Error('The original file must be 8 MB or smaller.');
+  }
+  return { mimeType, data, bytes };
+}
+
+async function handleDocumentAnalysis(request, response) {
+  const started = Date.now();
+  metrics.requestCount += 1;
+  try {
+    if (isRateLimited(request)) {
+      sendJson(response, 429, { error: 'rate_limit_exceeded' });
+      return;
+    }
+    const body = await readJson(request, MAX_DOCUMENT_REQUEST_BYTES);
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const system = typeof body.system === 'string' ? body.system.trim() : '';
+    const file = validateDocumentInput(body.file);
+    if (!prompt) throw new Error('A document extraction instruction is required.');
+    if (prompt.length > MAX_PROMPT_CHARS) throw new Error('The document analysis prompt is too long.');
+    if (!providers.gemini.isConfigured()) {
+      throw new Error('Document analysis requires GEMINI_API_KEY on the AI gateway or a Gemini key configured in AI Mentor settings.');
+    }
+
+    const models = [
+      providers.gemini.primaryModel,
+      ...providers.gemini.fallbackModels.filter((model) => model !== providers.gemini.primaryModel),
+    ];
+    let lastError = null;
+    for (const model of models) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        const providerResponse = await fetch(
+          'https://generativelanguage.googleapis.com/v1beta/models/' + model +
+          ':generateContent?key=' + encodeURIComponent(providers.gemini.apiKey),
+          {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                role: 'user',
+                parts: [
+                  { text: prompt },
+                  { inline_data: { mime_type: file.mimeType, data: file.data } },
+                ],
+              }],
+              ...(system ? { system_instruction: { parts: [{ text: system }] } } : {}),
+              generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+            }),
+          }
+        );
+        const data = await providerResponse.json().catch(() => null);
+        if (!providerResponse.ok) {
+          const message = data?.error?.message || providerResponse.statusText;
+          lastError = new Error('Google Gemini document analysis returned HTTP ' + providerResponse.status + ': ' + message);
+          if ([404, 429, 503].includes(providerResponse.status)) continue;
+          throw lastError;
+        }
+        const content = (data?.candidates?.[0]?.content?.parts || [])
+          .map((part) => typeof part?.text === 'string' ? part.text : '')
+          .filter(Boolean)
+          .join('\n')
+          .trim();
+        if (!content) {
+          lastError = new Error('Gemini returned no readable document content.');
+          continue;
+        }
+        metrics.successCount += 1;
+        metrics.lastError = null;
+        metrics.lastModel = model;
+        metrics.promptChars += prompt.length;
+        metrics.completionChars += content.length;
+        sendJson(response, 200, {
+          content,
+          model,
+          provider: 'gemini-document',
+          usage: data.usageMetadata || null,
+        });
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+    throw lastError || new Error('All configured document-analysis models failed.');
+  } catch (error) {
+    metrics.failureCount += 1;
+    metrics.lastError = error instanceof Error ? error.message : String(error);
+    sendJson(response, 503, { error: 'ai_document_analysis_unavailable', detail: metrics.lastError });
+  } finally {
+    metrics.totalLatencyMs += Date.now() - started;
+  }
+}
+
+function cleanSearchResult(item) {
+  const url = typeof item?.url === 'string' ? item.url : '';
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return {
+      title: String(item.title || parsed.hostname).slice(0, 300),
+      url: parsed.toString(),
+      domain: parsed.hostname,
+      publishedAt: String(item.published_date || item.age || '').slice(0, 80) || undefined,
+      snippet: String(item.content || item.description || '').slice(0, 1200),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function handleWebSearch(request, response) {
+  if (isRateLimited(request)) {
+    sendJson(response, 429, { error: 'rate_limit_exceeded' });
+    return;
+  }
+  const body = await readJson(request);
+  const query = typeof body.query === 'string' ? body.query.trim() : '';
+  const limit = Math.max(1, Math.min(10, Number(body.limit) || 6));
+  if (!query) {
+    sendJson(response, 400, { error: 'search_query_required' });
+    return;
+  }
+  if (query.length > 800) {
+    sendJson(response, 413, { error: 'search_query_too_long' });
+    return;
+  }
+
+  try {
+    let raw = [];
+    let provider = '';
+    if (process.env.TAVILY_API_KEY) {
+      provider = 'tavily';
+      const result = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: process.env.TAVILY_API_KEY,
+          query,
+          search_depth: 'advanced',
+          max_results: limit,
+          include_answer: false,
+          include_raw_content: false,
+        }),
+      });
+      const data = await result.json().catch(() => null);
+      if (!result.ok) throw new Error(data?.detail || data?.message || 'Tavily search returned HTTP ' + result.status);
+      raw = Array.isArray(data?.results) ? data.results : [];
+    } else if (process.env.BRAVE_SEARCH_API_KEY) {
+      provider = 'brave';
+      const url = new URL('https://api.search.brave.com/res/v1/web/search');
+      url.searchParams.set('q', query);
+      url.searchParams.set('count', String(limit));
+      const result = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          'X-Subscription-Token': process.env.BRAVE_SEARCH_API_KEY,
+        },
+      });
+      const data = await result.json().catch(() => null);
+      if (!result.ok) throw new Error(data?.message || 'Brave Search returned HTTP ' + result.status);
+      raw = (data?.web?.results || []).map((item) => ({
+        title: item.title,
+        url: item.url,
+        content: item.description,
+        age: item.age,
+      }));
+    } else {
+      sendJson(response, 503, {
+        error: 'web_search_not_configured',
+        detail: 'Web Search is unavailable. Configure TAVILY_API_KEY or BRAVE_SEARCH_API_KEY on the AI gateway service.',
+        configured: false,
+      });
+      return;
+    }
+
+    const sources = raw.map(cleanSearchResult).filter(Boolean).slice(0, limit);
+    sendJson(response, 200, { configured: true, provider, sources });
+  } catch (error) {
+    sendJson(response, 503, {
+      error: 'web_search_unavailable',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function publicCapabilities() {
+  const configured = providers.gemini.isConfigured();
+  return {
+    chat: configured || providers.nemotron.isConfigured(),
+    vision: configured,
+    imageGeneration: configured,
+    documentAnalysis: configured,
+    webSearch: Boolean(process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY),
+  };
+}
+
 const server = http.createServer(async (request, response) => {
+  applyCors(request, response);
+  if (request.method === 'OPTIONS') {
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+
+  if (request.method === 'GET' && request.url === '/health') {
+    sendJson(response, 200, { ok: true, service: 'achiever-ai-gateway' });
+    return;
+  }
+
+  if (request.method === 'GET' && request.url === '/api/ai/capabilities') {
+    sendJson(response, 200, publicCapabilities());
+    return;
+  }
+
   if (request.method === 'GET' && request.url === '/api/ai/status') {
     sendJson(response, 200, publicStatus());
     return;
@@ -732,6 +982,20 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === 'POST' && request.url === '/api/ai/image') {
     await handleImageGeneration(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && request.url === '/api/ai/document') {
+    await handleDocumentAnalysis(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && request.url === '/api/ai/search') {
+    try {
+      await handleWebSearch(request, response);
+    } catch (error) {
+      sendJson(response, 503, { error: 'web_search_unavailable', detail: error instanceof Error ? error.message : String(error) });
+    }
     return;
   }
 
