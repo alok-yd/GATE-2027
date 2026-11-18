@@ -812,9 +812,16 @@ These are the current browser tracker records. Ask your next question and I’ll
   };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    event.target.value = '';
-    if (!files.length) return;
+    const fileList = event.currentTarget.files;
+    const files: File[] = [];
+    if (fileList) {
+      for (let index = 0; index < fileList.length; index += 1) {
+        const selectedFile = fileList.item(index);
+        if (selectedFile) files.push(selectedFile);
+      }
+    }
+    event.currentTarget.value = '';
+    if (files.length === 0) return;
 
     const validFiles: File[] = [];
     const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
