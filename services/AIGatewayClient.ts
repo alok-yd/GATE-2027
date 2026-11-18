@@ -239,6 +239,174 @@ export const generateGatewayImage = async ({
   };
 };
 
+
+export interface AIGatewayDocumentInput {
+  mimeType: string;
+  data: string;
+  name?: string;
+}
+
+export interface AIGatewaySearchSource {
+  title: string;
+  url: string;
+  domain: string;
+  publishedAt?: string;
+  snippet: string;
+}
+
+export interface AIGatewaySearchResult {
+  configured: boolean;
+  provider?: string;
+  sources: AIGatewaySearchSource[];
+  message?: string;
+}
+
+export interface AIMentorCapabilities {
+  chat: boolean;
+  vision: boolean;
+  imageGeneration: boolean;
+  documentAnalysis: boolean;
+  webSearch: boolean;
+}
+
+export const getAIMentorCapabilities = async (): Promise<AIMentorCapabilities> => {
+  try {
+    const response = await fetch(getGatewayBaseUrl() + '/capabilities', { headers: { Accept: 'application/json' } });
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        chat: data.chat === true,
+        vision: data.vision === true,
+        imageGeneration: data.imageGeneration === true,
+        documentAnalysis: data.documentAnalysis === true,
+        webSearch: data.webSearch === true,
+      };
+    }
+  } catch {
+    // The static app may be running without the optional server gateway.
+  }
+  const keyAvailable = Boolean(getGeminiApiKey());
+  return {
+    chat: keyAvailable,
+    vision: keyAvailable,
+    imageGeneration: keyAvailable,
+    documentAnalysis: keyAvailable,
+    webSearch: false,
+  };
+};
+
+/**
+ * Send the real PDF/image payload to a document-capable Gemini model.
+ * The local text fallback is intentionally not treated as successful extraction.
+ */
+export const generateGatewayDocument = async ({
+  prompt,
+  system,
+  file,
+  signal,
+}: {
+  prompt: string;
+  system?: string;
+  file: AIGatewayDocumentInput;
+  signal?: AbortSignal;
+}): Promise<AIGatewayChatResult> => {
+  const allowedTypes = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
+  if (!allowedTypes.has(file.mimeType.toLowerCase())) {
+    throw new Error('Unsupported document analysis format.');
+  }
+
+  let gatewayError: Error | null = null;
+  try {
+    const response = await fetch(getGatewayBaseUrl() + '/document', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, system, file }),
+      signal,
+    });
+    const data = await response.json().catch(() => null);
+    if (response.ok && typeof data?.content === 'string' && data.content.trim()) {
+      return data as AIGatewayChatResult;
+    }
+    gatewayError = new Error(data?.detail || data?.error || ('Document analysis gateway returned HTTP ' + response.status + '.'));
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    gatewayError = error instanceof Error ? error : new Error(String(error));
+  }
+
+  const key = getGeminiApiKey();
+  if (!key) {
+    throw gatewayError || new Error('PDF/image understanding requires a configured Gemini provider.');
+  }
+  const models = getModelAttemptChain();
+  let lastError: Error | null = gatewayError;
+  for (const model of models) {
+    try {
+      const response = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/' + model +
+        ':generateContent?key=' + encodeURIComponent(key),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: file.mimeType, data: file.data } },
+              ],
+            }],
+            ...(system ? { system_instruction: { parts: [{ text: system }] } } : {}),
+            generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+          }),
+          signal,
+        }
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        lastError = new Error(data?.error?.message || ('Gemini document analysis returned HTTP ' + response.status + '.'));
+        if (response.status === 404 || response.status === 503 || response.status === 429) continue;
+        throw lastError;
+      }
+      const text = (data?.candidates?.[0]?.content?.parts || [])
+        .map((part: Record<string, unknown>) => typeof part.text === 'string' ? part.text : '')
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+      if (!text) throw new Error('Gemini returned no extracted document content.');
+      return { content: text, model, provider: 'gemini-document', usage: data.usageMetadata || null };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  throw lastError || new Error('Document analysis is unavailable.');
+};
+
+export const searchGatewayWeb = async (
+  query: string,
+  limit = 6,
+  signal?: AbortSignal
+): Promise<AIGatewaySearchResult> => {
+  const trimmed = query.trim();
+  if (!trimmed) throw new Error('Enter a search query first.');
+  const response = await fetch(getGatewayBaseUrl() + '/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: trimmed, limit: Math.max(1, Math.min(10, limit)) }),
+    signal,
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.detail || data?.error || 'Web search is not configured. Add a supported search-provider key to the server environment.');
+  }
+  return {
+    configured: data?.configured === true,
+    provider: data?.provider,
+    sources: Array.isArray(data?.sources) ? data.sources : [],
+    message: typeof data?.message === 'string' ? data.message : undefined,
+  };
+};
+
 export const DEFAULT_GEMINI_API_KEY = '';
 export const GEMINI_STORAGE_KEY = 'gate_gemini_api_key';
 
