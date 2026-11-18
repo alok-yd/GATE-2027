@@ -925,6 +925,14 @@ export const waitForCloudSyncAccountReady = (
     resolve(nextState);
   };
 
+  timeoutId = window.setTimeout(() => {
+    const latest = getCloudSyncState();
+    finish({
+      ...latest,
+      message: 'Initial cloud sync is taking longer than expected. ACHIEVER will open using this device’s private cache while synchronization continues in the background.',
+    });
+  }, Math.max(1000, timeoutMs));
+
   unsubscribe = subscribeCloudSync((nextState) => {
     if (
       nextState.authReady &&
@@ -935,13 +943,9 @@ export const waitForCloudSyncAccountReady = (
     }
   });
 
-  timeoutId = window.setTimeout(() => {
-    const latest = getCloudSyncState();
-    finish({
-      ...latest,
-      message: 'Initial cloud sync is taking longer than expected. ACHIEVER will open using this device’s private cache while synchronization continues in the background.',
-    });
-  }, Math.max(1000, timeoutMs));
+  // subscribeCloudSync emits the current state synchronously. If it was
+  // already ready, finish() ran before the unsubscribe handle was assigned.
+  if (settled) unsubscribe();
 });
 
 export const signInForCloudSync = async (): Promise<CloudSyncUser> => {
