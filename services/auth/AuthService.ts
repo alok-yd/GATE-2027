@@ -20,6 +20,7 @@ export interface AchieverAuthProfile {
   uid: string;
   displayName: string | null;
   email: string | null;
+  emailVerified: boolean;
   phoneNumber: string | null;
   photoURL: string | null;
   providerIds: string[];
@@ -29,6 +30,7 @@ export const toAchieverAuthProfile = (user: User): AchieverAuthProfile => ({
   uid: user.uid,
   displayName: user.displayName,
   email: user.email,
+  emailVerified: user.emailVerified,
   phoneNumber: user.phoneNumber,
   photoURL: user.photoURL,
   providerIds: user.providerData.map((provider) => provider.providerId),
