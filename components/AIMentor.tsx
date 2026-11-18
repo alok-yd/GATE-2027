@@ -1232,7 +1232,7 @@ These are the current browser tracker records. Ask your next question and I’ll
           excerpt: item.snippet,
         }));
       const quizSourceContext = quizSources.length
-        ? '\\n\\nUse these retrieved passages from the user's indexed AI Mentor study documents as primary source material. Cite filenames in question explanations where relevant and do not rely on unsupported details.\\n' + JSON.stringify(quizSources)
+        ? '\\n\\nUse these retrieved passages from the user’s indexed AI Mentor study documents as primary source material. Cite filenames in question explanations where relevant and do not rely on unsupported details.\\n' + JSON.stringify(quizSources)
         : '\\n\\nNo matching indexed source passages were found. Generate original GATE-style questions from the subject and topic; do not claim these are derived from an uploaded source.';
 
       const generated = await generateGatewayJson<{
