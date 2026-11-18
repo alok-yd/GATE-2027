@@ -488,6 +488,8 @@ const applyRemoteRecord = async (
     modifiedAt: remoteUpdatedAt,
     lastSyncedAt: remoteUpdatedAt,
   });
+  // Notify mounted modules that read the established logical localStorage keys.
+  window.dispatchEvent(new Event('storage'));
 };
 
 const flushKey = async (key: string): Promise<void> => {
@@ -612,6 +614,12 @@ const mergeInitialCloudData = async (
       if (!isStillCurrent()) return;
       markWriteSynced(user.uid, key, pending);
     }
+  }
+
+  // Fire the same notification used by existing local-data writers so mounted
+  // dashboards and trackers can refresh after a remote first-device hydration.
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('storage'));
   }
 };
 
@@ -892,6 +900,49 @@ export const subscribeCloudSync = (
 };
 
 export const getCloudSyncState = (): CloudSyncState => state;
+
+/**
+ * Start Cloud Sync before rendering the private application tree and wait for
+ * the initial UID-owned Firestore reconciliation. This lets the dashboard
+ * mount with the authenticated user's records already restored on a new device.
+ *
+ * Offline/error outcomes are returned to the caller so local work can continue;
+ * the background Cloud Sync listener remains active and retries as appropriate.
+ */
+export const waitForCloudSyncAccountReady = (
+  uid: string,
+  timeoutMs = 25000
+): Promise<CloudSyncState> => new Promise((resolve) => {
+  let settled = false;
+  let unsubscribe: (() => void) | null = null;
+  let timeoutId = 0;
+
+  const finish = (nextState: CloudSyncState) => {
+    if (settled) return;
+    settled = true;
+    if (timeoutId) window.clearTimeout(timeoutId);
+    unsubscribe?.();
+    resolve(nextState);
+  };
+
+  unsubscribe = subscribeCloudSync((nextState) => {
+    if (
+      nextState.authReady &&
+      nextState.user?.uid === uid &&
+      (nextState.status === 'synced' || nextState.status === 'offline' || nextState.status === 'error')
+    ) {
+      finish(nextState);
+    }
+  });
+
+  timeoutId = window.setTimeout(() => {
+    const latest = getCloudSyncState();
+    finish({
+      ...latest,
+      message: 'Initial cloud sync is taking longer than expected. ACHIEVER will open using this device’s private cache while synchronization continues in the background.',
+    });
+  }, Math.max(1000, timeoutMs));
+});
 
 export const signInForCloudSync = async (): Promise<CloudSyncUser> => {
   const provider = new GoogleAuthProvider();
