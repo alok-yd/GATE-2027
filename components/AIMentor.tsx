@@ -51,6 +51,7 @@ import {
   listDocuments,
   listMemories,
   processUploadedDocument,
+  searchKnowledge,
   updateMemory,
 } from '../services/AINativeServices';
 import type { AIMemoryRecord, StoredDocument } from '../services/AINativeServices';
@@ -117,7 +118,7 @@ const createWelcomeMessage = (): MentorStoredMessage => ({
 
 **Just A Rather Very Intelligent System**, integrated with ACHIEVER.
 
-I can explain GATE CS/IT/DA concepts, solve PYQs step by step, analyse your recorded mock and PYQ performance, review your Roadmap and revision status, build realistic study plans, and search notes you upload here.
+I can explain GATE CS/IT/DA concepts, solve PYQs step by step, analyse your recorded mock and PYQ performance, review your Roadmap and revision status, build realistic study plans, search notes you upload, understand educational images, and generate diagrams and infographics.
 
 Your voice assistant and this full AI Mentor workspace share the same conversation history and user-approved memories. I use the tracker’s available records rather than guessing your statistics.
 
@@ -439,8 +440,19 @@ const AIMentor: React.FC = () => {
       const response = attachedImages.length
         ? await generateGatewayVision({
             prompt: effectivePrompt,
-            system:
+            system: [
               'You are ACHIEVER AI Mentor, an expert GATE CS/IT/DA teacher. Carefully inspect the actual attached image pixels. Read visible text and equations, explain diagrams and tables, show calculations step by step, and distinguish clearly readable details from uncertain ones. Do not invent labels or values that are not visible. Teach in beginner-friendly language and highlight relevant GATE examination points.',
+              (() => {
+                const notes = searchKnowledge(effectivePrompt)
+                  .filter((item) => item.sourceType === 'document')
+                  .slice(0, 4)
+                  .map((item) => 'Source: ' + item.sourceName + ' (' + item.citation + ')\n' + item.snippet)
+                  .join('\n\n');
+                return notes
+                  ? 'Relevant uploaded study material follows. Use it only when relevant and identify the source in your answer:\n' + notes
+                  : '';
+              })(),
+            ].filter(Boolean).join('\n\n'),
             history: baseMessages
               .filter((message) => message.id !== 'welcome')
               .slice(-10)
