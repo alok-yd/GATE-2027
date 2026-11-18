@@ -19,6 +19,7 @@ import {
   getAchieverAuthError,
   prepareAchieverAuthPersistence,
   signInWithGoogleForAchiever,
+  saveAchieverUserDisplayName,
 } from '../../services/auth/AuthService';
 
 const achieverLogo = `${import.meta.env.BASE_URL}achiever-logo.svg`;
@@ -61,6 +62,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ authError = '', onRetry }) => {
   const [countryCode, setCountryCode] = useState('+91');
   const [customCode, setCustomCode] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [fullName, setFullName] = useState('');
   const [otp, setOtp] = useState('');
   const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const [cooldown, setCooldown] = useState(0);
@@ -128,6 +130,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ authError = '', onRetry }) => {
 
   const sendOtp = async (resend = false) => {
     if (busy || (resend && cooldown > 0)) return;
+    if (!fullName.trim()) {
+      setError('Enter your full name to set up your ACHIEVER account.');
+      return;
+    }
     const number = validatePhone();
     if (!number) return;
 
@@ -164,7 +170,14 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ authError = '', onRetry }) => {
     setError('');
     setNotice('');
     try {
-      await confirmation.confirm(code);
+      const credential = await confirmation.confirm(code);
+      try {
+        await saveAchieverUserDisplayName(credential.user, fullName);
+      } catch (profileFailure) {
+        // A valid phone session should remain usable if profile metadata is
+        // temporarily unavailable; the UID-scoped profile can be retried later.
+        console.warn('[ACHIEVER Auth] Phone profile name could not be saved yet.', profileFailure);
+      }
       // AuthGate observes the verified Firebase session and opens the app.
     } catch (failure) {
       setError(getAchieverAuthError(failure));
@@ -268,6 +281,20 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ authError = '', onRetry }) => {
                     <h2 className="text-lg font-bold text-slate-900">Verify your phone number</h2>
                     <p className="mt-1 text-xs leading-5 text-slate-500">We’ll send a one-time verification code by SMS.</p>
                   </div>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-[11px] font-semibold text-slate-600">Full name</span>
+                    <input
+                      type="text"
+                      autoComplete="name"
+                      value={fullName}
+                      onChange={(event) => setFullName(event.target.value)}
+                      placeholder="Enter your full name"
+                      disabled={busy}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50"
+                    />
+                    <span className="mt-1 block text-[10px] text-slate-400">Used for first-time profile setup. Existing saved account names are preserved.</span>
+                  </label>
 
                   <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)] gap-2">
                     <label className="min-w-0">

@@ -6,6 +6,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   signOut,
+  updateProfile,
   type User,
 } from 'firebase/auth';
 import {
@@ -43,13 +44,69 @@ export const toAchieverAuthProfile = (user: User): AchieverAuthProfile => ({
 export const ensureAchieverUserProfile = async (user: User): Promise<void> => {
   const profileRef = doc(cloudDb, 'users', user.uid);
   const existing = await getDoc(profileRef);
+  const existingData = existing.exists() ? existing.data() : {};
+  const existingDisplayName =
+    (typeof existingData.displayName === 'string' && existingData.displayName.trim()) ||
+    (typeof existingData.name === 'string' && existingData.name.trim()) ||
+    '';
+  const resolvedDisplayName = user.displayName?.trim() || existingDisplayName;
+
+  // Restore a previously saved phone-account name into Firebase Auth when possible.
+  if (!user.displayName?.trim() && resolvedDisplayName) {
+    await updateProfile(user, { displayName: resolvedDisplayName });
+  }
+
   const profile = toAchieverAuthProfile(user);
   const patch: Record<string, unknown> = {
     ...profile,
     updatedAt: serverTimestamp(),
   };
+  if (resolvedDisplayName) patch.displayName = resolvedDisplayName;
+  else delete patch.displayName;
 
-  if (!existing.exists() || !existing.data().createdAt) {
+  if (!existing.exists() || !existingData.createdAt) {
+    patch.createdAt = serverTimestamp();
+  }
+
+  await setDoc(profileRef, patch, { merge: true });
+};
+
+/**
+ * Save a name collected during first-time phone authentication.
+ * Existing Firebase Auth or Firestore names take precedence so a returning
+ * user cannot accidentally replace a previously established profile name.
+ */
+export const saveAchieverUserDisplayName = async (
+  user: User,
+  submittedName: string
+): Promise<void> => {
+  const normalizedSubmittedName = submittedName.trim().replace(/\s+/g, ' ');
+  if (!normalizedSubmittedName) {
+    throw new Error('Enter your full name to finish setting up your ACHIEVER account.');
+  }
+
+  const profileRef = doc(cloudDb, 'users', user.uid);
+  const existing = await getDoc(profileRef);
+  const existingData = existing.exists() ? existing.data() : {};
+  const existingDisplayName =
+    (typeof existingData.displayName === 'string' && existingData.displayName.trim()) ||
+    (typeof existingData.name === 'string' && existingData.name.trim()) ||
+    '';
+  const resolvedDisplayName =
+    user.displayName?.trim() || existingDisplayName || normalizedSubmittedName;
+
+  if (!user.displayName?.trim() && resolvedDisplayName) {
+    await updateProfile(user, { displayName: resolvedDisplayName });
+  }
+
+  const profile = toAchieverAuthProfile(user);
+  const patch: Record<string, unknown> = {
+    ...profile,
+    displayName: resolvedDisplayName,
+    updatedAt: serverTimestamp(),
+  };
+
+  if (!existing.exists() || !existingData.createdAt) {
     patch.createdAt = serverTimestamp();
   }
 
