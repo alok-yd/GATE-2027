@@ -162,7 +162,7 @@ const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
           <button type="button" onClick={() => setLegacyNotice(false)} className="ml-2 font-bold underline">Dismiss</button>
         </div>
       )}
-      {children}
+      <React.Fragment key={gate.user.uid}>{children}</React.Fragment>
     </>
   );
 };
