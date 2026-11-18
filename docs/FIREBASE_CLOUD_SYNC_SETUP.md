@@ -17,11 +17,11 @@ Follow the complete current instructions in [FIREBASE_AUTH_AND_MULTI_USER_SETUP.
 - Enabling Google and Phone providers.
 - Firebase authorized domains and SMS region configuration.
 - Retaining Firebase App Check and configuring the reCAPTCHA Enterprise Site Key.
-- Deploying Firestore owner-only rules and Firebase Storage UID-owner rules.
+- Preserving the existing Firestore owner-only rules and deploying Firebase Storage UID-owner rules.
 - Safe handling of device-only legacy records.
 - Two-account security checks and cross-device sync verification.
 
-From the repository root, deploy the existing Firestore rules and new Storage rules with:
+From the repository root, deploy the new Firebase Storage rules with:
 
 ```bash
 npx firebase-tools login
@@ -30,6 +30,6 @@ npx firebase-tools deploy --only storage --project gate-2027-a8850
 
 ## Important architecture note
 
-ACHIEVER uses Cloud Firestore for application synchronization; it does not use Firebase Realtime Database. The existing Firestore `users/{uid}` hierarchy is reused rather than replaced. Local browser storage is partitioned by UID, and server-side Firestore/Storage rules remain the actual ownership boundary.
+ACHIEVER uses Cloud Firestore for application synchronization; it does not use Firebase Realtime Database. The existing Firestore `users/{uid}` hierarchy and owner-only Firestore rules are reused unchanged rather than replaced. Local browser storage is partitioned by UID, and server-side Firestore/Storage rules remain the actual ownership boundary.
 
 Legacy browser records without a previous Cloud Sync UID that can prove ownership are quarantined, not assigned to the first person who signs in. Do not copy these records to a new account without independently verifying the legitimate owner.
