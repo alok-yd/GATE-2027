@@ -28,5 +28,8 @@ jobs:
       - name: Type-check all application sections
         run: npx tsc --noEmit
 
+      - name: Validate AI Mentor gateway syntax
+        run: node --check server/ai-gateway.mjs
+
       - name: Build ACHIEVER
         run: npm run build
