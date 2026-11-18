@@ -60,10 +60,11 @@ import {
   getActiveMentorConversationId,
   loadMentorConversations,
   saveMentorConversations,
+  removeMentorConversation,
   setActiveMentorConversationId,
 } from '../services/mentor/MentorStorage';
 import type { MentorConversation, MentorStoredAttachment, MentorStoredMessage } from '../services/mentor/MentorStorage';
-import { base64ToBlob, blobToBase64, readMentorAttachment, saveMentorAttachment } from '../services/mentor/MentorAttachmentStorage';
+import { base64ToBlob, blobToBase64, deleteMentorAttachments, readMentorAttachment, saveMentorAttachment } from '../services/mentor/MentorAttachmentStorage';
 import { summarizeMentorConversation } from '../services/mentor/MentorAgent';
 import type { MentorMode } from '../services/mentor/MentorAgent';
 import { orchestrateJarvisMessage } from '../services/assistant/JarvisOrchestrator';
@@ -180,6 +181,7 @@ const AIMentor: React.FC = () => {
   const [editingMemory, setEditingMemory] = useState<{ id: string; title: string; content: string } | null>(null);
   const [documentsCount, setDocumentsCount] = useState(() => listDocuments().length);
   const [documentActionsId, setDocumentActionsId] = useState<string | null>(null);
+  const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [pendingImages, setPendingImages] = useState<Array<{ file: File; previewUrl: string }>>([]);
   const [imageGenerationMode, setImageGenerationMode] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
