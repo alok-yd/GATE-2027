@@ -23,11 +23,13 @@ import {
   type QueryDocumentSnapshot,
   type Unsubscribe as FirestoreUnsubscribe,
 } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import { firebaseConfig } from '../firebase';
 import { initializeFirebaseAppCheck } from './firebaseAppCheck';
+import { activateUserStorage, deactivateUserStorage } from './UserScopedStorage';
 
 const CLOUD_APP_NAME = 'achiever-cloud-sync';
-const cloudApp =
+export const cloudApp =
   getApps().find((candidate) => candidate.name === CLOUD_APP_NAME) ??
   initializeApp(firebaseConfig, CLOUD_APP_NAME);
 
@@ -40,6 +42,7 @@ export const cloudAppCheck = initializeFirebaseAppCheck(cloudApp);
  */
 export const cloudAuth = getAuth(cloudApp);
 export const cloudDb = getFirestore(cloudApp);
+export const cloudStorage = getStorage(cloudApp);
 
 export type CloudSyncStatus =
   | 'local'
@@ -52,6 +55,7 @@ export type CloudSyncStatus =
 export interface CloudSyncUser {
   uid: string;
   email: string | null;
+  phoneNumber: string | null;
   displayName: string | null;
   photoURL: string | null;
 }
@@ -201,9 +205,15 @@ const isCloudSyncableKey = (key: string): boolean => {
     key.startsWith('gate_') ||
     key.startsWith('lectures_') ||
     key.startsWith('ai_focus_timer_') ||
-    key.startsWith('achiever_ai_');
+    key.startsWith('achiever_');
 
   if (!allowedPrefix) return false;
+  // Account markers and browser-only cache namespaces must never become cloud records.
+  if (
+    key.startsWith('achiever_cloud_sync_') ||
+    key.startsWith('achiever_legacy_') ||
+    key.startsWith('__achiever_')
+  ) return false;
 
   // API keys, credentials and live timer control state must remain local.
   if (
@@ -279,6 +289,7 @@ const setUserState = (user: User | null): void => {
       ? {
           uid: user.uid,
           email: user.email,
+          phoneNumber: user.phoneNumber,
           displayName: user.displayName,
           photoURL: user.photoURL,
         }
@@ -577,7 +588,10 @@ const mergeInitialCloudData = async (
   await setDoc(profileDocument(user.uid), {
     uid: user.uid,
     email: user.email || null,
+    phoneNumber: user.phoneNumber || null,
     displayName: user.displayName || null,
+    photoURL: user.photoURL || null,
+    providerIds: user.providerData.map((provider) => provider.providerId),
     cloudSyncVersion: SCHEMA_VERSION,
     cloudSyncInitialisedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -638,10 +652,8 @@ const startUserSync = async (user: User): Promise<void> => {
   if (currentUser?.uid !== user.uid || generation !== authGeneration) return;
 
   const activeUid = window.localStorage.getItem(ACTIVE_UID_KEY);
-  if (activeUid && activeUid !== user.uid) {
-    throw new Error(
-      'This browser already contains ACHIEVER records linked to another Google account. Sign in with the original account to avoid mixing private study data.'
-    );
+  if (activeUid !== user.uid) {
+    throw new Error('ACHIEVER local storage is not activated for this account. Reload the app and sign in again.');
   }
 
   syncReady = false;
@@ -692,41 +704,95 @@ const startUserSync = async (user: User): Promise<void> => {
   }
 };
 
-const handleAuthUser = (user: User | null): void => {
-  authGeneration += 1;
-  syncReady = false;
-  currentUser = user;
-  clearPendingTimers();
+let authTransition = Promise.resolve();
 
+const handleAuthUser = (user: User | null): void => {
+  const previousUser = currentUser;
+  const generation = ++authGeneration;
+
+  // Stop outbound writes immediately while the active local account is moved
+  // into its UID-owned cache. Pending local modifications remain recorded in
+  // the per-UID sync metadata and are reconciled on the next sign-in.
+  syncReady = false;
+  clearPendingTimers();
   if (recordsUnsubscribe) {
     recordsUnsubscribe();
     recordsUnsubscribe = null;
   }
-
-  setUserState(user);
-
-  if (!user) {
-    updateState({
-      status: 'local',
-      authReady: true,
-      pendingWrites: 0,
-      lastSyncedAt: null,
-      message: 'Cloud sync is disconnected. Your existing local records remain available.',
-    });
-    return;
-  }
-
+  currentUser = null;
+  setUserState(null);
   updateState({
-    status: 'connecting',
-    authReady: true,
-    message: 'Signed in. Preparing your private cloud sync…',
+    authReady: false,
+    status: user ? 'connecting' : 'local',
+    pendingWrites: 0,
+    message: user
+      ? 'Preparing your private ACHIEVER account…'
+      : 'Signing out and securing this device’s local data…',
   });
-  void startUserSync(user).catch((error) => {
-    console.error('[ACHIEVER Cloud Sync] Initial sync failed.', error);
+
+  const transition = authTransition.then(async () => {
+    if (previousUser && previousUser.uid !== user?.uid) {
+      await deactivateUserStorage(previousUser.uid);
+    }
+
+    let quarantinedLegacy = false;
+    if (user) {
+      const activation = await activateUserStorage(user.uid);
+      quarantinedLegacy = activation.quarantinedLegacyData;
+    }
+
+    if (generation !== authGeneration) return;
+
+    if (quarantinedLegacy) {
+      // pre-auth local modifications with no recorded owner must not be
+      // treated as pending writes belonging to this newly created account.
+      const meta = readLocalMeta();
+      meta.pendingBeforeLogin = {};
+      writeLocalMeta(meta);
+    }
+
+    currentUser = user;
+    setUserState(user);
+
+    if (!user) {
+      updateState({
+        status: 'local',
+        authReady: true,
+        pendingWrites: 0,
+        lastSyncedAt: null,
+        message: 'Signed out. Your account records remain safely stored under your Firebase UID.',
+      });
+      return;
+    }
+
     updateState({
-      status: navigator.onLine ? 'error' : 'offline',
-      message: getCloudErrorMessage(error),
+      status: 'connecting',
+      authReady: true,
+      message: 'Authenticated. Preparing your private cloud sync…',
     });
+    void startUserSync(user).catch((error) => {
+      console.error('[ACHIEVER Cloud Sync] Initial sync failed.', error);
+      updateState({
+        status: navigator.onLine ? 'error' : 'offline',
+        message: getCloudErrorMessage(error),
+      });
+    });
+  });
+
+  authTransition = transition.catch((error) => {
+    console.error('[ACHIEVER Cloud Sync] Account storage transition failed.', error);
+    if (generation === authGeneration) {
+      currentUser = null;
+      setUserState(null);
+      updateState({
+        status: 'error',
+        authReady: true,
+        pendingWrites: 0,
+        message: error instanceof Error
+          ? error.message
+          : 'ACHIEVER could not safely isolate this account’s local data. Sign-in is paused to protect your information.',
+      });
+    }
   });
 };
 
