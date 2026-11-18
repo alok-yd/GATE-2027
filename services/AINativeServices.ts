@@ -4,7 +4,7 @@ import {
   PYQPracticeEntry,
   StudentProfile,
 } from '../types';
-import { getAIGatewayStatus, generateGatewayText } from './AIGatewayClient';
+import { getAIGatewayStatus, generateGatewayText, generateGatewayDocument } from './AIGatewayClient';
 import { getMockResults, getPYQEntries, getStudentProfile } from './DataExtractor';
 
 export type DocumentPurpose =
@@ -16,7 +16,7 @@ export type DocumentPurpose =
   | 'study_material'
   | 'mentor';
 
-export type DocumentKind = 'pdf' | 'image' | 'text' | 'unknown';
+export type DocumentKind = 'pdf' | 'docx' | 'image' | 'text' | 'unknown';
 
 export type MemoryCategory =
   | 'user_goal'
@@ -246,6 +246,10 @@ const overlapScore = (query: string, text: string) => {
 const detectKind = (fileName: string, mimeType: string): DocumentKind => {
   const lower = fileName.toLowerCase();
   if (mimeType.includes('pdf') || lower.endsWith('.pdf')) return 'pdf';
+  if (
+    mimeType.includes('officedocument.wordprocessingml.document') ||
+    lower.endsWith('.docx')
+  ) return 'docx';
   if (mimeType.startsWith('image/') || /\.(png|jpg|jpeg|webp)$/i.test(lower)) return 'image';
   if (
     mimeType.startsWith('text/') ||
@@ -338,6 +342,81 @@ const readFileAsBuffer = (file: File) =>
     reader.onerror = () => reject(reader.error);
     reader.readAsArrayBuffer(file);
   });
+
+const readFileAsBase64 = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const separator = dataUrl.indexOf(',');
+      if (separator < 0) {
+        reject(new Error('Could not encode the selected file.'));
+        return;
+      }
+      resolve(dataUrl.slice(separator + 1));
+    };
+    reader.onerror = () => reject(reader.error || new Error('Could not read the selected file.'));
+    reader.readAsDataURL(file);
+  });
+
+const extractDocxText = async (file: File): Promise<string> => {
+  const buffer = await readFileAsBuffer(file);
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const eocdSignature = 0x06054b50;
+  let eocd = -1;
+  for (let offset = Math.max(0, bytes.length - 65557); offset <= bytes.length - 22; offset += 1) {
+    if (view.getUint32(offset, true) === eocdSignature) eocd = offset;
+  }
+  if (eocd < 0) throw new Error('This DOCX file has an invalid ZIP directory.');
+  const entryCount = view.getUint16(eocd + 10, true);
+  let cursor = view.getUint32(eocd + 16, true);
+  const decoder = new TextDecoder();
+  let xmlBytes: Uint8Array | null = null;
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) break;
+    const method = view.getUint16(cursor + 10, true);
+    const compressedSize = view.getUint32(cursor + 20, true);
+    const nameLength = view.getUint16(cursor + 28, true);
+    const extraLength = view.getUint16(cursor + 30, true);
+    const commentLength = view.getUint16(cursor + 32, true);
+    const localOffset = view.getUint32(cursor + 42, true);
+    const name = decoder.decode(bytes.slice(cursor + 46, cursor + 46 + nameLength));
+    if (name === 'word/document.xml') {
+      if (view.getUint32(localOffset, true) !== 0x04034b50) {
+        throw new Error('The DOCX document body could not be read.');
+      }
+      const localNameLength = view.getUint16(localOffset + 26, true);
+      const localExtraLength = view.getUint16(localOffset + 28, true);
+      const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+      const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+      if (method === 0) {
+        xmlBytes = compressed;
+      } else if (method === 8 && typeof DecompressionStream !== 'undefined') {
+        const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+        xmlBytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      } else {
+        throw new Error('This DOCX compression method is not supported by this browser.');
+      }
+      break;
+    }
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+
+  if (!xmlBytes) throw new Error('The DOCX file does not contain a readable document body.');
+  const xml = new DOMParser().parseFromString(decoder.decode(xmlBytes), 'application/xml');
+  if (xml.querySelector('parsererror')) throw new Error('The DOCX document body is malformed.');
+  return Array.from(xml.getElementsByTagName('w:p'))
+    .map((paragraph) =>
+      Array.from(paragraph.getElementsByTagName('w:t'))
+        .map((node) => node.textContent || '')
+        .join('')
+    )
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+};
 
 const classifyPurpose = (text: string, fallback: DocumentPurpose): DocumentPurpose => {
   const lower = text.toLowerCase();
@@ -618,7 +697,7 @@ export const processUploadedDocument = async (
 
   const kind = detectKind(file.name, file.type);
   if (kind === 'unknown') {
-    throw new Error('Unsupported file type. Use PDF, PNG, JPG, TXT, MD, CSV, or JSON.');
+    throw new Error('Unsupported file type. Use PDF, DOCX, PNG, JPG, TXT, MD, or CSV.');
   }
 
   const warnings: string[] = [];
@@ -628,15 +707,61 @@ export const processUploadedDocument = async (
   if (kind === 'text') {
     text = await readFileAsText(file);
     confidence = text.trim() ? 0.95 : 0;
-  } else if (kind === 'pdf') {
-    const buffer = await readFileAsBuffer(file);
-    text = readableBinaryText(buffer);
-    confidence = text.length > 120 ? 0.45 : 0.15;
-    warnings.push('PDF extraction is local best-effort. Scanned PDFs need a dedicated OCR provider.');
-  } else if (kind === 'image') {
-    warnings.push('Image uploaded and validated. OCR/vision extraction is pending a configured vision provider.');
-    text = `Image file: ${file.name}. Add extracted text manually or configure a vision/OCR provider for full analysis.`;
-    confidence = 0.05;
+  } else if (kind === 'docx') {
+    try {
+      text = await extractDocxText(file);
+      confidence = text.trim() ? 0.9 : 0.1;
+      if (!text.trim()) warnings.push('No readable text was found in the DOCX body.');
+    } catch (error) {
+      warnings.push(error instanceof Error ? error.message : 'DOCX extraction failed.');
+      throw new Error('Could not extract this DOCX file. ' + warnings[0]);
+    }
+  } else if (kind === 'pdf' || kind === 'image') {
+    try {
+      const data = await readFileAsBase64(file);
+      const extractionPrompt = kind === 'pdf'
+        ? [
+            'Extract the readable educational content from the attached PDF for a private study knowledge base.',
+            'Preserve the original section headings, definitions, formulas, code, tables and question numbering.',
+            'Keep page boundaries explicit using [PDF page N] only when the source page position is known.',
+            'Do not invent page numbers, missing text, diagrams or values. Mark unreadable/scanned regions as [unreadable region].',
+            'Do not answer a question or add facts that are not in the document. Return the extracted content only.',
+          ].join(' ')
+        : [
+            'Describe and transcribe the attached educational image for a private study knowledge base.',
+            'Read visible labels, equations, tables and technical diagram components accurately.',
+            'Do not infer unreadable text or values. Clearly mark uncertain sections. Return source-derived content only.',
+          ].join(' ');
+      const extracted = await generateGatewayDocument({
+        prompt: extractionPrompt,
+        system: 'You are a careful document digitisation engine. Preserve source fidelity. Never invent page numbers, quotations or technical labels.',
+        file: { mimeType: kind === 'pdf' ? 'application/pdf' : file.type || 'image/png', data, name: file.name },
+      });
+      text = extracted.content.trim();
+      confidence = text.length > 120 ? 0.86 : 0.55;
+      warnings.push('Content was extracted by a configured multimodal AI provider. Check unclear pages or diagram labels against the original file.');
+    } catch (error) {
+      if (kind === 'pdf') {
+        const buffer = await readFileAsBuffer(file);
+        text = readableBinaryText(buffer);
+        confidence = text.length > 120 ? 0.25 : 0.08;
+      } else {
+        text = '';
+        confidence = 0;
+      }
+      warnings.push(
+        'Multimodal extraction was unavailable: ' +
+        (error instanceof Error ? error.message : 'provider error') +
+        '. The original file is retained, but its contents may not be searchable until a vision/document provider is configured.'
+      );
+    }
+  }
+
+  const maxIndexedChars = 600000;
+  if (text.length > maxIndexedChars) {
+    text = text.slice(0, maxIndexedChars);
+    warnings.push('The extracted text exceeded the local index limit and was truncated. The original file remains attached in AI Mentor.');
+    confidence = Math.min(confidence, 0.75);
   }
 
   const detectedPurpose = classifyPurpose(`${file.name}\n${text}`, purpose);
@@ -645,7 +770,7 @@ export const processUploadedDocument = async (
     name: file.name,
     kind,
     purpose: detectedPurpose,
-    mimeType: file.type || 'application/octet-stream',
+    mimeType: file.type || (kind === 'pdf' ? 'application/pdf' : 'application/octet-stream'),
     size: file.size,
     createdAt: new Date().toISOString(),
     text,
