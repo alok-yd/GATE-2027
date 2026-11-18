@@ -1679,6 +1679,17 @@ You can now ask me to search this material. I’ll include local chunk identifie
                           </div>
                           <p className="mt-1 text-[10px] text-slate-400">{document.kind.toUpperCase()} · {document.purpose.replace(/_/g, ' ')} · {new Date(document.createdAt).toLocaleDateString()}</p>
                           <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">{document.summary || 'No summary available.'}</p>
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteDocument(document)}
+                              aria-label={'Remove uploaded document: ' + document.name}
+                              title="Remove this uploaded document"
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-100 px-2.5 py-1.5 text-xs font-semibold text-rose-600 transition hover:border-rose-200 hover:bg-rose-50"
+                            >
+                              <Trash2 size={13} /> Remove
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
