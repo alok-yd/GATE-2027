@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { LoaderCircle, ShieldCheck } from 'lucide-react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { cloudAuth } from '../../services/CloudSyncService';
-import { activateUserStorage, deactivateUserStorage } from '../../services/UserScopedStorage';
+import { activateUserStorage, deactivateUserStorage, hasUnassignedLegacyData } from '../../services/UserScopedStorage';
 import {
   completeAchieverGoogleRedirect,
   ensureAchieverUserProfile,
@@ -23,11 +23,13 @@ type GateState =
 
 const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   const [gate, setGate] = useState<GateState>({ status: 'loading', user: null, error: '' });
+  const [legacyNotice, setLegacyNotice] = useState(false);
 
   useEffect(() => {
     let active = true;
     let previousUid: string | null = null;
     let transition = Promise.resolve();
+    let unsubscribe: (() => void) | undefined;
 
     const initialise = async () => {
       try {
@@ -37,57 +39,79 @@ const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
         if (active) setGate({ status: 'error', user: null, error: getAchieverAuthError(error) });
       }
 
-      if (!active) return;
+      if (!active) return undefined;
 
-      const unsubscribe = onAuthStateChanged(cloudAuth, (user) => {
-        transition = transition.then(async () => {
-          if (!active) return;
+      return onAuthStateChanged(
+        cloudAuth,
+        (user) => {
+          transition = transition.then(async () => {
+            if (!active) return;
 
-          try {
-            if (previousUid && previousUid !== user?.uid) {
-              await deactivateUserStorage(previousUid);
+            try {
+              if (previousUid && previousUid !== user?.uid) {
+                await deactivateUserStorage(previousUid);
+              }
+
+              if (!user) {
+                if (previousUid) await deactivateUserStorage(previousUid);
+                previousUid = null;
+                if (active) setGate({ status: 'signed-out', user: null, error: '' });
+                return;
+              }
+
+              // Activate the UID namespace before mounting any private component.
+              const activation = await activateUserStorage(user.uid);
+              if (activation.quarantinedLegacyData || hasUnassignedLegacyData()) {
+                setLegacyNotice(true);
+              }
+
+              try {
+                await ensureAchieverUserProfile(user);
+              } catch (profileError) {
+                const code = String((profileError as { code?: unknown })?.code || '');
+                if (code.includes('unavailable') || code.includes('network')) {
+                  // The Firebase session is valid. Keep local study tools available
+                  // offline; Cloud Sync retries profile creation when connectivity returns.
+                  console.warn('[ACHIEVER Auth] Profile metadata will be retried when online.', profileError);
+                } else {
+                  throw profileError;
+                }
+              }
+
+              previousUid = user.uid;
+              if (active) setGate({ status: 'authenticated', user, error: '' });
+            } catch (error) {
+              if (active) {
+                setGate({
+                  status: 'error',
+                  user: null,
+                  error: error instanceof Error
+                    ? error.message
+                    : 'ACHIEVER could not safely prepare this account on this device.',
+                });
+              }
             }
-
-            if (!user) {
-              if (previousUid) await deactivateUserStorage(previousUid);
-              previousUid = null;
-              if (active) setGate({ status: 'signed-out', user: null, error: '' });
-              return;
-            }
-
-            // Restore/quarantine device-local data before any private component mounts.
-            await activateUserStorage(user.uid);
-            await ensureAchieverUserProfile(user);
-            previousUid = user.uid;
-            if (active) setGate({ status: 'authenticated', user, error: '' });
-          } catch (error) {
+          }).catch((error) => {
             if (active) {
               setGate({
                 status: 'error',
                 user: null,
-                error: error instanceof Error
-                  ? error.message
-                  : 'ACHIEVER could not safely prepare this account on this device.',
+                error: error instanceof Error ? error.message : 'Authentication state could not be restored.',
               });
             }
-          }
-        }).catch((error) => {
+          });
+        },
+        (error) => {
           if (active) {
-            setGate({
-              status: 'error',
-              user: null,
-              error: error instanceof Error ? error.message : 'Authentication state could not be restored.',
-            });
+            setGate({ status: 'error', user: null, error: getAchieverAuthError(error) });
           }
-        });
-      });
-
-      return unsubscribe;
+        }
+      );
     };
 
-    let unsubscribe: (() => void) | undefined;
     void initialise().then((cleanup) => {
-      unsubscribe = cleanup;
+      if (active) unsubscribe = cleanup;
+      else cleanup?.();
     });
 
     return () => {
@@ -121,7 +145,20 @@ const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
 
   if (gate.status === 'signed-out') return <AuthScreen />;
 
-  return <>{children}</>;
+  return (
+    <>
+      {legacyNotice && (
+        <div
+          role="status"
+          className="fixed left-4 right-4 top-4 z-[10001] mx-auto max-w-3xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900 shadow-lg"
+        >
+          ACHIEVER found older device-only study records whose original owner cannot be verified from the previous sign-in history. Those records have been preserved separately and were not assigned to this account. Contact the administrator to verify ownership before attempting any migration.
+          <button type="button" onClick={() => setLegacyNotice(false)} className="ml-2 font-bold underline">Dismiss</button>
+        </div>
+      )}
+      {children}
+    </>
+  );
 };
 
 export default AuthGate;
