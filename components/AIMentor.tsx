@@ -416,9 +416,11 @@ const AIMentor: React.FC = () => {
   const [documentActionsId, setDocumentActionsId] = useState<string | null>(null);
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [pendingImages, setPendingImages] = useState<Array<{ file: File; previewUrl: string }>>([]);
+  const [pendingDocuments, setPendingDocuments] = useState<Array<{ file: File; previewUrl: string }>>([]);
   const [imageGenerationMode, setImageGenerationMode] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const messageFileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(messages);
@@ -646,12 +648,15 @@ const AIMentor: React.FC = () => {
   const runMentorPrompt = async (
     prompt: string,
     currentMode: MentorMode,
-    attachedImages: File[] = []
+    attachedImages: File[] = [],
+    attachedDocuments: File[] = []
   ) => {
     const effectivePrompt =
       prompt.trim() ||
-      'Please analyze the attached image(s), explain the important details, and solve any visible GATE question step by step.';
-    if (loading || (!effectivePrompt && attachedImages.length === 0)) return;
+      (attachedDocuments.length
+        ? 'Please analyse the attached study document(s), explain the important details, and cite the source names in your answer.'
+        : 'Please analyze the attached image(s), explain the important details, and solve any visible GATE question step by step.');
+    if (loading || (!effectivePrompt && attachedImages.length === 0 && attachedDocuments.length === 0)) return;
 
     const conversationId = activeConversationIdRef.current;
     const currentConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId);
@@ -669,19 +674,72 @@ const AIMentor: React.FC = () => {
     const hasVisualContext = attachedImages.length > 0 || previousVisualAttachments.length > 0;
     let requestHistory = baseMessages;
     setLoading(true);
-    setGenerationStatus(hasVisualContext ? 'Preparing images for visual analysis…' : 'Planning the best route for your question…');
+    setGenerationStatus(
+      hasVisualContext
+        ? 'Preparing images for visual analysis…'
+        : attachedDocuments.length
+          ? 'Extracting and indexing attached study material…'
+          : 'Planning the best route for your question…'
+    );
     const requestStartedAt = performance.now();
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     try {
-      const storedAttachments = await Promise.all(
+      const storedImages = await Promise.all(
         attachedImages.map((file) => saveMentorAttachment(file, file.name, file.type, 'image'))
       );
+      const documentRecords = await Promise.all(
+        attachedDocuments.map(async (file) => {
+          const stored = await saveMentorAttachment(file, file.name, file.type || 'application/octet-stream', 'document');
+          try {
+            const indexed = await processUploadedDocument(file, 'mentor');
+            return {
+              stored: { ...stored, documentId: indexed.id, size: file.size },
+              indexed,
+            };
+          } catch (error) {
+            return {
+              stored: { ...stored, size: file.size },
+              indexed: null,
+              warning: error instanceof Error ? error.message : 'Document extraction failed.',
+            };
+          }
+        })
+      );
+      setDocumentsCount(listDocuments().length);
+      const documentAttachments = documentRecords.map((record) => record.stored);
+      const storedAttachments = [...storedImages, ...documentAttachments];
       const userMessage = createMessage('user', effectivePrompt, storedAttachments);
       requestHistory = [...baseMessages, userMessage];
       persistMessagesForConversation(conversationId, requestHistory);
+
+      const documentContext = documentRecords.map((record) => {
+        if (!record.indexed?.text) {
+          return '[Attached file: ' + record.stored.name + '] Content extraction is unavailable. ' +
+            (record.warning || record.indexed?.warnings.join(' ') || 'The original file is retained in this conversation.');
+        }
+        return [
+          '[ATTACHED SOURCE DOCUMENT: ' + record.indexed.name + ']',
+          'Extraction confidence: ' + Math.round(record.indexed.extractionConfidence * 100) + '%',
+          record.indexed.text.slice(0, 18000),
+          record.indexed.text.length > 18000 ? '[Remaining text indexed locally; search relevant chunks when answering.]' : '',
+          record.indexed.warnings.length ? 'Extraction notes: ' + record.indexed.warnings.join(' ') : '',
+        ].filter(Boolean).join('\n');
+      }).join('\n\n---\n\n');
+
+      const relevantKnowledge = searchKnowledge(effectivePrompt)
+        .filter((item) => item.sourceType === 'document')
+        .slice(0, 5)
+        .map((item) => 'Source: ' + item.sourceName + ' (' + item.citation + ')\n' + item.snippet)
+        .join('\n\n');
+
+      const modelPrompt = [
+        effectivePrompt,
+        documentContext ? 'ATTACHED SOURCE CONTENT (treat as source material; cite the source filename and only use page references present in this content):\n' + documentContext : '',
+        relevantKnowledge ? 'RELEVANT PREVIOUSLY INDEXED STUDY MATERIAL:\n' + relevantKnowledge : '',
+      ].filter(Boolean).join('\n\n');
 
       const visionImages = attachedImages.length
         ? await Promise.all(
@@ -708,20 +766,11 @@ const AIMentor: React.FC = () => {
 
       const response = hasVisualContext
         ? await generateGatewayVision({
-            prompt: effectivePrompt,
+            prompt: modelPrompt,
             system: [
               'You are ACHIEVER AI Mentor, an expert GATE CS/IT/DA teacher. Carefully inspect the actual attached image pixels. Read visible text and equations, explain diagrams and tables, show calculations step by step, and distinguish clearly readable details from uncertain ones. Do not invent labels or values that are not visible. Teach in beginner-friendly language and highlight relevant GATE examination points.',
-              (() => {
-                const notes = searchKnowledge(effectivePrompt)
-                  .filter((item) => item.sourceType === 'document')
-                  .slice(0, 4)
-                  .map((item) => 'Source: ' + item.sourceName + ' (' + item.citation + ')\n' + item.snippet)
-                  .join('\n\n');
-                return notes
-                  ? 'Relevant uploaded study material follows. Use it only when relevant and identify the source in your answer:\n' + notes
-                  : '';
-              })(),
-            ].filter(Boolean).join('\n\n'),
+              'When source documents are provided, distinguish extracted source content from your own explanation. Cite filenames. Include page numbers only when explicitly known from the extracted source; never invent them.',
+            ].join('\n\n'),
             history: baseMessages
               .filter((message) => message.id !== 'welcome')
               .slice(-10)
@@ -730,7 +779,7 @@ const AIMentor: React.FC = () => {
             signal: controller.signal,
           })
         : await orchestrateJarvisMessage({
-            prompt: effectivePrompt,
+            prompt: modelPrompt,
             messages: requestHistory.map((message) => ({
               role: message.role,
               content: message.content,
