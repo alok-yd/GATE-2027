@@ -923,19 +923,28 @@ const AIMentor: React.FC = () => {
 
   const handleSend = async () => {
     const prompt = input.trim();
-    if (loading || (!prompt && pendingImages.length === 0)) return;
+    if (loading || (!prompt && pendingImages.length === 0 && pendingDocuments.length === 0)) return;
     const images = pendingImages.map((item) => item.file);
+    const documents = pendingDocuments.map((item) => item.file);
     pendingImages.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    pendingDocuments.forEach((item) => URL.revokeObjectURL(item.previewUrl));
     setPendingImages([]);
+    setPendingDocuments([]);
     setInput('');
 
     if (imageGenerationMode) {
+      if (documents.length) {
+        setUploadFeedback('Document attachments are analysed in Chat Mode. Switch off Generate to ask questions about these files.');
+        setPendingDocuments(documents.map((file) => ({ file, previewUrl: URL.createObjectURL(file) })));
+        setInput(prompt);
+        return;
+      }
       await runImageGeneration(
         prompt || 'Create a clean, accurate educational version of the attached reference image.',
         images
       );
     } else {
-      await runMentorPrompt(prompt, mode, images);
+      await runMentorPrompt(prompt, mode, images, documents);
     }
   };
 
@@ -1378,6 +1387,85 @@ These are the current browser tracker records. Ask your next question and I’ll
       setUploadFeedback('Clipboard access was blocked by this browser.');
     }
     window.setTimeout(() => setUploadFeedback(null), 2500);
+  };
+
+  const stageChatFiles = (files: File[]) => {
+    const nextImages: File[] = [];
+    const nextDocuments: File[] = [];
+    const allowedTextExtensions = new Set(['pdf', 'docx', 'txt', 'md', 'csv', 'json']);
+    const allowedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
+    let rejected = 0;
+
+    files.forEach((file) => {
+      const extension = file.name.toLowerCase().split('.').pop() || '';
+      const inferredMime =
+        extension === 'jpg' || extension === 'jpeg' ? 'image/jpeg' :
+        extension === 'png' ? 'image/png' :
+        extension === 'webp' ? 'image/webp' :
+        extension === 'pdf' ? 'application/pdf' :
+        extension === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
+        extension === 'csv' ? 'text/csv' :
+        extension === 'md' ? 'text/markdown' :
+        extension === 'txt' ? 'text/plain' :
+        file.type;
+      if (allowedImageTypes.has(inferredMime)) {
+        if (file.size <= 0 || file.size > 3 * 1024 * 1024) {
+          rejected += 1;
+          return;
+        }
+        nextImages.push(file.type === inferredMime ? file : new File([file], file.name, { type: inferredMime, lastModified: file.lastModified }));
+      } else if (allowedTextExtensions.has(extension)) {
+        if (file.size <= 0 || file.size > 8 * 1024 * 1024) {
+          rejected += 1;
+          return;
+        }
+        nextDocuments.push(file.type === inferredMime ? file : new File([file], file.name, { type: inferredMime, lastModified: file.lastModified }));
+      } else {
+        rejected += 1;
+      }
+    });
+
+    const allImagesCount = pendingImages.length + nextImages.length;
+    const allDocumentsCount = pendingDocuments.length + nextDocuments.length;
+    const totalPendingBytes = [...pendingImages.map((item) => item.file), ...pendingDocuments.map((item) => item.file), ...nextImages, ...nextDocuments]
+      .reduce((sum, file) => sum + file.size, 0);
+    if (allImagesCount > 4 || allDocumentsCount > 4 || totalPendingBytes > 18 * 1024 * 1024) {
+      setUploadFeedback('Attach up to 4 images and 4 documents per message (18 MB combined). Images must be ≤3 MB and documents ≤8 MB each.');
+      return;
+    }
+    if (nextImages.length) {
+      setPendingImages((current) => [
+        ...current,
+        ...nextImages.map((file) => ({ file, previewUrl: URL.createObjectURL(file) })),
+      ]);
+    }
+    if (nextDocuments.length) {
+      setPendingDocuments((current) => [
+        ...current,
+        ...nextDocuments.map((file) => ({ file, previewUrl: URL.createObjectURL(file) })),
+      ]);
+    }
+    const stagedCount = nextImages.length + nextDocuments.length;
+    setUploadFeedback(stagedCount
+      ? stagedCount + ' attachment(s) ready. Add your question and press Send.'
+      : 'Choose supported PDF, DOCX, TXT, MD, CSV, JSON, PNG, JPG or WEBP files.');
+    if (rejected) {
+      setUploadFeedback((current) => (current || '') + ' ' + rejected + ' unsupported or oversized file(s) skipped.');
+    }
+  };
+
+  const handleChatFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.currentTarget.files ? Array.from(event.currentTarget.files) : [];
+    event.currentTarget.value = '';
+    if (files.length) stageChatFiles(files);
+  };
+
+  const removePendingDocument = (previewUrl: string) => {
+    setPendingDocuments((current) => {
+      const item = current.find((entry) => entry.previewUrl === previewUrl);
+      if (item) URL.revokeObjectURL(item.previewUrl);
+      return current.filter((entry) => entry.previewUrl !== previewUrl);
+    });
   };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
