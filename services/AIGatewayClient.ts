@@ -95,7 +95,7 @@ export const generateGatewayVision = async ({
   try {
     const response = await fetch(getGatewayBaseUrl() + '/vision', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ prompt, system, history: history.slice(-10), images }),
       signal,
     });
@@ -178,7 +178,7 @@ export const generateGatewayImage = async ({
   try {
     const response = await fetch(getGatewayBaseUrl() + '/image', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ prompt, images }),
       signal,
     });
@@ -319,7 +319,7 @@ export const generateGatewayDocument = async ({
   try {
     const response = await fetch(getGatewayBaseUrl() + '/document', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ prompt, system, file }),
       signal,
     });
@@ -391,7 +391,7 @@ export const searchGatewayWeb = async (
   if (!trimmed) throw new Error('Enter a search query first.');
   const response = await fetch(getGatewayBaseUrl() + '/search', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ query: trimmed, limit: Math.max(1, Math.min(10, limit)) }),
     signal,
   });
@@ -491,6 +491,22 @@ export const testGeminiKeyConnection = async (
     message: `Google Gemini error: ${lastErrMsg || 'Unable to connect to configured models.'}`,
     latencyMs: Date.now() - start,
   };
+};
+
+const getGatewayAuthHeaders = async (headers: Record<string, string> = {}): Promise<Record<string, string>> => {
+  const nextHeaders = { ...headers };
+  try {
+    // Cloud Sync owns the authenticated Firebase session used by ACHIEVER.
+    // Send its short-lived ID token to the AI gateway; never send API keys.
+    const { cloudAuth } = await import('./CloudSyncService');
+    const user = cloudAuth.currentUser;
+    if (user) {
+      nextHeaders.Authorization = 'Bearer ' + await user.getIdToken();
+    }
+  } catch {
+    // Local-only sessions can still use the user's configured Gemini key fallback.
+  }
+  return nextHeaders;
 };
 
 const getGatewayBaseUrl = () => {
@@ -684,7 +700,7 @@ export const generateGatewayText = ({
     try {
       const response = await fetch(`${getGatewayBaseUrl()}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getGatewayAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ prompt, system }),
       });
 
