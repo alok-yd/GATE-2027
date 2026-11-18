@@ -25,7 +25,7 @@ From the repository root, deploy the existing Firestore rules and new Storage ru
 
 ```bash
 npx firebase-tools login
-npx firebase-tools deploy --only firestore:rules,storage --project gate-2027-a8850
+npx firebase-tools deploy --only storage --project gate-2027-a8850
 ```
 
 ## Important architecture note
