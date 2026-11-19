@@ -210,11 +210,11 @@ const getDailyTarget = (date: string): DailyTargetRecord | null => {
   return isRecord(value) ? value as DailyTargetRecord : null;
 };
 
-const getCloudDailyTarget = async (date: string): Promise<DailyTargetRecord | null> => {
+const getCloudDailyTarget = async (date: string): Promise<DailyTargetRecord | null | undefined> => {
   const key = dailyKey(date);
   const reference = doc(collection(cloudDb, 'users', currentUid(), 'appData'), encodeURIComponent(key));
   const snapshot = await getDoc(reference);
-  if (!snapshot.exists()) return null;
+  if (!snapshot.exists()) return undefined;
   const root = snapshot.data();
   if (root.deleted) return null;
 
@@ -425,8 +425,12 @@ export const getDailyStudyHours = async (input: {
     const cloudRecord = cloudRecordSnapshot.data();
     const key = String(cloudRecord.key || '');
     const match = key.match(/^gate_daily_target_(\d{4}-\d{2}-\d{2})$/);
-    if (!match || cloudRecord.deleted) continue;
+    if (!match) continue;
     const date = match[1];
+    if (cloudRecord.deleted) {
+      logsByDate.delete(date);
+      continue;
+    }
     cloudDates.add(date);
 
     let rawValue = typeof cloudRecord.value === 'string' ? cloudRecord.value : '';
@@ -572,7 +576,8 @@ export const upsertDailyStudyHours = async (input: {
   const sourceDetails = String(input.sourceDetails || 'Explicit single-date update requested in AI Mentor.').slice(0, 2000);
   await flushCloudSyncWritesNow([dailyKey(date), AUDIT_KEY]);
   const key = dailyKey(date);
-  const previous = await getCloudDailyTarget(date) || getDailyTarget(date);
+  const cloudPrevious = await getCloudDailyTarget(date);
+  const previous = cloudPrevious === undefined ? getDailyTarget(date) : cloudPrevious;
   const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
   const previousDisplayedHours = getDisplayedHours(previous, verifiedSeconds);
   const now = new Date().toISOString();
@@ -693,7 +698,8 @@ export const previewBulkDailyStudyHours = async (input: {
   await flushCloudSyncWritesNow(dates.map(dailyKey));
   const previousByDate = new Map<string, DailyTargetRecord | null>();
   await Promise.all(dates.map(async (date) => {
-    previousByDate.set(date, await getCloudDailyTarget(date) || getDailyTarget(date));
+    const cloudRecord = await getCloudDailyTarget(date);
+    previousByDate.set(date, cloudRecord === undefined ? getDailyTarget(date) : cloudRecord);
   }));
 
   for (const date of dates) {
@@ -709,9 +715,12 @@ export const previewBulkDailyStudyHours = async (input: {
         continue;
       }
       totalMinutes = totalValues[0];
-      chosenRows = explicitTotals.slice(0, 1);
+      chosenRows = [
+        ...explicitTotals.slice(0, 1),
+        ...dayRows.filter((row) => row.recordType === 'session' && row.subjectBreakdown.length > 0),
+      ];
       if (dayRows.length > explicitTotals.length) {
-        conflicts.push(`${date}: an explicit daily total was used; accompanying subject/session rows were not added again.`);
+        conflicts.push(`${date}: an explicit daily total was used; accompanying subject/session rows are retained as a breakdown only and are not added again.`);
       }
     } else {
       const signatures = new Set<string>();
@@ -830,6 +839,10 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
 
   const eligibleRows = staged.rows.filter((row) => row.action !== 'skip');
   if (!eligibleRows.length) {
+    localStorage.setItem(PENDING_IMPORT_KEY, JSON.stringify({
+      ...staged,
+      status: 'committed',
+    } satisfies StoredImportPreview));
     return {
       status: 'no_changes',
       previewId: staged.id,
@@ -868,7 +881,8 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   const latestRows: PreviewRow[] = [];
 
   for (const row of eligibleRows) {
-    const previous = cloudPreviousRecords.get(row.date) || getDailyTarget(row.date);
+    const cloudPrevious = cloudPreviousRecords.get(row.date);
+    const previous = cloudPrevious === undefined ? getDailyTarget(row.date) : cloudPrevious || null;
     const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(row.date);
     const previousHours = getDisplayedHours(previous, verifiedSeconds);
     const totalHours = roundHours(row.totalMinutes);
