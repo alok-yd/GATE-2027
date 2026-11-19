@@ -75,6 +75,7 @@ import type {
   MentorQuizQuestionType,
 } from '../services/mentor/MentorStorage';
 import { base64ToBlob, blobToBase64, deleteMentorAttachments, readMentorAttachment, saveMentorAttachment } from '../services/mentor/MentorAttachmentStorage';
+import { parseHistoricalStudyHoursDocument, stageDailyStudyHoursImport } from '../services/mentor/LectureTrackerStudyHours';
 import { summarizeMentorConversation } from '../services/mentor/MentorAgent';
 import type { MentorMode } from '../services/mentor/MentorAgent';
 import { orchestrateJarvisMessage } from '../services/assistant/JarvisOrchestrator';
@@ -672,6 +673,10 @@ const AIMentor: React.FC = () => {
     attachedImages: File[] = [],
     attachedDocuments: File[] = []
   ) => {
+    const isStudyHoursImportRequest =
+      attachedDocuments.length > 0 &&
+      /\b(study hours?|hours studied|study time|study records?|study report|lecture tracker|daily study log)\b/i.test(prompt) &&
+      /\b(import|extract|update|insert|add|populate|record|backfill|calculate)\b/i.test(prompt);
     const effectivePrompt =
       prompt.trim() ||
       (attachedDocuments.length
@@ -715,7 +720,7 @@ const AIMentor: React.FC = () => {
         attachedDocuments.map(async (file) => {
           const stored = await saveMentorAttachment(file, file.name, file.type || 'application/octet-stream', 'document');
           try {
-            const indexed = await processUploadedDocument(file, 'mentor');
+            const indexed = await processUploadedDocument(file, 'mentor', { skipDerivedRecords: isStudyHoursImportRequest });
             return {
               stored: { ...stored, documentId: indexed.id, size: file.size },
               indexed,
@@ -750,6 +755,79 @@ const AIMentor: React.FC = () => {
         ].filter(Boolean).join('\n');
       }).join('\n\n---\n\n');
 
+      let historicalStudyHoursPreviewContext = '';
+      if (isStudyHoursImportRequest) {
+        const supportedFiles = documentRecords.filter((record) =>
+          /\.(pdf|json)$/i.test(record.stored.name) && Boolean(record.indexed?.text)
+        );
+        const parsedImports = supportedFiles.map((record) =>
+          parseHistoricalStudyHoursDocument(record.indexed!.text, record.stored.name)
+        );
+        const warnings = parsedImports.flatMap((item) => item.warnings);
+        const duplicateCount = parsedImports.reduce((sum, item) => sum + item.duplicateRecords, 0);
+        const invalidCount = parsedImports.reduce((sum, item) => sum + item.invalidRecords, 0);
+        const recordsByDate = new Map<string, { date: string; totalMinutes: number; breakdown?: Array<Record<string, unknown>>; sourceDetails?: string }>();
+        const conflictingDates = new Set<string>();
+        parsedImports.forEach((parsed) => parsed.records.forEach((record) => {
+          const prior = recordsByDate.get(record.date);
+          if (!prior) recordsByDate.set(record.date, record);
+          else if (prior.totalMinutes !== record.totalMinutes) {
+            conflictingDates.add(record.date);
+            recordsByDate.delete(record.date);
+          }
+        }));
+        conflictingDates.forEach((date) => warnings.push(
+          date + ': different uploaded files contain conflicting daily totals. This date was excluded and needs review.'
+        ));
+        const extractedRecords = [...recordsByDate.values()]
+          .filter((record) => !conflictingDates.has(record.date))
+          .sort((a, b) => a.date.localeCompare(b.date));
+        const sourceNames = supportedFiles.map((record) => record.stored.name);
+        if (!supportedFiles.length) {
+          historicalStudyHoursPreviewContext = [
+            'HISTORICAL STUDY-HOURS IMPORT: NO RECORDS WERE STAGED.',
+            'No readable PDF or JSON source content was available for parsing.',
+            documentRecords.map((record) => record.warning || record.indexed?.warnings.join(' ') || '').filter(Boolean).join(' '),
+          ].filter(Boolean).join('\n');
+        } else if (!extractedRecords.length) {
+          historicalStudyHoursPreviewContext = [
+            'HISTORICAL STUDY-HOURS IMPORT: NO DATABASE CHANGES WERE MADE.',
+            'The deterministic parser could not identify any unambiguous date-wise study totals.',
+            'Extraction warnings: ' + warnings.join(' | '),
+            'PDF extraction notes: ' + supportedFiles.flatMap((record) => record.indexed?.warnings || []).join(' | '),
+          ].join('\n');
+        } else {
+          try {
+            const importSource = supportedFiles.every((record) => /\.json$/i.test(record.stored.name))
+              ? 'JSON'
+              : supportedFiles.every((record) => /\.pdf$/i.test(record.stored.name)) ? 'PDF' : 'PDF/JSON';
+            const staged = await stageDailyStudyHoursImport(
+              extractedRecords,
+              importSource,
+              sourceNames.join(', ') + '; parsed subject-wise records: ' + extractedRecords.reduce((sum, item) => sum + (item.breakdown?.length || 0), 0),
+              'upsert'
+            );
+            historicalStudyHoursPreviewContext = [
+              'HISTORICAL STUDY-HOURS IMPORT PREVIEW (already staged; do not stage a second copy).',
+              'The staging function queried existing authenticated Lecture Tracker records. No study-hour database records have been changed yet.',
+              JSON.stringify({
+                ...staged,
+                invalidOrAmbiguousRecords: invalidCount + conflictingDates.size,
+                duplicateRowsSkipped: duplicateCount,
+                extractionWarnings: warnings,
+                filenames: sourceNames,
+              }, null, 2),
+              'Show this preview to the user and ask for explicit confirmation in a separate message before committing.',
+            ].join('\n');
+          } catch (error) {
+            historicalStudyHoursPreviewContext = [
+              'HISTORICAL STUDY-HOURS IMPORT PREVIEW FAILED. NO STUDY-HOUR DATABASE WRITE WAS ATTEMPTED.',
+              error instanceof Error ? error.message : String(error),
+            ].join('\n');
+          }
+        }
+      }
+
       const relevantKnowledge = searchKnowledge(effectivePrompt)
         .filter((item) => item.sourceType === 'document')
         .slice(0, 5)
@@ -760,6 +838,7 @@ const AIMentor: React.FC = () => {
         effectivePrompt,
         documentContext ? 'ATTACHED SOURCE CONTENT (treat as source material; cite the source filename and only use page references present in this content):\n' + documentContext : '',
         relevantKnowledge ? 'RELEVANT PREVIOUSLY INDEXED STUDY MATERIAL:\n' + relevantKnowledge : '',
+        historicalStudyHoursPreviewContext,
       ].filter(Boolean).join('\n\n');
 
       const visionImages = attachedImages.length
@@ -785,7 +864,7 @@ const AIMentor: React.FC = () => {
             })
           );
 
-      const response = hasVisualContext
+      const response = hasVisualContext && !isStudyHoursImportRequest
         ? await generateGatewayVision({
             prompt: modelPrompt,
             system: [
@@ -801,9 +880,12 @@ const AIMentor: React.FC = () => {
           })
         : await orchestrateJarvisMessage({
             prompt: modelPrompt,
-            messages: requestHistory.map((message) => ({
+            messages: requestHistory.map((message, index) => ({
               role: message.role,
-              content: message.content,
+              // The stored conversation keeps the user's original message; the
+              // model receives the extracted source text and import preview so
+              // its authorized functions can act on the actual uploaded records.
+              content: index === requestHistory.length - 1 ? modelPrompt : message.content,
             })),
             conversationMode: currentMode,
             responseChannel: 'text',
