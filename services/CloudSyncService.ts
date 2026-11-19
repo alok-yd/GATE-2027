@@ -1136,7 +1136,7 @@ export const syncCloudDataNow = async (): Promise<void> => {
   updateState({
     status: pendingWrites.size ? 'syncing' : 'synced',
     message: pendingWrites.size
-      ? 'Some recent changes are still waiting to sync.'
+      ? 'Some local changes are still waiting to sync.'
       : 'Manual cloud sync completed.',
     lastSyncedAt: lastSyncedAt || Date.now(),
   });
