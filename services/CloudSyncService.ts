@@ -490,7 +490,7 @@ const applyRemoteRecord = async (
   });
   // Notify mounted modules that read the established logical localStorage keys.
   window.dispatchEvent(new Event('storage'));
-  const dailyTargetMatch = record.key.match(/^gate_daily_target_(\\d{4}-\\d{2}-\\d{2})$/);
+  const dailyTargetMatch = record.key.match(/^gate_daily_target_(\d{4}-\d{2}-\d{2})$/);
   if (dailyTargetMatch) {
     window.dispatchEvent(new CustomEvent('gate-lecture-study-hours-updated', {
       detail: { dates: [dailyTargetMatch[1]], source: 'cloud-sync' },
@@ -1059,7 +1059,7 @@ export const commitCloudSyncableRecordsNow = async (
 
   window.dispatchEvent(new Event('storage'));
   const dates = Array.from(unique.keys())
-    .map((key) => key.match(/^gate_daily_target_(\\d{4}-\\d{2}-\\d{2})$/)?.[1])
+    .map((key) => key.match(/^gate_daily_target_(\d{4}-\d{2}-\d{2})$/)?.[1])
     .filter((date): date is string => Boolean(date));
   if (dates.length) {
     window.dispatchEvent(new CustomEvent('gate-lecture-study-hours-updated', {
