@@ -456,6 +456,20 @@ const readArrayArg = (args: unknown, key: string): unknown[] => {
   return (args[key] as unknown[]).slice(0, 2000);
 };
 
+const getPromptStudyDurationMinutes = (prompt: string): number | null => {
+  const match = prompt.match(/(\\d+(?:\\.\\d+)?)\\s*(?:hours?|hrs?|h)\\b(?:\\s*(?:and\\s*)?(\\d+)\\s*(?:minutes?|mins?|m)\\b)?/i);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || minutes < 0 || minutes > 59) return null;
+  if (!Number.isInteger(hours) && minutes > 0) return null;
+  return Math.round(hours * 60) + minutes;
+};
+
+const promptContainsExactIsoDate = (prompt: string, date: string): boolean =>
+  new RegExp('(?:^|\\\\D)' + date.replace(/[.*+?^\\${}()|[\\]\\\\]/g, '\\\\const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
+  const text = prompt.toLowerCase();') + '(?:$|\\\\D)').test(prompt);
+
 const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
   const text = prompt.toLowerCase();
   if (
@@ -730,15 +744,26 @@ const executeMentorTool = async (
       }
       const date = readStringArg(args, 'date');
       const hours = readNumberArg(args, 'hours', NaN);
+      const minutes = readNumberArg(args, 'minutes', 0);
       if (!date || !Number.isFinite(hours)) {
         return { status: 'needs_clarification', missingFields: [!date ? 'date' : '', !Number.isFinite(hours) ? 'hours' : ''].filter(Boolean), message: 'No study-hour record was changed. Supply one exact date and duration.' };
+      }
+      const requestedMinutes = Number.isFinite(hours) && Number.isInteger(minutes) && minutes >= 0 && minutes <= 59
+        ? Math.round(hours * 60) + minutes
+        : NaN;
+      if (
+        !promptContainsExactIsoDate(latestUserPrompt, date) ||
+        !Number.isFinite(requestedMinutes) ||
+        getPromptStudyDurationMinutes(latestUserPrompt) !== requestedMinutes
+      ) {
+        return { status: 'not_authorized', saved: false, message: 'No study-hour record was changed. The date and exact duration must both be stated in the latest user message; I will not infer either from context.' };
       }
       const sourceText = readStringArg(args, 'source');
       const source = ['ai_mentor', 'manual', 'imported_json', 'imported_pdf'].includes(sourceText) ? sourceText : 'ai_mentor';
       return await upsertDailyStudyHours({
         date,
         hours,
-        minutes: readNumberArg(args, 'minutes', 0),
+        minutes,
         source: source as 'ai_mentor' | 'manual' | 'imported_json' | 'imported_pdf',
         sourceDetails: readStringArg(args, 'sourceDetails') || latestUserPrompt.slice(0, 500),
       });
@@ -777,6 +802,14 @@ const executeMentorTool = async (
         };
         const start = parseExactDate(startDate);
         const end = parseExactDate(endDate);
+        const promptDuration = getPromptStudyDurationMinutes(latestUserPrompt);
+        const requestedRangeDuration = Number.isFinite(hours) && (minutes === undefined || (Number.isInteger(minutes) && minutes >= 0 && minutes <= 59 && Number.isInteger(hours)))
+          ? Math.round(hours * 60) + (minutes || 0)
+          : NaN;
+        if (!promptContainsExactIsoDate(latestUserPrompt, startDate) || !promptContainsExactIsoDate(latestUserPrompt, endDate) ||
+            !Number.isFinite(requestedRangeDuration) || promptDuration !== requestedRangeDuration) {
+          return { status: 'not_authorized', message: 'No preview was created. The exact start date, end date and daily duration must all be stated in the latest user message; I will not infer missing values.' };
+        }
         if (!start || !end || start.getTime() > end.getTime() || !Number.isFinite(hours)) {
           return { status: 'needs_clarification', missingFields: [!start ? 'fillEachDate.startDate' : '', !end ? 'fillEachDate.endDate' : '', !Number.isFinite(hours) ? 'fillEachDate.hours' : ''].filter(Boolean), message: 'No preview was created. Supply exact valid start/end dates and a daily duration.' };
         }
@@ -1114,7 +1147,7 @@ INTELLIGENT DAILY-GOAL GUIDANCE
 HISTORICAL LECTURE TRACKER STUDY-HOURS MANAGEMENT
 - When the user asks for date-wise Total Studied Hours, historical daily totals or previous-day values, call get_daily_study_hours. Use its actual per-date displayed totals and clearly separate webcam-verified AI Focus seconds from manual/imported whole-day overrides.
 - A missing daily log is not evidence that no study occurred. Report a missing record as missing, not as a zero-hour day unless the verified AI Focus ledger itself confirms zero.
-- For a single date and exact duration, call upsert_daily_study_hours only when the latest user message explicitly instructs you to insert, set, correct or change that date's Lecture Tracker total. Never make up a date or duration. The write preserves the existing daily record fields and verified AI Focus ledger, writes to the signed-in user's Firebase records, then reads the database value back. Report success only when the function returns saved_and_verified.
+- For a single date and exact duration, call upsert_daily_study_hours only when the latest user message explicitly instructs you to insert, set, correct or change that date's Lecture Tracker total. The date and duration must both be explicit in that latest message; use YYYY-MM-DD dates and never make up a date or duration. The write preserves the existing daily record fields and verified AI Focus ledger, writes to the signed-in user's Firebase records, then reads the database value back. Report success only when the function returns saved_and_verified.
 - For an uploaded JSON/PDF study report, call get_uploaded_study_hours_document with its exact displayed file name. Review extraction warnings and confidence. For JSON, prefer the deterministic structured records and inspect invalidRecords; if json.recordLimitReached is true, do not preview or import the partial row set—ask for the source to be split into smaller files. For PDF/text, extract only dates and durations actually present in the supplied source. The tool returns bounded chunks: when document.truncated is true, call it again with the same documentName/documentId and document.nextOffset. Continue until truncated is false before presenting the complete import preview. If document.sourceTextComplete is false or warnings say the original local index was truncated/unreadable, do not claim the full source was processed and do not import a partial report. Do not silently omit pages or fabricate missing values.
 - Classify source rows carefully: a reported whole-day total is recordType daily_total; each individual subject or session line is recordType session. When a date has an explicit daily total and constituent subject/session lines, use the daily total only; do not add the session rows again. Otherwise aggregate distinct session rows for that date and remove exact duplicates. If the source has conflicting daily totals or ambiguous rows, leave those dates out of the preview and explain the conflict.
 - For multiple dates, an explicit identical-hours date range, or file imports, call preview_bulk_daily_study_hours first. This does not modify Lecture Tracker records. Show the inclusive date range, previous vs proposed totals, insert/update/skip actions, invalid rows, conflicts and any omitted preview rows. Include the exact returned Preview ID in the visible response. For an identical-hours range, ask for both exact start and end dates if either is missing; never assume when "every previous day" begins. Ask the user to confirm that exact preview before calling bulk_upsert_daily_study_hours in a later turn. A vague “yes” without the immediately preceding preview ID is not enough. If the user says no/cancel, do not write anything.
