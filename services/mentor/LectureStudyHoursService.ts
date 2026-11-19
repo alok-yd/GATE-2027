@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDocFromServer, getDocsFromServer, query, where } from 'firebase/firestore';
 import { cloudAuth, cloudDb, commitCloudSyncableRecordsNow, flushCloudSyncWritesNow } from '../CloudSyncService';
 import { getActiveUserStorageUid } from '../UserScopedStorage';
 import { StorageService } from '../../components/focus/services/storage';
@@ -225,7 +225,7 @@ const getCloudDailyTarget = async (date: string, uid: string): Promise<DailyTarg
   assertActiveUid(uid);
   const key = dailyKey(date);
   const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(key));
-  const snapshot = await getDoc(reference);
+  const snapshot = await getDocFromServer(reference);
   assertActiveUid(uid);
   if (!snapshot.exists()) return undefined;
   const root = snapshot.data();
@@ -233,7 +233,7 @@ const getCloudDailyTarget = async (date: string, uid: string): Promise<DailyTarg
 
   let rawValue = typeof root.value === 'string' ? root.value : '';
   if (root.chunked) {
-    const chunkSnapshot = await getDocs(collection(reference, 'chunks'));
+    const chunkSnapshot = await getDocsFromServer(collection(reference, 'chunks'));
     assertActiveUid(uid);
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
@@ -273,7 +273,7 @@ const getAuditRows = (): Array<Record<string, unknown>> => {
 const getCloudAuditRows = async (uid: string): Promise<Array<Record<string, unknown>>> => {
   assertActiveUid(uid);
   const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(AUDIT_KEY));
-  const snapshot = await getDoc(reference);
+  const snapshot = await getDocFromServer(reference);
   assertActiveUid(uid);
   if (!snapshot.exists()) return getAuditRows();
   if (snapshot.data().deleted) return [];
@@ -281,7 +281,7 @@ const getCloudAuditRows = async (uid: string): Promise<Array<Record<string, unkn
   const root = snapshot.data();
   let rawValue = typeof root.value === 'string' ? root.value : '';
   if (root.chunked) {
-    const chunkSnapshot = await getDocs(collection(reference, 'chunks'));
+    const chunkSnapshot = await getDocsFromServer(collection(reference, 'chunks'));
     assertActiveUid(uid);
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
@@ -319,7 +319,7 @@ const makeAuditEntry = (input: {
 const verifyCloudAuditEntries = async (uid: string, expectedIds: string[]): Promise<boolean> => {
   assertActiveUid(uid);
   const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(AUDIT_KEY));
-  const snapshot = await getDoc(reference);
+  const snapshot = await getDocFromServer(reference);
   assertActiveUid(uid);
   if (!snapshot.exists()) return false;
   const root = snapshot.data();
@@ -327,7 +327,7 @@ const verifyCloudAuditEntries = async (uid: string, expectedIds: string[]): Prom
 
   let rawValue = typeof root.value === 'string' ? root.value : '';
   if (root.chunked) {
-    const chunkSnapshot = await getDocs(collection(reference, 'chunks'));
+    const chunkSnapshot = await getDocsFromServer(collection(reference, 'chunks'));
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
       .map((chunk) => String(chunk.data().value ?? ''));
@@ -347,7 +347,7 @@ const verifyCloudRecord = async (
 ): Promise<{ date: string; exists: boolean; verified: boolean; savedHours: number | null; message: string }> => {
   assertActiveUid(uid);
   const key = dailyKey(date);
-  const snapshot = await getDoc(doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(key)));
+  const snapshot = await getDocFromServer(doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(key)));
   assertActiveUid(uid);
   if (!snapshot.exists()) {
     return { date, exists: false, verified: false, savedHours: null, message: 'No corresponding cloud record exists.' };
@@ -358,7 +358,7 @@ const verifyCloudRecord = async (
   }
   let rawValue = typeof data.value === 'string' ? data.value : '';
   if (data.chunked) {
-    const chunkSnapshot = await getDocs(collection(snapshot.ref, 'chunks'));
+    const chunkSnapshot = await getDocsFromServer(collection(snapshot.ref, 'chunks'));
     assertActiveUid(uid);
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
@@ -442,7 +442,7 @@ export const getDailyStudyHours = async (input: {
     where('key', '>=', `${dailyPrefix}${startDate}`),
     where('key', '<=', `${dailyPrefix}${endDate}`)
   );
-  const cloudSnapshot = await getDocs(cloudQuery);
+  const cloudSnapshot = await getDocsFromServer(cloudQuery);
   assertActiveUid(uid);
   const cloudDates = new Set<string>();
   for (const cloudRecordSnapshot of cloudSnapshot.docs) {
@@ -459,7 +459,7 @@ export const getDailyStudyHours = async (input: {
 
     let rawValue = typeof cloudRecord.value === 'string' ? cloudRecord.value : '';
     if (cloudRecord.chunked) {
-      const chunkSnapshot = await getDocs(collection(cloudRecordSnapshot.ref, 'chunks'));
+      const chunkSnapshot = await getDocsFromServer(collection(cloudRecordSnapshot.ref, 'chunks'));
       assertActiveUid(uid);
       const chunks = chunkSnapshot.docs
         .sort((left, right) => Number(left.data().index) - Number(right.data().index))
