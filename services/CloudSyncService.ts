@@ -490,6 +490,12 @@ const applyRemoteRecord = async (
   });
   // Notify mounted modules that read the established logical localStorage keys.
   window.dispatchEvent(new Event('storage'));
+  const dailyTargetMatch = record.key.match(/^gate_daily_target_(\\d{4}-\\d{2}-\\d{2})$/);
+  if (dailyTargetMatch) {
+    window.dispatchEvent(new CustomEvent('gate-lecture-study-hours-updated', {
+      detail: { dates: [dailyTargetMatch[1]], source: 'cloud-sync' },
+    }));
+  }
 };
 
 const flushKey = async (key: string): Promise<void> => {
@@ -979,6 +985,96 @@ export const signOutFromCloudSync = async (): Promise<void> => {
   await signOut(cloudAuth);
 };
 
+export interface CloudSyncRecordWrite {
+  key: string;
+  value: string;
+}
+
+/**
+ * Atomically persist a bounded set of existing logical localStorage records to
+ * the authenticated user's existing users/{uid}/appData collection.
+ *
+ * This is used by authorised in-app workflows that must know the Firebase
+ * write completed before reporting success. The UID is always derived from the
+ * active Firebase session; callers cannot choose another account.
+ */
+export const commitCloudSyncableRecordsNow = async (
+  records: CloudSyncRecordWrite[]
+): Promise<{ uid: string; keys: string[]; updatedAtClient: number }> => {
+  const user = currentUser;
+  if (!user) throw new Error('A signed-in Firebase account is required to modify Lecture Tracker records.');
+  if (!syncReady || getActiveUserStorageUid() !== user.uid) {
+    throw new Error('Your private ACHIEVER cloud space is still being prepared. Retry after account sync is ready.');
+  }
+  if (!Array.isArray(records) || records.length === 0 || records.length > 450) {
+    throw new Error('The cloud write must contain between 1 and 450 records.');
+  }
+
+  const unique = new Map<string, string>();
+  records.forEach((record) => {
+    if (!record || typeof record.key !== 'string' || !isCloudSyncableKey(record.key)) {
+      throw new Error('The requested record is not an approved ACHIEVER syncable key.');
+    }
+    if (typeof record.value !== 'string') {
+      throw new Error('Cloud record values must be serialized strings.');
+    }
+    unique.set(record.key, record.value);
+  });
+
+  // Finish older pending writes first so they cannot overwrite this operation.
+  await flushAllPending();
+  if (currentUser?.uid !== user.uid || getActiveUserStorageUid() !== user.uid) {
+    throw new Error('The authenticated ACHIEVER account changed before the write could be committed.');
+  }
+
+  const updatedAtClient = Date.now();
+  const batch = writeBatch(cloudDb);
+  unique.forEach((value, key) => {
+    batch.set(recordDocument(user.uid, key), {
+      key,
+      value,
+      deleted: false,
+      chunked: false,
+      chunkCount: 0,
+      updatedAtClient,
+      updatedAt: serverTimestamp(),
+      writerId: deviceId,
+      schemaVersion: SCHEMA_VERSION,
+    }, { merge: true });
+  });
+
+  await batch.commit();
+  if (currentUser?.uid !== user.uid) {
+    throw new Error('The Firebase account changed while the write was committing. Refresh the app before continuing.');
+  }
+
+  unique.forEach((value, key) => {
+    const timer = pendingTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    pendingTimers.delete(key);
+    pendingWrites.delete(key);
+    originalSetItem.call(window.localStorage, key, value);
+    markWriteSynced(user.uid, key, updatedAtClient);
+  });
+
+  window.dispatchEvent(new Event('storage'));
+  const dates = Array.from(unique.keys())
+    .map((key) => key.match(/^gate_daily_target_(\\d{4}-\\d{2}-\\d{2})$/)?.[1])
+    .filter((date): date is string => Boolean(date));
+  if (dates.length) {
+    window.dispatchEvent(new CustomEvent('gate-lecture-study-hours-updated', {
+      detail: { dates, source: 'ai-mentor-cloud-write' },
+    }));
+  }
+  updateState({
+    status: pendingWrites.size ? 'syncing' : 'synced',
+    message: 'Lecture Tracker records were committed to your private Firebase account.',
+    lastSyncedAt: updatedAtClient,
+  });
+
+  return { uid: user.uid, keys: Array.from(unique.keys()), updatedAtClient };
+};
+
 export const syncCloudDataNow = async (): Promise<void> => {
   if (!currentUser) throw new Error('Connect your Google account before syncing.');
   updateState({ status: 'syncing', message: 'Syncing recent ACHIEVER changes…' });
@@ -988,7 +1084,7 @@ export const syncCloudDataNow = async (): Promise<void> => {
   updateState({
     status: pendingWrites.size ? 'syncing' : 'synced',
     message: pendingWrites.size
-      ? 'Some local changes are still waiting to sync.'
+      ? 'Some recent changes are still waiting to sync.'
       : 'Manual cloud sync completed.',
     lastSyncedAt: lastSyncedAt || Date.now(),
   });
