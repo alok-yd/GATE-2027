@@ -493,7 +493,10 @@ const hasExplicitBulkConfirmation = (prompt: string): boolean => {
 
 const hasExplicitTaskWriteIntent = (prompt: string): boolean => {
   const text = prompt.toLowerCase();
-  if (/\\b(don't|do not|never|no need to)\\s+(add|create|insert|save|schedule)\\b/i.test(text)) {
+  if (
+    /\\b(don't|do not|never|no need to)\\s+(add|create|insert|save|schedule)\\b/i.test(text) ||
+    /(total studied hours|hours studied|study hours?|study time|daily total)/i.test(text)
+  ) {
     return false;
   }
   const hasActionVerb = /\\b(add|create|insert|save|schedule)\\b/i.test(text);
