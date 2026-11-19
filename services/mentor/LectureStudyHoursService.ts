@@ -1,0 +1,856 @@
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { cloudAuth, cloudDb, commitCloudSyncableRecordsNow } from '../CloudSyncService';
+import { getActiveUserStorageUid } from '../UserScopedStorage';
+import { StorageService } from '../../components/focus/services/storage';
+import { listDocuments } from '../AINativeServices';
+
+export type StudyHoursSource = 'ai_mentor' | 'manual' | 'imported_json' | 'imported_pdf';
+export type StudyHoursImportMode = 'replace' | 'skip_existing';
+export type ImportedStudyRecordType = 'session' | 'daily_total' | 'unknown';
+
+export interface StudyHoursInputRecord {
+  date: string;
+  hours: number;
+  minutes?: number;
+  subject?: string;
+  topic?: string;
+  recordType?: ImportedStudyRecordType;
+  sourceDetails?: string;
+}
+
+interface DailyTargetRecord {
+  date: string;
+  subject?: string;
+  goalDescription?: string;
+  hoursStudied?: number;
+  completionPercentage?: number;
+  hoursStudiedSource?: 'ai_focus' | 'manual';
+  manualHoursStudied?: number;
+  aiFocusVerifiedSeconds?: number;
+  studyHoursOverride?: {
+    source: StudyHoursSource;
+    sourceDetails: string;
+    importedAt: string;
+    importId?: string;
+    verifiedSecondsAtImport: number;
+    subjectBreakdown?: Array<{ subject: string; minutes: number; topic?: string }>;
+  };
+  [key: string]: unknown;
+}
+
+interface NormalizedStudyRecord {
+  date: string;
+  totalMinutes: number;
+  totalHours: number;
+  subjectBreakdown: Array<{ subject: string; minutes: number; topic?: string }>;
+  sourceDetails: string;
+  recordType: ImportedStudyRecordType;
+}
+
+interface PreviewRow extends NormalizedStudyRecord {
+  previousHours: number;
+  action: 'insert' | 'update' | 'skip';
+  existingRecord: boolean;
+}
+
+interface StoredImportPreview {
+  id: string;
+  uid: string;
+  createdAt: string;
+  expiresAt: number;
+  source: StudyHoursSource;
+  mode: StudyHoursImportMode;
+  rows: PreviewRow[];
+  invalidRecords: Array<{ index: number; reason: string }>;
+  conflicts: string[];
+  status: 'pending' | 'committed';
+}
+
+const DAILY_KEY_PREFIX = 'gate_daily_target_';
+const AUDIT_KEY = 'gate_daily_study_hours_audit_v1';
+const PENDING_IMPORT_KEY = 'gate_daily_study_hours_pending_import_v1';
+const MAX_IMPORT_SOURCE_ROWS = 2000;
+const MAX_IMPORT_DATES = 365;
+const MAX_AUDIT_ROWS = 800;
+const PREVIEW_TTL_MS = 30 * 60 * 1000;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const safeParse = <T,>(raw: string | null, fallback: T): T => {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const currentUid = (): string => {
+  const user = cloudAuth.currentUser;
+  if (!user?.uid) {
+    throw new Error('Sign in to your ACHIEVER account before managing Lecture Tracker study hours.');
+  }
+  if (getActiveUserStorageUid() !== user.uid) {
+    throw new Error('The private storage for this Firebase account is not active. Refresh ACHIEVER and retry.');
+  }
+  return user.uid;
+};
+
+const todayInKolkata = (): string => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: string) => parts.find((part) => part.type === type)?.value || '';
+  return `${value('year')}-${value('month')}-${value('day')}`;
+};
+
+const isValidIsoDate = (value: string): boolean => {
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  return check.getUTCFullYear() === year &&
+    check.getUTCMonth() === month - 1 &&
+    check.getUTCDate() === day;
+};
+
+const parseDocumentDate = (input: unknown): string | null => {
+  if (typeof input !== 'string' && typeof input !== 'number') return null;
+  const value = String(input).trim();
+  if (isValidIsoDate(value)) return value;
+
+  let match = value.match(/\\b(\\d{1,2})[\\/-](\\d{1,2})[\\/-](20\\d{2})\\b/);
+  if (match) {
+    const [, day, month, year] = match;
+    const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    return isValidIsoDate(iso) ? iso : null;
+  }
+
+  const monthMap: Record<string, string> = {
+    jan: '01', january: '01', feb: '02', february: '02', mar: '03', march: '03',
+    apr: '04', april: '04', may: '05', jun: '06', june: '06', jul: '07', july: '07',
+    aug: '08', august: '08', sep: '09', sept: '09', september: '09',
+    oct: '10', october: '10', nov: '11', november: '11', dec: '12', december: '12',
+  };
+  match = value.match(/\\b(\\d{1,2})\\s+([A-Za-z]+)\\.?[,]?\\s+(20\\d{2})\\b/);
+  if (match) {
+    const [, day, monthName, year] = match;
+    const month = monthMap[monthName.toLowerCase()];
+    if (!month) return null;
+    const iso = `${year}-${month}-${day.padStart(2, '0')}`;
+    return isValidIsoDate(iso) ? iso : null;
+  }
+  match = value.match(/\\b([A-Za-z]+)\\s+(\\d{1,2})[,]?\\s+(20\\d{2})\\b/);
+  if (match) {
+    const [, monthName, day, year] = match;
+    const month = monthMap[monthName.toLowerCase()];
+    if (!month) return null;
+    const iso = `${year}-${month}-${day.padStart(2, '0')}`;
+    return isValidIsoDate(iso) ? iso : null;
+  }
+  return null;
+};
+
+const parseDurationTextMinutes = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) return null;
+    return Math.round(value * 60);
+  }
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const text = value.trim();
+  if (/^\\d+(?:\\.\\d+)?$/.test(text)) return Math.round(Number(text) * 60);
+
+  const hours = text.match(/(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hour|hours)\\b/i);
+  const minutes = text.match(/(\\d+)\\s*(?:m|min|mins|minute|minutes)\\b/i);
+  if (!hours && !minutes) return null;
+  return Math.round((hours ? Number(hours[1]) * 60 : 0) + (minutes ? Number(minutes[1]) : 0));
+};
+
+const durationMinutesFromInput = (hoursValue: unknown, minutesValue: unknown): number | null => {
+  const hours = Number(hoursValue);
+  const minutes = minutesValue == null || minutesValue === '' ? 0 : Number(minutesValue);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || minutes < 0) return null;
+  if (!Number.isInteger(minutes) || minutes > 59) return null;
+  if (!Number.isInteger(hours) && minutes > 0) return null;
+  const total = Math.round(hours * 60) + minutes;
+  if (total > 24 * 60) return null;
+  return total;
+};
+
+const roundHours = (minutes: number): number => Number((minutes / 60).toFixed(4));
+const dailyKey = (date: string): string => `${DAILY_KEY_PREFIX}${date}`;
+
+const getDailyTarget = (date: string): DailyTargetRecord | null => {
+  const value = safeParse<unknown>(localStorage.getItem(dailyKey(date)), null);
+  return isRecord(value) ? value as DailyTargetRecord : null;
+};
+
+const getManualDisplayedHours = (record: DailyTargetRecord | null): number => {
+  if (!record || record.hoursStudiedSource !== 'manual') return 0;
+  const value = Number(record.manualHoursStudied ?? record.hoursStudied ?? 0);
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+};
+
+const getDisplayedHours = (record: DailyTargetRecord | null, verifiedSeconds: number): number => {
+  if (record?.hoursStudiedSource === 'manual') return getManualDisplayedHours(record);
+  return Number((verifiedSeconds / 3600).toFixed(4));
+};
+
+const getAuditRows = (): Array<Record<string, unknown>> => {
+  const parsed = safeParse<unknown>(localStorage.getItem(AUDIT_KEY), []);
+  return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
+};
+
+const makeAuditEntry = (input: {
+  id: string;
+  date: string;
+  source: StudyHoursSource;
+  sourceDetails: string;
+  previousHours: number;
+  newHours: number;
+  previousSource: string;
+  importId?: string;
+  timestamp: string;
+}) => ({
+  ...input,
+  action: input.previousSource === 'missing' ? 'insert' : 'update',
+  note: 'Historical whole-day total override. AI Focus verified-time ledger remains unchanged.',
+});
+
+const verifyCloudRecord = async (
+  uid: string,
+  date: string,
+  expectedMinutes?: number
+): Promise<{ date: string; exists: boolean; verified: boolean; savedHours: number | null; message: string }> => {
+  const key = dailyKey(date);
+  const snapshot = await getDoc(doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(key)));
+  if (!snapshot.exists()) {
+    return { date, exists: false, verified: false, savedHours: null, message: 'No corresponding cloud record exists.' };
+  }
+  const data = snapshot.data();
+  if (data.deleted || typeof data.value !== 'string') {
+    return { date, exists: false, verified: false, savedHours: null, message: 'The cloud record is marked deleted or has no inline value.' };
+  }
+  const record = safeParse<unknown>(data.value, null);
+  if (!isRecord(record)) {
+    return { date, exists: true, verified: false, savedHours: null, message: 'The saved cloud record is not valid daily study-log JSON.' };
+  }
+  const hours = Number(record.hoursStudiedSource === 'manual'
+    ? (record.manualHoursStudied ?? record.hoursStudied)
+    : StorageService.getVerifiedStudySecondsForDate(date) / 3600);
+  const savedMinutes = Number.isFinite(hours) ? Math.round(hours * 60) : NaN;
+  const verified = expectedMinutes == null
+    ? Number.isFinite(savedMinutes)
+    : Number.isFinite(savedMinutes) && savedMinutes === expectedMinutes;
+  return {
+    date,
+    exists: true,
+    verified,
+    savedHours: Number.isFinite(hours) ? Number(hours.toFixed(4)) : null,
+    message: verified ? 'Cloud record was read back and matches the requested total.' : 'Cloud record does not match the requested total.',
+  };
+};
+
+export const getDailyStudyHours = async (input: {
+  startDate?: string;
+  endDate?: string;
+} = {}) => {
+  const uid = currentUid();
+  const today = todayInKolkata();
+  const endDate = input.endDate || today;
+  const startDate = input.startDate || (() => {
+    const date = new Date(`${endDate}T00:00:00.000Z`);
+    date.setUTCDate(date.getUTCDate() - 29);
+    return date.toISOString().slice(0, 10);
+  })();
+
+  if (!isValidIsoDate(startDate) || !isValidIsoDate(endDate) || startDate > endDate) {
+    throw new Error('Provide a valid date range in YYYY-MM-DD format, with startDate on or before endDate.');
+  }
+  if (endDate > today) throw new Error('Future dates are not accepted for historical study-hour records.');
+  const rangeDays = Math.floor((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000) + 1;
+  if (rangeDays > 3650) throw new Error('A single history query can cover at most 10 years.');
+
+  const logsByDate = new Map<string, DailyTargetRecord>();
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key) continue;
+    const match = key.match(/^gate_daily_target_(\\d{4}-\\d{2}-\\d{2})$/);
+    if (!match) continue;
+    const date = match[1];
+    if (date < startDate || date > endDate) continue;
+    const value = safeParse<unknown>(localStorage.getItem(key), null);
+    if (isRecord(value)) logsByDate.set(date, value as DailyTargetRecord);
+  }
+
+  const verifiedByDate = new Map(
+    StorageService.getVerifiedStudyTimeHistory(3650)
+      .filter((row) => row.date >= startDate && row.date <= endDate)
+      .map((row) => [row.date, row])
+  );
+  const allDates = new Set([...logsByDate.keys(), ...verifiedByDate.keys()]);
+  const records = Array.from(allDates)
+    .sort()
+    .map((date) => {
+      const stored = logsByDate.get(date) || null;
+      const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
+      const source = stored?.hoursStudiedSource || 'legacy_or_unlabelled';
+      const manualHours = getManualDisplayedHours(stored);
+      const verifiedHours = Number((verifiedSeconds / 3600).toFixed(4));
+      return {
+        date,
+        totalStudiedHours: getDisplayedHours(stored, verifiedSeconds),
+        totalStudiedMinutes: Math.round(getDisplayedHours(stored, verifiedSeconds) * 60),
+        verifiedStudySeconds: verifiedSeconds,
+        verifiedStudyHours: verifiedHours,
+        manuallyRecordedHours: manualHours,
+        importedHistoricalHours: stored?.studyHoursOverride?.source?.startsWith('imported_')
+          ? manualHours
+          : null,
+        studyHoursSource: source,
+        sourceDetails: stored?.studyHoursOverride?.sourceDetails || null,
+        subject: stored?.subject || null,
+        goalDescription: stored?.goalDescription || null,
+        hasDailyLog: Boolean(stored),
+        note: stored?.hoursStudiedSource === 'manual'
+          ? 'The displayed daily total uses the saved manual/imported whole-day override. Verified AI Focus time is reported separately and is not added again.'
+          : 'The displayed daily total uses the AI Focus verified-time ledger. Unlabelled legacy hours are not assumed to be manually verified.',
+      };
+    });
+
+  return {
+    uid,
+    timezone: 'Asia/Kolkata',
+    range: { startDate, endDate, days: rangeDays },
+    totals: {
+      displayedStudyHours: Number(records.reduce((sum, row) => sum + row.totalStudiedHours, 0).toFixed(2)),
+      verifiedStudyHours: Number(records.reduce((sum, row) => sum + row.verifiedStudyHours, 0).toFixed(2)),
+      manuallyRecordedHours: Number(records.reduce((sum, row) => sum + row.manuallyRecordedHours, 0).toFixed(2)),
+      daysWithRecords: records.filter((row) => row.hasDailyLog || row.verifiedStudySeconds > 0).length,
+    },
+    records,
+    dataPolicy: [
+      'The existing Lecture Tracker daily record key gate_daily_target_YYYY-MM-DD is the canonical whole-day log.',
+      'AI Focus verified time comes only from its persistent verified ledger; imported totals never edit that ledger.',
+      'When a manual/imported whole-day total is active, it is displayed as the day total and verified time is shown separately to avoid double-counting.',
+      'A missing or unlabelled historical number is not silently reclassified as a verified or manually confirmed duration.',
+    ],
+  };
+};
+
+export const verifyDailyStudyHours = async (input: {
+  dates?: string[];
+  expectedRecords?: Array<{ date: string; hours: number; minutes?: number }>;
+}) => {
+  const uid = currentUid();
+  const dates = Array.from(new Set([
+    ...(input.dates || []),
+    ...(input.expectedRecords || []).map((record) => record.date),
+  ]));
+  if (!dates.length || dates.length > 365) throw new Error('Provide between 1 and 365 dates to verify.');
+  const expectedByDate = new Map<string, number>();
+  (input.expectedRecords || []).forEach((record) => {
+    if (!isValidIsoDate(record.date)) throw new Error(`Invalid verification date: ${record.date}`);
+    const minutes = durationMinutesFromInput(record.hours, record.minutes);
+    if (minutes == null) throw new Error(`Invalid expected duration for ${record.date}.`);
+    expectedByDate.set(record.date, minutes);
+  });
+  const checks = await Promise.all(dates.map((date) => {
+    if (!isValidIsoDate(date)) throw new Error(`Invalid verification date: ${date}`);
+    return verifyCloudRecord(uid, date, expectedByDate.get(date));
+  }));
+  return {
+    uid,
+    checkedAt: new Date().toISOString(),
+    successful: checks.filter((check) => check.verified).length,
+    failed: checks.filter((check) => !check.verified).length,
+    checks,
+  };
+};
+
+export const upsertDailyStudyHours = async (input: {
+  date: string;
+  hours: number;
+  minutes?: number;
+  source?: StudyHoursSource;
+  sourceDetails?: string;
+}) => {
+  const uid = currentUid();
+  const { date } = input;
+  if (!isValidIsoDate(date) || date > todayInKolkata()) {
+    throw new Error('Enter a valid historical or current date in YYYY-MM-DD format.');
+  }
+  const totalMinutes = durationMinutesFromInput(input.hours, input.minutes);
+  if (totalMinutes == null) {
+    throw new Error('Duration must be non-negative, no more than 24 hours, and use integer minutes from 0 to 59.');
+  }
+
+  const source = input.source || 'ai_mentor';
+  const sourceDetails = String(input.sourceDetails || 'Explicit single-date update requested in AI Mentor.').slice(0, 2000);
+  const key = dailyKey(date);
+  const previous = getDailyTarget(date);
+  const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
+  const previousDisplayedHours = getDisplayedHours(previous, verifiedSeconds);
+  const now = new Date().toISOString();
+  const importId = `single_${date}_${Date.now()}`;
+  const totalHours = roundHours(totalMinutes);
+  const updated: DailyTargetRecord = {
+    ...(previous || {
+      date,
+      subject: '',
+      goalDescription: '',
+      completionPercentage: 0,
+    }),
+    date,
+    hoursStudied: totalHours,
+    hoursStudiedSource: 'manual',
+    manualHoursStudied: totalHours,
+    aiFocusVerifiedSeconds: verifiedSeconds,
+    studyHoursOverride: {
+      source,
+      sourceDetails,
+      importedAt: now,
+      importId,
+      verifiedSecondsAtImport: verifiedSeconds,
+    },
+  };
+
+  const audit = getAuditRows();
+  const nextAudit = [
+    ...audit,
+    makeAuditEntry({
+      id: `${importId}:${date}`,
+      date,
+      source,
+      sourceDetails,
+      previousHours: previousDisplayedHours,
+      newHours: totalHours,
+      previousSource: previous ? String(previous.hoursStudiedSource || 'legacy_or_unlabelled') : 'missing',
+      importId,
+      timestamp: now,
+    }),
+  ].slice(-MAX_AUDIT_ROWS);
+
+  await commitCloudSyncableRecordsNow([
+    { key, value: JSON.stringify(updated) },
+    { key: AUDIT_KEY, value: JSON.stringify(nextAudit) },
+  ]);
+  const verification = await verifyCloudRecord(uid, date, totalMinutes);
+  return {
+    status: verification.verified ? 'saved_and_verified' : 'verification_failed',
+    date,
+    previousHours: previousDisplayedHours,
+    savedHours: totalHours,
+    verifiedStudyHoursPreserved: Number((verifiedSeconds / 3600).toFixed(4)),
+    source,
+    firebaseUid: uid,
+    verification,
+    message: verification.verified
+      ? 'The existing Lecture Tracker daily record was written to Firebase and read back successfully.'
+      : 'The cloud write was attempted, but read-back verification did not match. Do not report success.',
+  };
+};
+
+const normalizeInputRow = (row: StudyHoursInputRecord, index: number): NormalizedStudyRecord => {
+  const date = parseDocumentDate(row.date);
+  if (!date) throw new Error(`Record ${index + 1}: date must include a valid day, month and year.`);
+  if (date > todayInKolkata()) throw new Error(`Record ${index + 1}: future date ${date} is not allowed.`);
+  const totalMinutes = durationMinutesFromInput(row.hours, row.minutes);
+  if (totalMinutes == null) throw new Error(`Record ${index + 1}: invalid or greater-than-24-hour duration.`);
+  return {
+    date,
+    totalMinutes,
+    totalHours: roundHours(totalMinutes),
+    subjectBreakdown: row.subject?.trim()
+      ? [{ subject: row.subject.trim().slice(0, 100), minutes: totalMinutes, ...(row.topic?.trim() ? { topic: row.topic.trim().slice(0, 160) } : {}) }]
+      : [],
+    sourceDetails: String(row.sourceDetails || '').trim().slice(0, 500),
+    recordType: row.recordType || 'unknown',
+  };
+};
+
+export const previewBulkDailyStudyHours = (input: {
+  records: StudyHoursInputRecord[];
+  source: StudyHoursSource;
+  mode?: StudyHoursImportMode;
+  sourceDetails?: string;
+}) => {
+  const uid = currentUid();
+  if (!Array.isArray(input.records) || input.records.length === 0 || input.records.length > MAX_IMPORT_SOURCE_ROWS) {
+    throw new Error(`Provide between 1 and ${MAX_IMPORT_SOURCE_ROWS} extracted study rows.`);
+  }
+  const mode: StudyHoursImportMode = input.mode === 'skip_existing' ? 'skip_existing' : 'replace';
+  const invalidRecords: Array<{ index: number; reason: string }> = [];
+  const parsedRows: NormalizedStudyRecord[] = [];
+  input.records.forEach((row, index) => {
+    try {
+      if (!isRecord(row)) throw new Error('Record must be an object.');
+      parsedRows.push(normalizeInputRow(row, index));
+    } catch (error) {
+      invalidRecords.push({ index: index + 1, reason: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  const grouped = new Map<string, NormalizedStudyRecord[]>();
+  parsedRows.forEach((row) => grouped.set(row.date, [...(grouped.get(row.date) || []), row]));
+  if (grouped.size > MAX_IMPORT_DATES) throw new Error(`This import contains more than ${MAX_IMPORT_DATES} unique dates.`);
+
+  const conflicts: string[] = [];
+  const rows: PreviewRow[] = [];
+  const dates = Array.from(grouped.keys()).sort();
+  dates.forEach((date) => {
+    const dayRows = grouped.get(date) || [];
+    const explicitTotals = dayRows.filter((row) => row.recordType === 'daily_total');
+    let totalMinutes = 0;
+    let chosenRows: NormalizedStudyRecord[] = [];
+
+    if (explicitTotals.length) {
+      const totalValues = Array.from(new Set(explicitTotals.map((row) => row.totalMinutes)));
+      if (totalValues.length > 1) {
+        conflicts.push(`${date}: conflicting explicit daily totals (${totalValues.join(', ')} minutes). This date was not staged.`);
+        return;
+      }
+      totalMinutes = totalValues[0];
+      chosenRows = explicitTotals.slice(0, 1);
+      if (dayRows.length > explicitTotals.length) {
+        conflicts.push(`${date}: an explicit daily total was used; accompanying subject/session rows were not added again.`);
+      }
+    } else {
+      const signatures = new Set<string>();
+      const uniqueRows = dayRows.filter((row) => {
+        const signature = [row.totalMinutes, row.subjectBreakdown[0]?.subject || '', row.subjectBreakdown[0]?.topic || '', row.sourceDetails].join('|');
+        if (signatures.has(signature)) return false;
+        signatures.add(signature);
+        return true;
+      });
+      chosenRows = uniqueRows;
+      totalMinutes = uniqueRows.reduce((sum, row) => sum + row.totalMinutes, 0);
+    }
+
+    if (totalMinutes > 24 * 60) {
+      conflicts.push(`${date}: combined duration exceeds 24 hours. This date was not staged.`);
+      return;
+    }
+
+    const previous = getDailyTarget(date);
+    const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
+    const previousHours = getDisplayedHours(previous, verifiedSeconds);
+    const existingRecord = Boolean(previous);
+    const shouldSkip = mode === 'skip_existing' && existingRecord;
+    rows.push({
+      date,
+      totalMinutes,
+      totalHours: roundHours(totalMinutes),
+      subjectBreakdown: chosenRows.flatMap((row) => row.subjectBreakdown),
+      sourceDetails: [
+        input.sourceDetails || '',
+        ...chosenRows.map((row) => row.sourceDetails),
+      ].filter(Boolean).join(' | ').slice(0, 2000),
+      recordType: explicitTotals.length ? 'daily_total' : chosenRows.length > 1 ? 'session' : chosenRows[0]?.recordType || 'unknown',
+      previousHours,
+      action: shouldSkip ? 'skip' : existingRecord ? 'update' : 'insert',
+      existingRecord,
+    });
+  });
+
+  if (!rows.length) {
+    return {
+      status: 'no_valid_records',
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+      invalidRecords,
+      conflicts,
+      message: 'No valid date-wise study-hour totals were prepared. No tracker data was changed.',
+    };
+  }
+
+  const now = new Date().toISOString();
+  const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `study_import_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  const preview: StoredImportPreview = {
+    id,
+    uid,
+    createdAt: now,
+    expiresAt: Date.now() + PREVIEW_TTL_MS,
+    source: input.source,
+    mode,
+    rows,
+    invalidRecords,
+    conflicts,
+    status: 'pending',
+  };
+  localStorage.setItem(PENDING_IMPORT_KEY, JSON.stringify(preview));
+  window.dispatchEvent(new Event('storage'));
+
+  return {
+    status: 'preview_ready',
+    previewId: id,
+    expiresInMinutes: 30,
+    mode,
+    summary: {
+      sourceRecords: input.records.length,
+      validDateRows: parsedRows.length,
+      uniqueDates: rows.length,
+      newRecords: rows.filter((row) => row.action === 'insert').length,
+      updates: rows.filter((row) => row.action === 'update').length,
+      skippedExisting: rows.filter((row) => row.action === 'skip').length,
+      totalImportedHours: Number(rows.filter((row) => row.action !== 'skip').reduce((sum, row) => sum + row.totalHours, 0).toFixed(2)),
+      invalidRecords: invalidRecords.length,
+      conflicts: conflicts.length,
+    },
+    rows: rows.slice(0, 60).map((row) => ({
+      date: row.date,
+      previousHours: row.previousHours,
+      importedHours: row.totalHours,
+      action: row.action,
+      subjectBreakdown: row.subjectBreakdown,
+      note: row.sourceDetails || undefined,
+    })),
+    omittedPreviewRows: Math.max(0, rows.length - 60),
+    invalidRecords: invalidRecords.slice(0, 40),
+    conflicts: conflicts.slice(0, 40),
+    confirmationRequired: true,
+    message: 'This is a preview only. No Lecture Tracker record has been changed. Ask the user to confirm before calling bulk_upsert_daily_study_hours.',
+  };
+};
+
+export const commitBulkDailyStudyHours = async (input: { previewId?: string } = {}) => {
+  const uid = currentUid();
+  const preview = safeParse<unknown>(localStorage.getItem(PENDING_IMPORT_KEY), null);
+  if (!isRecord(preview) || preview.uid !== uid || preview.status !== 'pending') {
+    throw new Error('No pending study-hour import preview exists for this signed-in account. Create a new preview first.');
+  }
+  const staged = preview as unknown as StoredImportPreview;
+  if (input.previewId && input.previewId !== staged.id) {
+    throw new Error('The supplied preview ID does not match the latest pending import for this account.');
+  }
+  if (staged.expiresAt < Date.now()) {
+    throw new Error('The import preview expired. Recreate the preview before confirming.');
+  }
+
+  const eligibleRows = staged.rows.filter((row) => row.action !== 'skip');
+  if (!eligibleRows.length) {
+    throw new Error('The preview contains no records to insert or update.');
+  }
+  if (eligibleRows.length > MAX_IMPORT_DATES) {
+    throw new Error('The pending import is larger than the supported 365 daily records.');
+  }
+
+  const now = new Date().toISOString();
+  const auditRows = getAuditRows();
+  const nextAudit = [...auditRows];
+  const cloudRecords: Array<{ key: string; value: string }> = [];
+  const committedRows: Array<{ date: string; hours: number; minutes: number }> = [];
+  const latestRows: PreviewRow[] = [];
+
+  for (const row of eligibleRows) {
+    const previous = getDailyTarget(row.date);
+    const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(row.date);
+    const previousHours = getDisplayedHours(previous, verifiedSeconds);
+    const totalHours = roundHours(row.totalMinutes);
+    const importId = staged.id;
+    const sourceDetails = [row.sourceDetails, `Imported via AI Mentor from ${staged.source}.`].filter(Boolean).join(' ').slice(0, 2000);
+    const updated: DailyTargetRecord = {
+      ...(previous || {
+        date: row.date,
+        subject: '',
+        goalDescription: '',
+        completionPercentage: 0,
+      }),
+      date: row.date,
+      hoursStudied: totalHours,
+      hoursStudiedSource: 'manual',
+      manualHoursStudied: totalHours,
+      aiFocusVerifiedSeconds: verifiedSeconds,
+      studyHoursOverride: {
+        source: staged.source,
+        sourceDetails,
+        importedAt: now,
+        importId,
+        verifiedSecondsAtImport: verifiedSeconds,
+        subjectBreakdown: row.subjectBreakdown,
+      },
+    };
+    cloudRecords.push({ key: dailyKey(row.date), value: JSON.stringify(updated) });
+    nextAudit.push(makeAuditEntry({
+      id: `${importId}:${row.date}`,
+      date: row.date,
+      source: staged.source,
+      sourceDetails,
+      previousHours,
+      newHours: totalHours,
+      previousSource: previous ? String(previous.hoursStudiedSource || 'legacy_or_unlabelled') : 'missing',
+      importId,
+      timestamp: now,
+    }));
+    committedRows.push({ date: row.date, hours: Math.floor(row.totalMinutes / 60), minutes: row.totalMinutes % 60 });
+    latestRows.push({ ...row, previousHours });
+  }
+
+  const finalizedPreview: StoredImportPreview = {
+    ...staged,
+    status: 'committed',
+  };
+  const trimmedAudit = nextAudit.slice(-MAX_AUDIT_ROWS);
+  cloudRecords.push({ key: AUDIT_KEY, value: JSON.stringify(trimmedAudit) });
+  cloudRecords.push({ key: PENDING_IMPORT_KEY, value: JSON.stringify(finalizedPreview) });
+
+  await commitCloudSyncableRecordsNow(cloudRecords);
+
+  const verification = await verifyDailyStudyHours({
+    expectedRecords: committedRows,
+  });
+  const verifiedDates = verification.checks.filter((check) => check.verified).map((check) => check.date);
+  return {
+    status: verification.failed === 0 ? 'saved_and_verified' : 'partial_verification_failure',
+    previewId: staged.id,
+    mode: staged.mode,
+    inserted: latestRows.filter((row) => !row.existingRecord).length,
+    updated: latestRows.filter((row) => row.existingRecord).length,
+    skipped: staged.rows.filter((row) => row.action === 'skip').length,
+    totalDates: staged.rows.length,
+    totalImportedHours: Number(committedRows.reduce((sum, row) => sum + row.hours + row.minutes / 60, 0).toFixed(2)),
+    verifiedDates,
+    failedDates: verification.checks.filter((check) => !check.verified),
+    auditTrailSaved: verification.successful === committedRows.length,
+    firebaseUid: uid,
+    message: verification.failed === 0
+      ? 'Bulk study-hour records were written atomically to the authenticated Firebase user and read back successfully.'
+      : 'Some cloud records did not pass read-back verification. Do not report the entire import as successful.',
+  };
+};
+
+const JSON_DATE_KEYS = ['date', 'studyDate', 'study_date', 'logDate', 'log_date', 'studyDay', 'study_day'];
+const JSON_HOUR_KEYS = [
+  'total_studied_hours', 'totalStudiedHours', 'hoursStudied', 'hours_studied',
+  'studiedHours', 'studied_hours', 'studyHours', 'study_hours', 'totalHours', 'total_hours', 'hours',
+  'durationHours', 'duration_hours',
+];
+const JSON_MINUTE_KEYS = [
+  'total_studied_minutes', 'totalStudiedMinutes', 'minutesStudied', 'minutes_studied',
+  'studyMinutes', 'study_minutes', 'totalMinutes', 'total_minutes', 'minutes',
+  'durationMinutes', 'duration_minutes',
+];
+
+const findKey = (object: Record<string, unknown>, keys: string[]) =>
+  keys.find((key) => Object.prototype.hasOwnProperty.call(object, key));
+
+const parseStudyRowsFromJson = (rawText: string) => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    return { validJson: false, records: [] as StudyHoursInputRecord[], message: 'The document is not valid JSON.' };
+  }
+  const records: StudyHoursInputRecord[] = [];
+  const visit = (value: unknown, path: string): void => {
+    if (records.length >= MAX_IMPORT_SOURCE_ROWS) return;
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, `${path}[${index}]`));
+      return;
+    }
+    if (!isRecord(value)) return;
+    const dateKey = findKey(value, JSON_DATE_KEYS);
+    const hourKey = findKey(value, JSON_HOUR_KEYS);
+    const minuteKey = findKey(value, JSON_MINUTE_KEYS);
+    if (dateKey && (hourKey || minuteKey)) {
+      const date = parseDocumentDate(value[dateKey]);
+      const hoursValue = hourKey ? parseDurationTextMinutes(value[hourKey]) : 0;
+      const minuteValue = minuteKey ? parseDurationTextMinutes(value[minuteKey]) : 0;
+      if (date && hoursValue != null && minuteValue != null) {
+        const totalMinutes = hoursValue + (minuteKey ? (typeof value[minuteKey] === 'number' ? Math.round(Number(value[minuteKey])) : minuteValue) : 0);
+        if (totalMinutes <= 24 * 60) {
+          const subjectValue = value.subject ?? value.course ?? value.subjectName ?? value.subject_name;
+          const topicValue = value.topic ?? value.chapter ?? value.unit;
+          const typeValue = String(value.recordType ?? value.record_type ?? value.type ?? '').toLowerCase();
+          const isDailyTotal = /daily.?total|summary|whole.?day|total/i.test(typeValue) ||
+            /total_studied|totalStudied|total_hours|totalHours/i.test(hourKey || '');
+          records.push({
+            date,
+            hours: Math.floor(totalMinutes / 60),
+            minutes: totalMinutes % 60,
+            ...(typeof subjectValue === 'string' ? { subject: subjectValue } : {}),
+            ...(typeof topicValue === 'string' ? { topic: topicValue } : {}),
+            recordType: isDailyTotal ? 'daily_total' : subjectValue ? 'session' : 'unknown',
+            sourceDetails: `JSON ${path}; fields: ${[dateKey, hourKey, minuteKey].filter(Boolean).join(', ')}`,
+          });
+        }
+      }
+      return;
+    }
+    Object.entries(value).forEach(([key, child]) => visit(child, path ? `${path}.${key}` : key));
+  };
+  visit(parsed, '$');
+  return {
+    validJson: true,
+    records,
+    message: records.length
+      ? 'Structured study-hour rows were extracted from the JSON document.'
+      : 'The JSON is valid, but no objects with both a date and study duration were identified.',
+  };
+};
+
+export const getUploadedStudyHoursDocument = (input: { documentName?: string; documentId?: string } = {}) => {
+  currentUid();
+  const documents = listDocuments();
+  let matches = documents;
+  if (input.documentId) matches = matches.filter((document) => document.id === input.documentId);
+  if (input.documentName) {
+    const requested = input.documentName.trim().toLowerCase();
+    matches = matches.filter((document) => document.name.toLowerCase() === requested);
+  }
+  if (!input.documentId && !input.documentName) {
+    return {
+      status: 'needs_document_name',
+      candidates: documents.slice(0, 12).map((document) => ({ id: document.id, name: document.name, kind: document.kind })),
+      message: 'Specify the uploaded study-record PDF or JSON by its exact displayed file name.',
+    };
+  }
+  if (matches.length === 0) {
+    return {
+      status: 'not_found',
+      message: 'No indexed AI Mentor document matched that file name or ID. Reattach the file or check its exact name.',
+    };
+  }
+  if (matches.length > 1) {
+    return {
+      status: 'ambiguous',
+      candidates: matches.map((document) => ({ id: document.id, name: document.name, createdAt: document.createdAt })),
+      message: 'More than one indexed document has this name. Select the exact document ID.',
+    };
+  }
+
+  const document = matches[0];
+  const isJson = document.name.toLowerCase().endsWith('.json');
+  const jsonExtraction = isJson ? parseStudyRowsFromJson(document.text) : null;
+  const maxChars = 120000;
+  return {
+    status: document.text.trim() ? 'ready' : 'no_readable_text',
+    document: {
+      id: document.id,
+      name: document.name,
+      kind: document.kind,
+      extractionConfidence: document.extractionConfidence,
+      warnings: document.warnings,
+      textLength: document.text.length,
+      extractedText: document.text.slice(0, maxChars),
+      truncated: document.text.length > maxChars,
+    },
+    ...(jsonExtraction ? {
+      json: {
+        validJson: jsonExtraction.validJson,
+        records: jsonExtraction.records,
+        extractedRecordCount: jsonExtraction.records.length,
+        message: jsonExtraction.message,
+      },
+    } : {}),
+    message: document.warnings?.length
+      ? 'Review the extraction warnings before treating ambiguous rows as facts. The original uploaded attachment is retained separately.'
+      : 'The indexed document text is ready for source-grounded extraction.',
+  };
+};
