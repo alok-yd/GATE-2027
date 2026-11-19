@@ -466,8 +466,50 @@ const getPromptStudyDurationMinutes = (prompt: string): number | null => {
   return Math.round(hours * 60) + minutes;
 };
 
-const promptContainsExactIsoDate = (prompt: string, date: string): boolean =>
-  new RegExp('(^|[^0-9])' + date + '([^0-9]|$)').test(prompt);
+const PROMPT_MONTHS: Record<string, string> = {
+  jan: '01', january: '01', feb: '02', february: '02', mar: '03', march: '03',
+  apr: '04', april: '04', may: '05', jun: '06', june: '06', jul: '07', july: '07',
+  aug: '08', august: '08', sep: '09', sept: '09', september: '09',
+  oct: '10', october: '10', nov: '11', november: '11', dec: '12', december: '12',
+};
+
+const parsePromptStudyDates = (prompt: string): string[] => {
+  const dates = new Set<string>();
+  const yearCandidates = new Set(prompt.match(/\b20\d{2}\b/g) || []);
+  const inferredYear = yearCandidates.size === 1 ? Array.from(yearCandidates)[0] : null;
+
+  const add = (year: string, month: string, day: string) => {
+    const normalized = year + '-' + month.padStart(2, '0') + '-' + day.padStart(2, '0');
+    const date = new Date(normalized + 'T00:00:00.000Z');
+    if (
+      /^20\d{2}-\d{2}-\d{2}$/.test(normalized) &&
+      !Number.isNaN(date.getTime()) &&
+      date.toISOString().slice(0, 10) === normalized
+    ) dates.add(normalized);
+  };
+
+  for (const match of prompt.matchAll(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g)) {
+    add(match[1], match[2], match[3]);
+  }
+  for (const match of prompt.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](20\d{2})\b/g)) {
+    add(match[3], match[2], match[1]);
+  }
+  for (const match of prompt.matchAll(/\b(\d{1,2})\s+([A-Za-z]+)\.?[,]?(?:\s+(20\d{2}))?\b/g)) {
+    const month = PROMPT_MONTHS[match[2].toLowerCase()];
+    const year = match[3] || inferredYear;
+    if (month && year) add(year, month, match[1]);
+  }
+  for (const match of prompt.matchAll(/\b([A-Za-z]+)\s+(\d{1,2})[,]?(?:\s+(20\d{2}))?\b/g)) {
+    const month = PROMPT_MONTHS[match[1].toLowerCase()];
+    const year = match[3] || inferredYear;
+    if (month && year) add(year, month, match[2]);
+  }
+  return Array.from(dates).sort();
+};
+
+const promptContainsRequestedDate = (prompt: string, date: string): boolean =>
+  parsePromptStudyDates(prompt).includes(date);
+
 const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
   const text = prompt.toLowerCase();
   if (
@@ -478,7 +520,9 @@ const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
   }
   const action = /\b(add|insert|record|set|update|change|correct|backfill|import|apply|save)\b/i.test(text);
   const destination = /(lecture tracker|daily study log|study hours?|hours studied|total hours|study time|historical study records?)/i.test(text);
-  return action && destination;
+  const dateBoundedDuration =
+    getPromptStudyDurationMinutes(prompt) !== null && parsePromptStudyDates(prompt).length > 0;
+  return action && (destination || dateBoundedDuration);
 };
 
 const hasExplicitBulkConfirmation = (prompt: string): boolean => {
@@ -754,7 +798,7 @@ const executeMentorTool = async (
         ? Math.round(hours * 60) + minutes
         : NaN;
       if (
-        !promptContainsExactIsoDate(latestUserPrompt, date) ||
+        !promptContainsRequestedDate(latestUserPrompt, date) ||
         !Number.isFinite(requestedMinutes) ||
         getPromptStudyDurationMinutes(latestUserPrompt) !== requestedMinutes
       ) {
@@ -831,8 +875,8 @@ const executeMentorTool = async (
           };
         }
         if (
-          !promptContainsExactIsoDate(latestUserPrompt, startDate) ||
-          !promptContainsExactIsoDate(latestUserPrompt, endDate) ||
+          !promptContainsRequestedDate(latestUserPrompt, startDate) ||
+          !promptContainsRequestedDate(latestUserPrompt, endDate) ||
           promptDuration !== requestedRangeDuration
         ) {
           return {
@@ -1176,7 +1220,7 @@ INTELLIGENT DAILY-GOAL GUIDANCE
 HISTORICAL LECTURE TRACKER STUDY-HOURS MANAGEMENT
 - When the user asks for date-wise Total Studied Hours, historical daily totals or previous-day values, call get_daily_study_hours. Use its actual per-date displayed totals and clearly separate webcam-verified AI Focus seconds from manual/imported whole-day overrides.
 - A missing daily log is not evidence that no study occurred. Report a missing record as missing, not as a zero-hour day unless the verified AI Focus ledger itself confirms zero.
-- For a single date and exact duration, call upsert_daily_study_hours only when the latest user message explicitly instructs you to insert, set, correct or change that date's Lecture Tracker total. The date and duration must both be explicit in that latest message; use YYYY-MM-DD dates and never make up a date or duration. The write preserves the existing daily record fields and verified AI Focus ledger, writes to the signed-in user's Firebase records, then reads the database value back. Report success only when the function returns saved_and_verified.
+- For a single date and exact duration, call upsert_daily_study_hours only when the latest user message explicitly instructs you to insert, set, correct or change that date's Lecture Tracker total. The date and duration must both be explicit in that latest message; accept ISO, Indian day/month/year, or clearly written month-name dates, normalize the date to YYYY-MM-DD, and never make up a date or duration. The write preserves the existing daily record fields and verified AI Focus ledger, writes to the signed-in user's Firebase records, then reads the database value back. Report success only when the function returns saved_and_verified.
 - For an uploaded JSON/PDF study report, call get_uploaded_study_hours_document with its exact displayed file name. Review extraction warnings and confidence. For JSON, prefer the deterministic structured records and inspect invalidRecords; if json.recordLimitReached is true, do not preview or import the partial row set—ask for the source to be split into smaller files. For PDF/text, extract only dates and durations actually present in the supplied source. The tool returns bounded chunks: when document.truncated is true, call it again with the same documentName/documentId and document.nextOffset. Continue until truncated is false before presenting the complete import preview. If document.sourceTextComplete is false or warnings say the original local index was truncated/unreadable, do not claim the full source was processed and do not import a partial report. Do not silently omit pages or fabricate missing values.
 - Classify source rows carefully: a reported whole-day total is recordType daily_total; each individual subject or session line is recordType session. When a date has an explicit daily total and constituent subject/session lines, use the daily total as the day's total and retain the session rows only as a non-additive subject breakdown. Otherwise add each distinct source session row for that date. Do not silently deduplicate equal-duration rows; repeated sessions for the same subject can be legitimate. Exclude a row only when the source itself identifies it as a duplicate. If the source has conflicting daily totals or ambiguous rows, leave those dates out of the preview and explain the conflict.
 - For multiple dates, an explicit identical-hours date range, or file imports, call preview_bulk_daily_study_hours first. This does not modify Lecture Tracker records. Show the inclusive date range, previous vs proposed totals, insert/update/skip actions, invalid rows, conflicts and any omitted preview rows. Include the exact returned Preview ID in the visible response. For an identical-hours range, ask for both exact start and end dates if either is missing; never assume when "every previous day" begins. Ask the user to confirm that exact preview before calling bulk_upsert_daily_study_hours in a later turn. A vague “yes” without the immediately preceding preview ID is not enough. If the user says no/cancel, do not write anything.
