@@ -733,6 +733,21 @@ export const previewBulkDailyStudyHours = async (input: {
 
   for (const date of dates) {
     const dayRows = grouped.get(date) || [];
+    const duplicateCandidates = new Map<string, number>();
+    dayRows.forEach((row) => {
+      const subject = row.subjectBreakdown[0]?.subject.trim().toLowerCase() || '';
+      const topic = row.subjectBreakdown[0]?.topic?.trim().toLowerCase() || '';
+      const signature = [row.totalMinutes, subject, topic].join('|');
+      duplicateCandidates.set(signature, (duplicateCandidates.get(signature) || 0) + 1);
+    });
+    const possibleDuplicateCount = Array.from(duplicateCandidates.values())
+      .filter((count) => count > 1)
+      .reduce((sum, count) => sum + count, 0);
+    if (possibleDuplicateCount > 0) {
+      conflicts.push(
+        `${date}: ${possibleDuplicateCount} source rows share the same duration, subject and topic. They were retained as separate sessions; review whether they are repeated sessions or duplicate entries before confirming.`
+      );
+    }
     const explicitTotals = dayRows.filter((row) => row.recordType === 'daily_total');
     let totalMinutes = 0;
     let chosenRows: NormalizedStudyRecord[] = [];
@@ -1059,6 +1074,16 @@ const parseStudyRowsFromJson = (rawText: string) => {
     const hourKey = findKey(value, JSON_HOUR_KEYS);
     const minuteKey = findKey(value, JSON_MINUTE_KEYS);
     if (dateKey && (hourKey || minuteKey)) {
+      const explicitlyDuplicate =
+        value.isDuplicate === true ||
+        value.is_duplicate === true ||
+        value.duplicate === true ||
+        (typeof value.duplicateOf === 'string' && value.duplicateOf.trim().length > 0) ||
+        (typeof value.duplicate_of === 'string' && value.duplicate_of.trim().length > 0);
+      if (explicitlyDuplicate) {
+        invalidRecords.push({ path, reason: 'The source explicitly marks this row as a duplicate; it was excluded from the import.' });
+        return;
+      }
       const date = parseDocumentDate(value[dateKey]);
       const rawDuration = hourKey ? value[hourKey] : undefined;
       const unitAmbiguousDurationKey = Boolean(
