@@ -259,7 +259,8 @@ const getAuditRows = (): Array<Record<string, unknown>> => {
 const getCloudAuditRows = async (uid: string): Promise<Array<Record<string, unknown>>> => {
   const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(AUDIT_KEY));
   const snapshot = await getDoc(reference);
-  if (!snapshot.exists() || snapshot.data().deleted) return getAuditRows();
+  if (!snapshot.exists()) return getAuditRows();
+  if (snapshot.data().deleted) return [];
 
   const root = snapshot.data();
   let rawValue = typeof root.value === 'string' ? root.value : '';
@@ -867,7 +868,7 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
     ...eligibleRows.map((row) => dailyKey(row.date)),
     AUDIT_KEY,
   ]);
-  const cloudPreviousRecords = new Map<string, DailyTargetRecord | null>();
+  const cloudPreviousRecords = new Map<string, DailyTargetRecord | null | undefined>();
   await Promise.all(eligibleRows.map(async (row) => {
     cloudPreviousRecords.set(row.date, await getCloudDailyTarget(row.date));
   }));
