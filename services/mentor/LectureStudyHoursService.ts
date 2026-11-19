@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { cloudAuth, cloudDb, commitCloudSyncableRecordsNow } from '../CloudSyncService';
 import { getActiveUserStorageUid } from '../UserScopedStorage';
 import { StorageService } from '../../components/focus/services/storage';
@@ -289,6 +289,7 @@ export const getDailyStudyHours = async (input: {
   if (rangeDays > 3650) throw new Error('A single history query can cover at most 10 years.');
 
   const logsByDate = new Map<string, DailyTargetRecord>();
+  const localKeys = new Set<string>();
   for (let index = 0; index < localStorage.length; index += 1) {
     const key = localStorage.key(index);
     if (!key) continue;
@@ -296,8 +297,46 @@ export const getDailyStudyHours = async (input: {
     if (!match) continue;
     const date = match[1];
     if (date < startDate || date > endDate) continue;
+    localKeys.add(date);
     const value = safeParse<unknown>(localStorage.getItem(key), null);
     if (isRecord(value)) logsByDate.set(date, value as DailyTargetRecord);
+  }
+
+  // Read the authenticated user's canonical daily records directly from the
+  // existing Firestore appData collection. The hydrated local cache is retained
+  // as a fallback for a same-device write that is still waiting to sync.
+  const dailyPrefix = DAILY_KEY_PREFIX;
+  const cloudQuery = query(
+    collection(cloudDb, 'users', uid, 'appData'),
+    where('key', '>=', `${dailyPrefix}${startDate}`),
+    where('key', '<=', `${dailyPrefix}${endDate}`)
+  );
+  const cloudSnapshot = await getDocs(cloudQuery);
+  const cloudDates = new Set<string>();
+  for (const cloudRecordSnapshot of cloudSnapshot.docs) {
+    const cloudRecord = cloudRecordSnapshot.data();
+    const key = String(cloudRecord.key || '');
+    const match = key.match(/^gate_daily_target_(\d{4}-\d{2}-\d{2})$/);
+    if (!match || cloudRecord.deleted) continue;
+    const date = match[1];
+    cloudDates.add(date);
+
+    let rawValue = typeof cloudRecord.value === 'string' ? cloudRecord.value : '';
+    if (cloudRecord.chunked) {
+      const chunkSnapshot = await getDocs(collection(cloudRecordSnapshot.ref, 'chunks'));
+      const chunks = chunkSnapshot.docs
+        .sort((left, right) => Number(left.data().index) - Number(right.data().index))
+        .map((chunk) => String(chunk.data().value ?? ''));
+      if (cloudRecord.chunkCount && chunks.length !== Number(cloudRecord.chunkCount)) {
+        throw new Error(`Cloud history for ${date} is incomplete. Reconnect and sync again before relying on this total.`);
+      }
+      rawValue = chunks.join('');
+    }
+
+    const parsed = safeParse<unknown>(rawValue, null);
+    if (isRecord(parsed) && !localKeys.has(date)) {
+      logsByDate.set(date, parsed as DailyTargetRecord);
+    }
   }
 
   const verifiedByDate = new Map(
@@ -329,6 +368,7 @@ export const getDailyStudyHours = async (input: {
         subject: stored?.subject || null,
         goalDescription: stored?.goalDescription || null,
         hasDailyLog: Boolean(stored),
+        cloudRecordExists: cloudDates.has(date),
         note: stored?.hoursStudiedSource === 'manual'
           ? 'The displayed daily total uses the saved manual/imported whole-day override. Verified AI Focus time is reported separately and is not added again.'
           : 'The displayed daily total uses the AI Focus verified-time ledger. Unlabelled legacy hours are not assumed to be manually verified.',
@@ -347,7 +387,7 @@ export const getDailyStudyHours = async (input: {
     },
     records,
     dataPolicy: [
-      'The existing Lecture Tracker daily record key gate_daily_target_YYYY-MM-DD is the canonical whole-day log.',
+      'The canonical daily targets are read from the authenticated users/{uid}/appData Firestore collection; the private per-user browser cache is used as a fallback for writes that are still syncing.',
       'AI Focus verified time comes only from its persistent verified ledger; imported totals never edit that ledger.',
       'When a manual/imported whole-day total is active, it is displayed as the day total and verified time is shown separately to avoid double-counting.',
       'A missing or unlabelled historical number is not silently reclassified as a verified or manually confirmed duration.',
