@@ -79,7 +79,11 @@ const loadDailyTargetWithAiFocusSync = (date: string): DailyTarget => {
           Math.min(100, finiteNumberOr(parsed.completionPercentage, defaults.completionPercentage))
         ),
         hoursStudiedSource: parsed.hoursStudiedSource === 'manual' ? 'manual' : 'ai_focus',
-        manualHoursStudied: finiteNumberOr(parsed.manualHoursStudied, defaults.manualHoursStudied || 0),
+        manualHoursStudied: Math.max(0, finiteNumberOr(
+          parsed.manualHoursStudied ??
+            (parsed.hoursStudiedSource === 'manual' ? parsed.hoursStudied : defaults.manualHoursStudied || 0),
+          defaults.manualHoursStudied || 0
+        )),
         aiFocusVerifiedSeconds: Math.max(
           0,
           finiteNumberOr(parsed.aiFocusVerifiedSeconds, defaults.aiFocusVerifiedSeconds || 0)
@@ -397,7 +401,7 @@ const Tracker: React.FC = () => {
               sourceDetails: 'Manually entered or corrected in Lecture Tracker.',
               importedAt: new Date().toISOString(),
               verifiedSecondsAtImport: StorageService.getVerifiedStudySecondsForDate(dailyTarget.date),
-              subjectBreakdown: [],
+              subjectBreakdown: dailyTarget.studyHoursOverride?.subjectBreakdown || [],
             },
           }
         : {}),
@@ -786,7 +790,7 @@ const Tracker: React.FC = () => {
                         : `Verified AI Focus time: ${Math.floor((dailyTarget.aiFocusVerifiedSeconds || 0) / 3600)}h ${Math.floor(((dailyTarget.aiFocusVerifiedSeconds || 0) % 3600) / 60)}m ${(dailyTarget.aiFocusVerifiedSeconds || 0) % 60}s`}
                     </p>
                     {dailyTarget.hoursStudiedSource === 'manual' && dailyTarget.studyHoursOverride?.subjectBreakdown?.length ? (
-                      <div className="mt-3 border-t border-slate-200 pt-3">
+                      <div className="mt-3 w-full border-t border-slate-200 pt-3">
                         <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Imported subject breakdown</p>
                         <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
                           {dailyTarget.studyHoursOverride.subjectBreakdown.map((item, index) => (
