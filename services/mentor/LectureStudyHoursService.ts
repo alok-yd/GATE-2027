@@ -1065,7 +1065,7 @@ const parseStudyRowsFromJson = (rawText: string) => {
         hourKey && /^(duration|studyDuration|study_duration|totalDuration|total_duration)$/i.test(hourKey)
       );
       const numericDurationWithoutUnit = typeof rawDuration === 'number' ||
-        (typeof rawDuration === 'string' && /^\\s*\\d+(?:\\.\\d+)?\\s*$/.test(rawDuration));
+        (typeof rawDuration === 'string' && /^\s*\d+(?:\.\d+)?\s*$/.test(rawDuration));
       if (unitAmbiguousDurationKey && numericDurationWithoutUnit) {
         invalidRecords.push({
           path,
@@ -1083,20 +1083,9 @@ const parseStudyRowsFromJson = (rawText: string) => {
         invalidRecords.push({ path, reason: 'A study duration is missing, negative, or not in a supported hours/minutes format.' });
         return;
       }
-      const hourFieldIsWholeDuration = Boolean(hourKey && /(total|studied|study)/i.test(hourKey));
-      const minuteFieldIsWholeDuration = Boolean(minuteKey && /(total|studied|study)/i.test(minuteKey));
-      if (hourFieldIsWholeDuration && minuteFieldIsWholeDuration && hoursValue !== minuteValue) {
-        invalidRecords.push({
-          path,
-          reason: 'The same whole-day duration appears in both hours and minutes fields, but the values conflict. This row was not imported.',
-        });
-        return;
-      }
-      // Files often serialize the same whole-day duration in both hours and
-      // minutes. Do not add those duplicate representations together.
-      const totalMinutes = hourFieldIsWholeDuration && minuteFieldIsWholeDuration
-        ? hoursValue
-        : hoursValue + minuteValue;
+      // Separate hour and minute fields are components of one duration:
+      // e.g. total_studied_hours=8 and total_studied_minutes=30 means 8h 30m.
+      const totalMinutes = hoursValue + minuteValue;
       if (totalMinutes > 24 * 60) {
         invalidRecords.push({ path, reason: 'Combined duration exceeds 24 hours.' });
         return;
