@@ -467,9 +467,7 @@ const getPromptStudyDurationMinutes = (prompt: string): number | null => {
 };
 
 const promptContainsExactIsoDate = (prompt: string, date: string): boolean =>
-  new RegExp('(?:^|\\\\D)' + date.replace(/[.*+?^\\${}()|[\\]\\\\]/g, '\\\\const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
-  const text = prompt.toLowerCase();') + '(?:$|\\\\D)').test(prompt);
-
+  new RegExp('(^|[^0-9])' + date + '([^0-9]|$)').test(prompt);
 const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
   const text = prompt.toLowerCase();
   if (
