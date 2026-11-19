@@ -242,6 +242,30 @@ const getAuditRows = (): Array<Record<string, unknown>> => {
   return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
 };
 
+const getCloudAuditRows = async (uid: string): Promise<Array<Record<string, unknown>>> => {
+  const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(AUDIT_KEY));
+  const snapshot = await getDoc(reference);
+  if (!snapshot.exists() || snapshot.data().deleted) return getAuditRows();
+
+  const root = snapshot.data();
+  let rawValue = typeof root.value === 'string' ? root.value : '';
+  if (root.chunked) {
+    const chunkSnapshot = await getDocs(collection(reference, 'chunks'));
+    const chunks = chunkSnapshot.docs
+      .sort((left, right) => Number(left.data().index) - Number(right.data().index))
+      .map((chunk) => String(chunk.data().value ?? ''));
+    if (root.chunkCount && chunks.length !== Number(root.chunkCount)) {
+      throw new Error('The Lecture Tracker study-hour audit history is incomplete in Firebase. Refresh cloud sync before modifying it.');
+    }
+    rawValue = chunks.join('');
+  }
+  const parsed = safeParse<unknown>(rawValue, null);
+  if (!Array.isArray(parsed)) {
+    throw new Error('The Lecture Tracker study-hour audit history is unreadable in Firebase. No update was made.');
+  }
+  return parsed.filter(isRecord);
+};
+
 const makeAuditEntry = (input: {
   id: string;
   date: string;
@@ -557,9 +581,9 @@ export const upsertDailyStudyHours = async (input: {
     },
   };
 
-  const audit = getAuditRows();
+  const audit = await getCloudAuditRows(uid);
   const nextAudit = [
-    ...audit,
+    ...audit.filter((entry) => entry.id !== `${importId}:${date}`),
     makeAuditEntry({
       id: `${importId}:${date}`,
       date,
@@ -788,7 +812,19 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
 
   const eligibleRows = staged.rows.filter((row) => row.action !== 'skip');
   if (!eligibleRows.length) {
-    throw new Error('The preview contains no records to insert or update.');
+    return {
+      status: 'no_changes',
+      previewId: staged.id,
+      inserted: 0,
+      updated: 0,
+      skipped: staged.rows.length,
+      totalDates: staged.rows.length,
+      totalImportedHours: 0,
+      verifiedDates: [],
+      failedDates: [],
+      auditTrailSaved: true,
+      message: 'All records were skipped because the selected import mode preserves existing daily records. No database changes were made.',
+    };
   }
   if (eligibleRows.length > MAX_IMPORT_DATES) {
     throw new Error('The pending import is larger than the supported 365 daily records.');
@@ -806,8 +842,9 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   }));
 
   const now = new Date().toISOString();
-  const auditRows = getAuditRows();
+  const auditRows = await getCloudAuditRows(uid);
   const nextAudit = [...auditRows];
+  const auditIds = new Set(nextAudit.map((entry) => String(entry.id || '')));
   const cloudRecords: Array<{ key: string; value: string }> = [];
   const committedRows: Array<{ date: string; hours: number; minutes: number }> = [];
   const latestRows: PreviewRow[] = [];
@@ -816,50 +853,62 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
     const previous = cloudPreviousRecords.get(row.date) || getDailyTarget(row.date);
     const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(row.date);
     const previousHours = getDisplayedHours(previous, verifiedSeconds);
-    if (
-      Boolean(previous) !== row.existingRecord ||
-      Math.round(previousHours * 60) !== Math.round(row.previousHours * 60)
-    ) {
-      throw new Error(`The Lecture Tracker record for ${row.date} changed after the preview was created. No bulk records were written. Create and review a fresh preview before confirming again.`);
-    }
     const totalHours = roundHours(row.totalMinutes);
     const importId = staged.id;
+    const alreadyApplied = Boolean(
+      previous?.studyHoursOverride?.importId === importId &&
+      Math.round(getManualDisplayedHours(previous) * 60) === row.totalMinutes
+    );
+    if (!alreadyApplied && (
+      Boolean(previous) !== row.existingRecord ||
+      Math.round(previousHours * 60) !== Math.round(row.previousHours * 60)
+    )) {
+      throw new Error(`The Lecture Tracker record for ${row.date} changed after the preview was created. No bulk records were written. Create and review a fresh preview before confirming again.`);
+    }
     const sourceDetails = [row.sourceDetails, `Imported via AI Mentor from ${staged.source}.`].filter(Boolean).join(' ').slice(0, 2000);
-    const updated: DailyTargetRecord = {
-      ...(previous || {
+    if (!alreadyApplied) {
+      const updated: DailyTargetRecord = {
+        ...(previous || {
+          date: row.date,
+          subject: '',
+          goalDescription: '',
+          completionPercentage: 0,
+        }),
         date: row.date,
-        subject: '',
-        goalDescription: '',
-        completionPercentage: 0,
-      }),
-      date: row.date,
-      hoursStudied: totalHours,
-      hoursStudiedSource: 'manual',
-      manualHoursStudied: totalHours,
-      aiFocusVerifiedSeconds: verifiedSeconds,
-      studyHoursOverride: {
+        hoursStudied: totalHours,
+        hoursStudiedSource: 'manual',
+        manualHoursStudied: totalHours,
+        aiFocusVerifiedSeconds: verifiedSeconds,
+        studyHoursOverride: {
+          source: staged.source,
+          sourceDetails,
+          importedAt: now,
+          importId,
+          verifiedSecondsAtImport: verifiedSeconds,
+          subjectBreakdown: row.subjectBreakdown,
+        },
+      };
+      cloudRecords.push({ key: dailyKey(row.date), value: JSON.stringify(updated) });
+    }
+    const auditId = `${importId}:${row.date}`;
+    if (!auditIds.has(auditId)) {
+      nextAudit.push(makeAuditEntry({
+        id: auditId,
+        date: row.date,
         source: staged.source,
         sourceDetails,
-        importedAt: now,
+        previousHours: alreadyApplied ? row.previousHours : previousHours,
+        newHours: totalHours,
+        previousSource: alreadyApplied
+          ? (row.existingRecord ? 'legacy_or_unlabelled' : 'missing')
+          : previous ? String(previous.hoursStudiedSource || 'legacy_or_unlabelled') : 'missing',
         importId,
-        verifiedSecondsAtImport: verifiedSeconds,
-        subjectBreakdown: row.subjectBreakdown,
-      },
-    };
-    cloudRecords.push({ key: dailyKey(row.date), value: JSON.stringify(updated) });
-    nextAudit.push(makeAuditEntry({
-      id: `${importId}:${row.date}`,
-      date: row.date,
-      source: staged.source,
-      sourceDetails,
-      previousHours,
-      newHours: totalHours,
-      previousSource: previous ? String(previous.hoursStudiedSource || 'legacy_or_unlabelled') : 'missing',
-      importId,
-      timestamp: now,
-    }));
+        timestamp: now,
+      }));
+      auditIds.add(auditId);
+    }
     committedRows.push({ date: row.date, hours: Math.floor(row.totalMinutes / 60), minutes: row.totalMinutes % 60 });
-    latestRows.push({ ...row, previousHours });
+    latestRows.push({ ...row, previousHours: alreadyApplied ? row.previousHours : previousHours });
   }
 
   const finalizedPreview: StoredImportPreview = {
@@ -869,10 +918,9 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   const trimmedAudit = nextAudit.slice(-MAX_AUDIT_ROWS);
   cloudRecords.push({ key: AUDIT_KEY, value: JSON.stringify(trimmedAudit) });
 
-  await commitCloudSyncableRecordsNow(cloudRecords);
-  // Store completion state locally in this UID's private browser namespace.
-  // The staged preview is not part of the shared Firestore tracker record set.
-  localStorage.setItem(PENDING_IMPORT_KEY, JSON.stringify(finalizedPreview));
+  if (cloudRecords.length) {
+    await commitCloudSyncableRecordsNow(cloudRecords);
+  }
 
   const verification = await verifyDailyStudyHours({
     expectedRecords: committedRows,
@@ -882,8 +930,15 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
     uid,
     committedRows.map((row) => `${staged.id}:${row.date}`)
   );
+  const fullyVerified = verification.failed === 0 && auditTrailSaved;
+  // Keep the preview pending after a failed read-back so the same confirmed
+  // import can be retried idempotently. Mark it committed only after all checks pass.
+  localStorage.setItem(PENDING_IMPORT_KEY, JSON.stringify({
+    ...staged,
+    status: fullyVerified ? 'committed' : 'pending',
+  } satisfies StoredImportPreview));
   return {
-    status: verification.failed === 0 && auditTrailSaved ? 'saved_and_verified' : 'partial_verification_failure',
+    status: fullyVerified ? 'saved_and_verified' : 'partial_verification_failure',
     previewId: staged.id,
     mode: staged.mode,
     inserted: latestRows.filter((row) => !row.existingRecord).length,
@@ -895,7 +950,7 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
     failedDates: verification.checks.filter((check) => !check.verified),
     auditTrailSaved,
     firebaseUid: uid,
-    message: verification.failed === 0 && auditTrailSaved
+    message: fullyVerified
       ? 'Bulk study-hour records and the complete audit trail were written atomically to the authenticated Firebase user and read back successfully.'
       : 'Some daily records or audit entries did not pass read-back verification. Do not report the entire import as successful.',
   };
