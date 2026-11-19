@@ -392,19 +392,27 @@ export const getDailyStudyHours = async (input: {
       .filter((row) => row.date >= startDate && row.date <= endDate)
       .map((row) => [row.date, row])
   );
-  const allDates = new Set([...logsByDate.keys(), ...verifiedByDate.keys()]);
+  const allDates = new Set<string>();
+  const dateCursor = new Date(`${startDate}T00:00:00.000Z`);
+  for (let offset = 0; offset < rangeDays; offset += 1) {
+    allDates.add(dateCursor.toISOString().slice(0, 10));
+    dateCursor.setUTCDate(dateCursor.getUTCDate() + 1);
+  }
   const records = Array.from(allDates)
     .sort()
     .map((date) => {
       const stored = logsByDate.get(date) || null;
       const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
-      const source = stored?.hoursStudiedSource || 'legacy_or_unlabelled';
+      const hasVerifiedSessions = verifiedSeconds > 0;
+      const hasRecord = Boolean(stored) || hasVerifiedSessions;
+      const source = stored?.hoursStudiedSource || (hasVerifiedSessions ? 'ai_focus_ledger_only' : 'missing');
       const manualHours = getManualDisplayedHours(stored);
       const verifiedHours = Number((verifiedSeconds / 3600).toFixed(4));
+      const displayedHours = hasRecord ? getDisplayedHours(stored, verifiedSeconds) : null;
       return {
         date,
-        totalStudiedHours: getDisplayedHours(stored, verifiedSeconds),
-        totalStudiedMinutes: Math.round(getDisplayedHours(stored, verifiedSeconds) * 60),
+        totalStudiedHours: displayedHours,
+        totalStudiedMinutes: displayedHours == null ? null : Math.round(displayedHours * 60),
         verifiedStudySeconds: verifiedSeconds,
         verifiedStudyHours: verifiedHours,
         manuallyRecordedHours: manualHours,
@@ -422,10 +430,16 @@ export const getDailyStudyHours = async (input: {
         subject: stored?.subject || null,
         goalDescription: stored?.goalDescription || null,
         hasDailyLog: Boolean(stored),
+        hasVerifiedStudySessions: hasVerifiedSessions,
+        recordStatus: hasRecord ? 'recorded' : 'missing',
         cloudRecordExists: cloudDates.has(date),
         note: stored?.hoursStudiedSource === 'manual'
           ? 'The displayed daily total uses the saved manual/imported whole-day override. Verified AI Focus time is reported separately and is not added again.'
-          : 'The displayed daily total uses the AI Focus verified-time ledger. The raw stored hoursStudied field is reported for diagnosis but is not automatically reclassified as manual time.',
+          : hasVerifiedSessions
+            ? 'The displayed daily total uses the AI Focus verified-time ledger. The raw stored hoursStudied field is reported for diagnosis but is not automatically reclassified as manual time.'
+            : stored
+              ? 'A daily log exists, but the current display uses AI Focus verified time; no verified session time is recorded for this date.'
+              : 'No daily log or verified AI Focus session record was found for this date. This is missing data, not proof that no study took place.',
       };
     });
 
@@ -434,10 +448,11 @@ export const getDailyStudyHours = async (input: {
     timezone: 'Asia/Kolkata',
     range: { startDate, endDate, days: rangeDays },
     totals: {
-      displayedStudyHours: Number(records.reduce((sum, row) => sum + row.totalStudiedHours, 0).toFixed(2)),
+      displayedStudyHours: Number(records.reduce((sum, row) => sum + (row.totalStudiedHours ?? 0), 0).toFixed(2)),
       verifiedStudyHours: Number(records.reduce((sum, row) => sum + row.verifiedStudyHours, 0).toFixed(2)),
       manuallyRecordedHours: Number(records.reduce((sum, row) => sum + row.manuallyRecordedHours, 0).toFixed(2)),
-      daysWithRecords: records.filter((row) => row.hasDailyLog || row.verifiedStudySeconds > 0).length,
+      daysWithRecords: records.filter((row) => row.recordStatus === 'recorded').length,
+      missingDays: records.filter((row) => row.recordStatus === 'missing').length,
     },
     records,
     dataPolicy: [
