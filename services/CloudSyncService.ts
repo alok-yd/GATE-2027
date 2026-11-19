@@ -999,10 +999,14 @@ export interface CloudSyncRecordWrite {
  * active Firebase session; callers cannot choose another account.
  */
 export const commitCloudSyncableRecordsNow = async (
-  records: CloudSyncRecordWrite[]
+  records: CloudSyncRecordWrite[],
+  expectedUid?: string
 ): Promise<{ uid: string; keys: string[]; updatedAtClient: number }> => {
   const user = currentUser;
   if (!user) throw new Error('A signed-in Firebase account is required to modify Lecture Tracker records.');
+  if (expectedUid && user.uid !== expectedUid) {
+    throw new Error('The authenticated ACHIEVER account changed. No records were written; refresh the app and retry.');
+  }
   if (!syncReady || getActiveUserStorageUid() !== user.uid) {
     throw new Error('Your private ACHIEVER cloud space is still being prepared. Retry after account sync is ready.');
   }
@@ -1036,7 +1040,11 @@ export const commitCloudSyncableRecordsNow = async (
   if (Array.from(unique.keys()).some((key) => pendingWrites.has(key))) {
     throw new Error('A related ACHIEVER record is still waiting to sync. Retry after its cloud write succeeds.');
   }
-  if (currentUser?.uid !== user.uid || getActiveUserStorageUid() !== user.uid) {
+  if (
+    currentUser?.uid !== user.uid ||
+    getActiveUserStorageUid() !== user.uid ||
+    (expectedUid && user.uid !== expectedUid)
+  ) {
     throw new Error('The authenticated ACHIEVER account changed before the write could be committed.');
   }
 
@@ -1057,7 +1065,11 @@ export const commitCloudSyncableRecordsNow = async (
   });
 
   await batch.commit();
-  if (currentUser?.uid !== user.uid) {
+  if (
+    currentUser?.uid !== user.uid ||
+    getActiveUserStorageUid() !== user.uid ||
+    (expectedUid && user.uid !== expectedUid)
+  ) {
     throw new Error('The Firebase account changed while the write was committing. Refresh the app before continuing.');
   }
 
@@ -1088,10 +1100,10 @@ export const commitCloudSyncableRecordsNow = async (
   return { uid: user.uid, keys: Array.from(unique.keys()), updatedAtClient };
 };
 
-export const flushCloudSyncWritesNow = async (keys?: string[]): Promise<void> => {
+export const flushCloudSyncWritesNow = async (keys?: string[], expectedUid?: string): Promise<void> => {
   const user = currentUser;
-  if (!user || !syncReady || getActiveUserStorageUid() !== user.uid) {
-    throw new Error('A ready, authenticated ACHIEVER cloud account is required before modifying historical study hours.');
+  if (!user || !syncReady || getActiveUserStorageUid() !== user.uid || (expectedUid && user.uid !== expectedUid)) {
+    throw new Error('A ready, authenticated ACHIEVER cloud account matching this operation is required before modifying historical study hours.');
   }
   const targets = Array.from(new Set(keys || Array.from(pendingWrites.keys())));
   for (const key of targets) {
@@ -1103,6 +1115,9 @@ export const flushCloudSyncWritesNow = async (keys?: string[]): Promise<void> =>
   }
   if (targets.some((key) => pendingWrites.has(key))) {
     throw new Error('A related Lecture Tracker record is still waiting to sync. Reconnect and retry so the historical import cannot overwrite pending work.');
+  }
+  if (currentUser?.uid !== user.uid || getActiveUserStorageUid() !== user.uid || (expectedUid && user.uid !== expectedUid)) {
+    throw new Error('The authenticated ACHIEVER account changed while pending writes were syncing. Refresh and retry.');
   }
 };
 
