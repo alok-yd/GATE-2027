@@ -97,7 +97,9 @@ export const JARVIS_AGENT_REGISTRY: Record<JarvisAgentId, JarvisSpecialist> = {
     objective: 'Evaluate verified focus time and compare it with configured targets without substituting elapsed or manual time.',
     instructions: [
       'Use get_ai_focus_data as the source of truth for webcam-verified focused seconds.',
-      'Clearly separate verified time, elapsed session time, breaks, manual pauses and manually entered Lecture Tracker hours.',
+      'When the user asks for date-wise Total Studied Hours, prior-day history or a reconciliation of displayed daily totals, also call get_daily_study_hours.',
+      'Clearly separate verified time, elapsed session time, breaks, manual pauses and manually entered/imported whole-day Lecture Tracker overrides. Never add an override on top of verified sessions.',
+      'Use verify_daily_study_hours when the user asks whether a historical study-hour write persisted; its Firebase read-back is authoritative.',
       'Compare with targets only when the target is present in returned records.',
       'Do not modify or start/stop AI Focus sessions.',
       commonIntegrity,
@@ -106,6 +108,8 @@ export const JARVIS_AGENT_REGISTRY: Record<JarvisAgentId, JarvisSpecialist> = {
     allowedTools: [
       'get_ai_focus_data',
       'get_lecture_tracker_data',
+      'get_daily_study_hours',
+      'verify_daily_study_hours',
       'get_saved_mentor_memories',
     ],
     maxToolCalls: 3,
