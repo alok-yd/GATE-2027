@@ -1060,7 +1060,20 @@ const parseStudyRowsFromJson = (rawText: string) => {
     const minuteKey = findKey(value, JSON_MINUTE_KEYS);
     if (dateKey && (hourKey || minuteKey)) {
       const date = parseDocumentDate(value[dateKey]);
-      const hoursValue = hourKey ? parseDurationTextMinutes(value[hourKey]) : 0;
+      const rawDuration = hourKey ? value[hourKey] : undefined;
+      const unitAmbiguousDurationKey = Boolean(
+        hourKey && /^(duration|studyDuration|study_duration|totalDuration|total_duration)$/i.test(hourKey)
+      );
+      const numericDurationWithoutUnit = typeof rawDuration === 'number' ||
+        (typeof rawDuration === 'string' && /^\\s*\\d+(?:\\.\\d+)?\\s*$/.test(rawDuration));
+      if (unitAmbiguousDurationKey && numericDurationWithoutUnit) {
+        invalidRecords.push({
+          path,
+          reason: `Numeric duration in field "${hourKey}" has no unit. Use an explicit hours/minutes field or a value such as "1h 30m".`,
+        });
+        return;
+      }
+      const hoursValue = hourKey ? parseDurationTextMinutes(rawDuration) : 0;
       const minuteValue = minuteKey ? parseMinuteField(value[minuteKey]) : 0;
       if (!date) {
         invalidRecords.push({ path, reason: `Invalid or ambiguous date in field "${dateKey}".` });
