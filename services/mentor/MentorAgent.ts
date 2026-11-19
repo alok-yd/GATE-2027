@@ -136,12 +136,14 @@ const mentorTools: FunctionDeclaration[] = [
   {
     name: 'get_uploaded_study_hours_document',
     description:
-      'READ-ONLY document extraction tool. Call when the user explicitly asks to import study-hour records from an uploaded PDF or JSON. Retrieve the full indexed extraction and warnings for the exact uploaded file. JSON uploads include deterministically parsed date/duration candidates where possible. For PDF, use only extracted text, preserve source dates, and never invent unreadable values. Specify the exact documentName or documentId visible in the conversation.',
+      'READ-ONLY document extraction tool. Call when the user explicitly asks to import study-hour records from an uploaded PDF or JSON. Retrieve indexed extraction and warnings for the exact uploaded file. JSON uploads include deterministic structured date/duration candidates and invalid rows. PDF/text extraction is returned in bounded 30,000-character chunks; when truncated is true, call this tool again using the returned nextOffset until all text has been reviewed. Retain dates/durations exactly as sourced, inspect every available page/chunk, and never invent unreadable values. Specify the exact documentName or documentId visible in the conversation.',
     parameters: {
       type: 'object',
       properties: {
         documentName: { type: 'string', description: 'Exact uploaded file name displayed in the AI Mentor conversation.' },
         documentId: { type: 'string', description: 'Optional exact indexed document ID if the same file name is ambiguous.' },
+        startOffset: { type: 'integer', description: 'Optional character offset returned as nextOffset by the previous chunk.' },
+        maxChars: { type: 'integer', description: 'Optional chunk size from 5,000 to 40,000 characters; defaults to 30,000.' },
       },
     },
   },
@@ -694,6 +696,8 @@ const executeMentorTool = async (
       return getUploadedStudyHoursDocument({
         documentName: readStringArg(args, 'documentName') || undefined,
         documentId: readStringArg(args, 'documentId') || undefined,
+        startOffset: readNumberArg(args, 'startOffset', 0),
+        maxChars: readNumberArg(args, 'maxChars', 30000),
       });
 
     case 'upsert_daily_study_hours': {
@@ -1025,7 +1029,7 @@ HISTORICAL LECTURE TRACKER STUDY-HOURS MANAGEMENT
 - When the user asks for date-wise Total Studied Hours, historical daily totals or previous-day values, call get_daily_study_hours. Use its actual per-date displayed totals and clearly separate webcam-verified AI Focus seconds from manual/imported whole-day overrides.
 - A missing daily log is not evidence that no study occurred. Report a missing record as missing, not as a zero-hour day unless the verified AI Focus ledger itself confirms zero.
 - For a single date and exact duration, call upsert_daily_study_hours only when the latest user message explicitly instructs you to insert, set, correct or change that date's Lecture Tracker total. Never make up a date or duration. The write preserves the existing daily record fields and verified AI Focus ledger, writes to the signed-in user's Firebase records, then reads the database value back. Report success only when the function returns saved_and_verified.
-- For an uploaded JSON/PDF study report, call get_uploaded_study_hours_document with its exact displayed file name. Review extraction warnings and confidence. For JSON, prefer deterministic structured rows returned by the tool; for PDF/text, extract only dates and durations actually present in the supplied source. If extraction is truncated or uncertain, retrieve remaining text by offset or ask for a clearer source; do not silently omit pages or fabricate missing values.
+- For an uploaded JSON/PDF study report, call get_uploaded_study_hours_document with its exact displayed file name. Review extraction warnings and confidence. For JSON, prefer the deterministic structured records and inspect invalidRecords; for PDF/text, extract only dates and durations actually present in the supplied source. The tool returns bounded chunks: when document.truncated is true, call it again with the same documentName/documentId and document.nextOffset. Continue until truncated is false before presenting the complete import preview. Do not silently omit pages or fabricate missing values.
 - Classify source rows carefully: a reported whole-day total is recordType daily_total; each individual subject or session line is recordType session. When a date has an explicit daily total and constituent subject/session lines, use the daily total only; do not add the session rows again. Otherwise aggregate distinct session rows for that date and remove exact duplicates. If the source has conflicting daily totals or ambiguous rows, leave those dates out of the preview and explain the conflict.
 - For multiple dates or file imports, call preview_bulk_daily_study_hours first. This does not modify Lecture Tracker records. Show the preview summary, previous vs imported totals, insert/update/skip actions, invalid rows and conflicts. Ask the user to confirm that exact preview before calling bulk_upsert_daily_study_hours in a later turn. A vague “yes” without a pending preview is not enough. If the user says no/cancel, do not write anything.
 - Bulk confirmation is a separate user authorization step. Call bulk_upsert_daily_study_hours only after a clear affirmative confirmation of the immediately preceding preview. Report inserted, updated, skipped, invalid, conflict and read-back verification counts accurately. If any record fails verification, clearly report partial failure and do not describe the entire import as successful.
