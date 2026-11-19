@@ -441,6 +441,7 @@ export const getDailyStudyHours = async (input: {
     where('key', '<=', `${dailyPrefix}${endDate}`)
   );
   const cloudSnapshot = await getDocs(cloudQuery);
+  assertActiveUid(uid);
   const cloudDates = new Set<string>();
   for (const cloudRecordSnapshot of cloudSnapshot.docs) {
     const cloudRecord = cloudRecordSnapshot.data();
@@ -457,6 +458,7 @@ export const getDailyStudyHours = async (input: {
     let rawValue = typeof cloudRecord.value === 'string' ? cloudRecord.value : '';
     if (cloudRecord.chunked) {
       const chunkSnapshot = await getDocs(collection(cloudRecordSnapshot.ref, 'chunks'));
+      assertActiveUid(uid);
       const chunks = chunkSnapshot.docs
         .sort((left, right) => Number(left.data().index) - Number(right.data().index))
         .map((chunk) => String(chunk.data().value ?? ''));
@@ -525,6 +527,7 @@ export const getDailyStudyHours = async (input: {
       };
     });
 
+  assertActiveUid(uid);
   return {
     uid,
     timezone: 'Asia/Kolkata',
@@ -567,6 +570,7 @@ export const verifyDailyStudyHours = async (input: {
     if (!isValidIsoDate(date)) throw new Error(`Invalid verification date: ${date}`);
     return verifyCloudRecord(uid, date, expectedByDate.get(date));
   }));
+  assertActiveUid(uid);
   return {
     uid,
     checkedAt: new Date().toISOString(),
@@ -647,6 +651,7 @@ export const upsertDailyStudyHours = async (input: {
   ], uid);
   const verification = await verifyCloudRecord(uid, date, totalMinutes);
   const auditTrailSaved = await verifyCloudAuditEntries(uid, [`${importId}:${date}`]);
+  assertActiveUid(uid);
   const fullyVerified = verification.verified && auditTrailSaved;
   return {
     status: fullyVerified ? 'saved_and_verified' : 'verification_failed',
@@ -722,6 +727,7 @@ export const previewBulkDailyStudyHours = async (input: {
     const cloudRecord = await getCloudDailyTarget(date, uid);
     previousByDate.set(date, cloudRecord === undefined ? getDailyTarget(date) : cloudRecord);
   }));
+  assertActiveUid(uid);
 
   for (const date of dates) {
     const dayRows = grouped.get(date) || [];
@@ -791,6 +797,7 @@ export const previewBulkDailyStudyHours = async (input: {
   }
 
   const now = new Date().toISOString();
+  assertActiveUid(uid);
   const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `study_import_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -889,6 +896,7 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   await Promise.all(eligibleRows.map(async (row) => {
     cloudPreviousRecords.set(row.date, await getCloudDailyTarget(row.date, uid));
   }));
+  assertActiveUid(uid);
 
   const now = new Date().toISOString();
   const auditRows = await getCloudAuditRows(uid);
@@ -964,9 +972,11 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   const trimmedAudit = nextAudit.slice(-MAX_AUDIT_ROWS);
   cloudRecords.push({ key: AUDIT_KEY, value: JSON.stringify(trimmedAudit) });
 
+  assertActiveUid(uid);
   if (cloudRecords.length) {
     await commitCloudSyncableRecordsNow(cloudRecords, uid);
   }
+  assertActiveUid(uid);
 
   const verification = await verifyDailyStudyHours({
     expectedRecords: committedRows,
@@ -976,6 +986,7 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
     uid,
     committedRows.map((row) => `${staged.id}:${row.date}`)
   );
+  assertActiveUid(uid);
   const fullyVerified = verification.failed === 0 && auditTrailSaved;
   // Keep the preview pending after a failed read-back so the same confirmed
   // import can be retried idempotently. Mark it committed only after all checks pass.
