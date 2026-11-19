@@ -77,6 +77,13 @@ const loadDailyTargetWithAiFocusSync = (date: string): DailyTarget => {
           0,
           finiteNumberOr(parsed.aiFocusVerifiedSeconds, defaults.aiFocusVerifiedSeconds || 0)
         ),
+        studyHoursOverride: isPlainRecord(parsed.studyHoursOverride)
+          ? {
+              source: typeof parsed.studyHoursOverride.source === 'string' ? parsed.studyHoursOverride.source : undefined,
+              sourceDetails: typeof parsed.studyHoursOverride.sourceDetails === 'string' ? parsed.studyHoursOverride.sourceDetails : undefined,
+              importedAt: typeof parsed.studyHoursOverride.importedAt === 'string' ? parsed.studyHoursOverride.importedAt : undefined,
+            }
+          : undefined,
         date,
       }
     : defaults;
