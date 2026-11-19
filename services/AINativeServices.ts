@@ -698,7 +698,7 @@ export const processUploadedDocument = async (
 
   const kind = detectKind(file.name, file.type);
   if (kind === 'unknown') {
-    throw new Error('Unsupported file type. Use PDF, DOCX, PNG, JPG, TXT, MD, or CSV.');
+    throw new Error('Unsupported file type. Use PDF, DOCX, PNG, JPG, TXT, MD, CSV, or JSON.');
   }
 
   const warnings: string[] = [];
