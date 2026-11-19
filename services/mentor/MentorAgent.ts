@@ -189,7 +189,7 @@ const mentorTools: FunctionDeclaration[] = [
             required: ['date', 'hours'],
           },
         },
-        source: { type: 'string', description: 'Source kind: imported_json or imported_pdf. Use manual only for a user-supplied non-file list.' },
+        source: { type: 'string', description: 'Source kind: imported_json or imported_pdf for files, ai_mentor for a deterministic fillEachDate range, or manual for a user-supplied non-file list.' },
         mode: { type: 'string', description: 'replace (default) updates existing daily totals; skip_existing preserves any existing daily record.' },
         sourceDetails: { type: 'string', description: 'Source file name and extraction context.' },
         fillEachDate: {
@@ -840,17 +840,19 @@ const executeMentorTool = async (
 
       const sourceText = readStringArg(args, 'source');
       const sourceHint = (readStringArg(args, 'sourceDetails') + ' ' + latestUserPrompt).toLowerCase();
-      const source = ['manual', 'imported_json', 'imported_pdf'].includes(sourceText)
+      const source = ['ai_mentor', 'manual', 'imported_json', 'imported_pdf'].includes(sourceText)
         ? sourceText
         : /\\.json\\b/i.test(sourceHint)
           ? 'imported_json'
           : /\\.pdf\\b/i.test(sourceHint)
             ? 'imported_pdf'
-            : 'manual';
+            : range
+              ? 'ai_mentor'
+              : 'manual';
       const mode = readStringArg(args, 'mode') === 'skip_existing' ? 'skip_existing' : 'replace';
       return await previewBulkDailyStudyHours({
         records,
-        source: source as 'manual' | 'imported_json' | 'imported_pdf',
+        source: source as 'ai_mentor' | 'manual' | 'imported_json' | 'imported_pdf',
         mode,
         sourceDetails: readStringArg(args, 'sourceDetails') || latestUserPrompt.slice(0, 500),
       });
