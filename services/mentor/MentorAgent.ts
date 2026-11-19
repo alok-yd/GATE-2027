@@ -351,7 +351,7 @@ const mentorTools: FunctionDeclaration[] = [
   {
     name: 'create_lecture_tracker_task',
     description:
-      'WRITE ACTION: Create one additional task in the existing Lecture Tracker Daily Study Log. Call ONLY when the latest user message explicitly asks to add/create/insert/save a task in Lecture Tracker, or explicitly asks you to create the requested plan there. Never call for a recommendation-only request. Required: task title and subject. Optional date uses YYYY-MM-DD and defaults to current app-local date; durationMinutes defaults to 30; priority defaults to medium. Put the topic/action in the title. This is the ONLY write permission available to AI Mentor. The result reports created or duplicate; never claim success unless result.status is created.',
+      'WRITE ACTION: Create one additional task in the existing Lecture Tracker Daily Study Log. Call ONLY when the latest user message explicitly asks to add/create/insert/save a task in Lecture Tracker, or explicitly asks you to create the requested plan there. Never call for a recommendation-only request. Required: task title and subject. Optional date uses YYYY-MM-DD and defaults to current app-local date; durationMinutes defaults to 30; priority defaults to medium. Put the topic/action in the title. This tool is limited to task records; separate dedicated tools manage historical daily study-hour totals. The result reports created or duplicate; never claim success unless result.status is created.',
     parameters: {
       type: 'object',
       properties: {
@@ -445,7 +445,10 @@ const readArrayArg = (args: unknown, key: string): unknown[] => {
 
 const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
   const text = prompt.toLowerCase();
-  if (/\\b(don't|do not|never|no need to)\\s+(add|create|insert|save|update|change|import|record|backfill)\\b/i.test(text)) {
+  if (
+    /\\b(don't|do not|never|no need to)\\s+(add|create|insert|save|update|change|import|record|backfill)\\b/i.test(text) ||
+    /\\b(how (?:do|can|could|should) i|tell me how|show me how|steps to|explain how|what is the way to)\\b/i.test(text)
+  ) {
     return false;
   }
   const action = /\\b(add|insert|record|set|update|change|correct|backfill|import|apply|save)\\b/i.test(text);
@@ -668,7 +671,7 @@ const executeMentorTool = async (
   args: unknown,
   latestUserPrompt = '',
   allowedTools?: readonly string[]
-): unknown => {
+): Promise<unknown> => {
   if (allowedTools && !allowedTools.includes(name)) {
     return { error: `Tool not permitted for this specialist: ${name}` };
   }
@@ -702,7 +705,10 @@ const executeMentorTool = async (
 
     case 'upsert_daily_study_hours': {
       const prompt = latestUserPrompt.toLowerCase();
-      const multiple = /\\b(bulk|multiple|every|each|all days|all dates|date range)\\b/i.test(prompt) || /\\.(pdf|json)\\b/i.test(prompt);
+      const multiple =
+        /\\b(bulk|multiple|every|each|all days?|all dates?|date range|from .{0,45} to |between .{0,45} and )\\b/i.test(prompt) ||
+        /\\b\\d{4}-\\d{2}-\\d{2}\\b.{0,80}\\b(and|,|&)\\b.{0,80}\\b\\d{4}-\\d{2}-\\d{2}\\b/i.test(prompt) ||
+        /\\.(pdf|json)\\b/i.test(prompt);
       if (!hasExplicitStudyHoursWriteIntent(latestUserPrompt) || multiple) {
         return { status: 'not_authorized', saved: false, message: 'No study-hour record was changed. A single-date write needs an explicit request for one exact date and duration. Use the import preview flow for files or multiple dates.' };
       }
@@ -1462,6 +1468,16 @@ export const generateMentorReply = async ({
   }
 
   if (signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
+
+  const latestUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
+  if (hasExplicitStudyHoursWriteIntent(latestUserPrompt) || hasExplicitBulkConfirmation(latestUserPrompt)) {
+    return {
+      content: 'I could not complete and verify this Lecture Tracker study-hours operation through the database tools. Please do not assume the records were updated. Retry when the secure tool connection is available, then ask me to verify the saved dates.',
+      model: AI_MODEL_CONFIG.primaryModel,
+      toolCalling: false,
+    };
+  }
+
   const prompt = `
 The user is asking in ${mode.toUpperCase()} mode.
 Response channel: ${responseChannel.toUpperCase()}.
