@@ -628,6 +628,7 @@ export const upsertDailyStudyHours = async (input: {
       importedAt: now,
       importId,
       verifiedSecondsAtImport: verifiedSeconds,
+      subjectBreakdown: previous?.studyHoursOverride?.subjectBreakdown || [],
     },
   };
 
