@@ -98,6 +98,15 @@ const currentUid = (): string => {
   return user.uid;
 };
 
+const assertActiveUid = (expectedUid: string): void => {
+  if (
+    cloudAuth.currentUser?.uid !== expectedUid ||
+    getActiveUserStorageUid() !== expectedUid
+  ) {
+    throw new Error('The signed-in ACHIEVER account changed during this study-hours operation. No further data was read or written; refresh and retry.');
+  }
+};
+
 const todayInKolkata = (): string => {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Kolkata',
