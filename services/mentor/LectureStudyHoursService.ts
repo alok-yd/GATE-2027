@@ -411,6 +411,12 @@ export const getDailyStudyHours = async (input: {
         importedHistoricalHours: stored?.studyHoursOverride?.source?.startsWith('imported_')
           ? manualHours
           : null,
+        storedHoursField: stored && Number.isFinite(Number(stored.hoursStudied))
+          ? Number(Number(stored.hoursStudied).toFixed(4))
+          : null,
+        storedHoursFieldInterpretation: stored?.hoursStudiedSource === 'manual'
+          ? 'This field is the active manual/imported whole-day override.'
+          : 'This raw legacy field is not used by the current Tracker display. The display uses the separate AI Focus verified-time ledger.',
         studyHoursSource: source,
         sourceDetails: stored?.studyHoursOverride?.sourceDetails || null,
         subject: stored?.subject || null,
@@ -419,7 +425,7 @@ export const getDailyStudyHours = async (input: {
         cloudRecordExists: cloudDates.has(date),
         note: stored?.hoursStudiedSource === 'manual'
           ? 'The displayed daily total uses the saved manual/imported whole-day override. Verified AI Focus time is reported separately and is not added again.'
-          : 'The displayed daily total uses the AI Focus verified-time ledger. Unlabelled legacy hours are not assumed to be manually verified.',
+          : 'The displayed daily total uses the AI Focus verified-time ledger. The raw stored hoursStudied field is reported for diagnosis but is not automatically reclassified as manual time.',
       };
     });
 
