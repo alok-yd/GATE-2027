@@ -76,6 +76,7 @@ interface FunctionProperty {
   enum?: string[];
   items?: FunctionProperty;
   properties?: Record<string, FunctionProperty>;
+  required?: string[];
 }
 
 interface FunctionDeclaration {
@@ -166,7 +167,7 @@ const mentorTools: FunctionDeclaration[] = [
   {
     name: 'preview_bulk_daily_study_hours',
     description:
-      'PREVIEW ONLY — prepare a multi-date historical study-hour import. Call only after an explicit user request to import/update multiple study dates or an uploaded study-report PDF/JSON into Lecture Tracker. Do not write daily records. Provide extracted source rows; use recordType daily_total when a row is an explicit whole-day total, session when it is an individual subject/session row, and unknown only when uncertain. The service prevents adding a daily total to its constituent sessions, validates each day against the 24-hour limit, detects conflicts, compares with existing totals, and creates a 30-minute user-specific preview. After returning the preview, ask the user to confirm before calling bulk_upsert_daily_study_hours.',
+      'PREVIEW ONLY — prepare a multi-date historical study-hour import. Call only after an explicit user request to insert/update multiple dates or import an uploaded study report. Do not write daily records. For a PDF/JSON, extract source rows and classify recordType as daily_total, session or unknown. When the user explicitly requests the same hours for every date in an exact inclusive date range, use fillEachDate to generate one daily_total row for every calendar date deterministically; never guess a missing start/end date. The service prevents double-counting totals with sessions, validates the 24-hour limit, detects conflicts, compares cloud-backed existing totals, and creates a 30-minute user-specific preview. Show every change category and include the exact Preview ID in your response. Ask the user to confirm that preview before calling bulk_upsert_daily_study_hours.',
     parameters: {
       type: 'object',
       properties: {
@@ -191,18 +192,29 @@ const mentorTools: FunctionDeclaration[] = [
         source: { type: 'string', description: 'Source kind: imported_json or imported_pdf. Use manual only for a user-supplied non-file list.' },
         mode: { type: 'string', description: 'replace (default) updates existing daily totals; skip_existing preserves any existing daily record.' },
         sourceDetails: { type: 'string', description: 'Source file name and extraction context.' },
+        fillEachDate: {
+          type: 'object',
+          description: 'Optional deterministic range fill. Use only when the user explicitly requests an identical daily total for every calendar date in an exact inclusive range.',
+          properties: {
+            startDate: { type: 'string', description: 'Exact inclusive first date YYYY-MM-DD.' },
+            endDate: { type: 'string', description: 'Exact inclusive last date YYYY-MM-DD.' },
+            hours: { type: 'number', description: 'Same daily total in decimal hours or integer hours when minutes is supplied.' },
+            minutes: { type: 'integer', description: 'Optional additional minutes 0–59.' },
+          },
+          required: ['startDate', 'endDate', 'hours'],
+        },
       },
-      required: ['records', 'source'],
+      required: ['source'],
     },
   },
   {
     name: 'bulk_upsert_daily_study_hours',
     description:
-      'WRITE ACTION — commit the latest pending bulk study-hour preview ONLY after the user has explicitly confirmed that preview in a later message (for example: “yes, proceed”, “confirm”, or “go ahead”). Never call during the initial import request or before showing the preview. The service rechecks the signed-in UID, commits date records plus audit/preview state in one Firestore batch, reads every written daily record back from Firebase, and returns successful/failed/skipped counts. Use previewId from the earlier preview when available; otherwise the latest account-owned pending preview is used. Do not claim full success unless status is saved_and_verified.',
+      'WRITE ACTION — commit exactly one pending bulk preview ONLY after the user explicitly confirms the immediately preceding preview in a later message. The previous AI Mentor assistant response must contain the same previewId; previewId is required and must be copied from that displayed preview. Never use a pending preview from another conversation or silently choose the latest preview. The service rechecks the signed-in UID, commits all date records and the audit trail, reads every written daily record back from Firebase, and returns successful/failed/skipped counts. Do not claim full success unless status is saved_and_verified.',
     parameters: {
       type: 'object',
       properties: {
-        previewId: { type: 'string', description: 'Optional ID returned by preview_bulk_daily_study_hours.' },
+        previewId: { type: 'string', description: 'Required exact ID returned by the preview that was displayed in the immediately preceding assistant response.' },
       },
     },
   },
