@@ -1333,13 +1333,13 @@ const callGeminiWithTools = async (
       // Echo the model content exactly, including Gemini 3 thought signatures.
       contents.push(candidate.content);
 
-      const functionResponses = functionCalls.map((call: any) => {
+      const functionResponses = await Promise.all(functionCalls.map(async (call: any) => {
         toolCallsExecuted += 1;
         if (toolCallsExecuted > maxToolCalls) {
           return {
             functionResponse: {
               name: call.name,
-              id: call.id,
+              ...(typeof call.id === 'string' ? { id: call.id } : {}),
               response: { error: 'Maximum tool-call budget reached. Answer with the evidence already collected.' },
             },
           };
@@ -1361,7 +1361,7 @@ const callGeminiWithTools = async (
           } catch {
             // Diagnostics must never interfere with tool execution.
           }
-          const result = executeMentorTool(
+          const result = await executeMentorTool(
             call.name,
             call.args,
             latestUserPrompt,
@@ -1383,7 +1383,7 @@ const callGeminiWithTools = async (
             },
           };
         }
-      });
+      }));
 
       // Gemini's REST function-calling continuation sends functionResponse parts in a user turn.
       contents.push({ role: 'user', parts: functionResponses });
