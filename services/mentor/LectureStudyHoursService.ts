@@ -891,8 +891,12 @@ const parseStudyRowsFromJson = (rawText: string) => {
   }
   const records: StudyHoursInputRecord[] = [];
   const invalidRecords: Array<{ path: string; reason: string }> = [];
+  let recordLimitReached = false;
   const visit = (value: unknown, path: string): void => {
-    if (records.length + invalidRecords.length >= MAX_IMPORT_SOURCE_ROWS) return;
+    if (records.length + invalidRecords.length >= MAX_IMPORT_SOURCE_ROWS) {
+      recordLimitReached = true;
+      return;
+    }
     if (Array.isArray(value)) {
       value.forEach((item, index) => visit(item, `${path}[${index}]`));
       return;
@@ -941,9 +945,12 @@ const parseStudyRowsFromJson = (rawText: string) => {
     validJson: true,
     records,
     invalidRecords,
-    message: records.length
-      ? 'Structured study-hour rows were extracted from the JSON document.'
-      : 'The JSON is valid, but no objects with both a date and study duration were identified.',
+    recordLimitReached,
+    message: recordLimitReached
+      ? `The JSON contains more than ${MAX_IMPORT_SOURCE_ROWS} candidate rows. The displayed structured extraction is incomplete; split the source before importing.`
+      : records.length
+        ? 'Structured study-hour rows were extracted from the JSON document.'
+        : 'The JSON is valid, but no objects with both a date and study duration were identified.',
   };
 };
 
@@ -998,6 +1005,7 @@ export const getUploadedStudyHoursDocument = (input: {
       kind: document.kind,
       extractionConfidence: document.extractionConfidence,
       warnings: document.warnings,
+      sourceTextComplete: !document.warnings?.some((warning) => /index limit.*truncated|text.*truncated/i.test(warning)),
       textLength: document.text.length,
       startOffset,
       extractedText,
@@ -1010,6 +1018,7 @@ export const getUploadedStudyHoursDocument = (input: {
         records: jsonExtraction.records,
         extractedRecordCount: jsonExtraction.records.length,
         invalidRecords: jsonExtraction.invalidRecords,
+        recordLimitReached: jsonExtraction.recordLimitReached,
         message: jsonExtraction.message,
       },
     } : {}),
