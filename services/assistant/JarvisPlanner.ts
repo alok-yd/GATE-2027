@@ -21,7 +21,9 @@ const hasExplicitLectureTrackerWriteRequest = (prompt: string): boolean => {
 };
 
 const hasLectureStudyHoursIntent = (prompt: string): boolean =>
-  /\b(lecture tracker|daily study log|study hours?|hours studied|total studied|historical study records|daily study duration)\b/i.test(prompt);
+  /\b(lecture tracker|daily study log|study hours?|hours studied|total studied|historical study records|daily study duration)\b/i.test(prompt) ||
+  (/\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?)\b/i.test(prompt) &&
+    /\b(every day|each day|daily|for \d{1,2}|from \d{1,2}|between \d{1,2}|on \d{1,2}|date range)\b/i.test(prompt));
 
 const isOverallPreparationRequest = (prompt: string): boolean =>
   /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|analyse my preparation|analyze my preparation|how is my (?:gate )?preparation|preparation status|overall progress|complete preparation review|daily intelligence briefing|daily briefing|all sections|all tracker data|full workspace|complete workspace|entire achiever|everything in achiever|complete app snapshot/i.test(prompt);
