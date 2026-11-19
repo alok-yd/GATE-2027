@@ -22,7 +22,10 @@ const hasExplicitLectureTrackerWriteRequest = (prompt: string): boolean => {
 
 const hasExplicitLectureStudyHoursWriteRequest = (prompt: string): boolean => {
   const text = prompt.toLowerCase();
-  if (/\b(don't|do not|never|no need to)\s+(add|insert|save|update|change|correct|import|record|backfill|set)\b/i.test(text)) {
+  if (
+    /\b(don't|do not|never|no need to)\s+(add|insert|save|update|change|correct|import|record|backfill|set)\b/i.test(text) ||
+    /\b(how (?:do|can|could|should) i|tell me how|show me how|steps to|explain how|what is the way to)\b/i.test(text)
+  ) {
     return false;
   }
   const action = /\b(add|insert|save|update|change|correct|import|record|backfill|set|apply)\b/i.test(text);
