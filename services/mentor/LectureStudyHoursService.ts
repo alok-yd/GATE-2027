@@ -164,6 +164,13 @@ const parseDurationTextMinutes = (value: unknown): number | null => {
   const text = value.trim();
   if (/^\d+(?:\.\d+)?$/.test(text)) return Math.round(Number(text) * 60);
 
+  // Clock-style values such as "1:30" or "01:30:00" mean HH:MM[:SS].
+  const clock = text.match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?$/);
+  if (clock) {
+    const seconds = Number(clock[3] || 0);
+    return Number(clock[1]) * 60 + Number(clock[2]) + (seconds >= 30 ? 1 : 0);
+  }
+
   const hours = text.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/i);
   const minutes = text.match(/(\d+)\s*(?:m|min|mins|minute|minutes)\b/i);
   if (!hours && !minutes) return null;
