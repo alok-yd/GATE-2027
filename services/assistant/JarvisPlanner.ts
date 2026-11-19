@@ -30,7 +30,10 @@ const hasExplicitLectureStudyHoursWriteRequest = (prompt: string): boolean => {
   }
   const action = /\b(add|insert|save|update|change|correct|import|record|backfill|set|apply)\b/i.test(text);
   const destination = /(lecture tracker|daily study log|study hours?|hours studied|total hours|study time|historical study records?)/i.test(text);
-  return action && destination;
+  const dateBoundedDuration =
+    /\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|h)\b/i.test(text) &&
+    /(\b20\d{2}-\d{1,2}-\d{1,2}\b|\b\d{1,2}[/-]\d{1,2}[/-]20\d{2}\b|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}\b)/i.test(text);
+  return action && (destination || dateBoundedDuration);
 };
 
 const isOverallPreparationRequest = (prompt: string): boolean =>
