@@ -77,8 +77,12 @@ const loadDailyTargetWithAiFocusSync = (date: string): DailyTarget => {
           parsed.hoursStudiedSource === 'manual' || parsed.hoursStudiedSource === 'imported' || parsed.hoursStudiedSource === 'ai_focus'
             ? parsed.hoursStudiedSource
             : finiteNumberOr(parsed.hoursStudied, 0) > 0 ? 'manual' : 'ai_focus',
-        manualHoursStudied: finiteNumberOr(parsed.manualHoursStudied, defaults.manualHoursStudied || 0),
-        importedHoursStudied: finiteNumberOr(parsed.importedHoursStudied, 0),
+        manualHoursStudied: parsed.manualHoursStudied == null
+          ? (parsed.hoursStudiedSource == null && finiteNumberOr(parsed.hoursStudied, 0) > 0 ? finiteNumberOr(parsed.hoursStudied, 0) : 0)
+          : finiteNumberOr(parsed.manualHoursStudied, 0),
+        importedHoursStudied: parsed.importedHoursStudied == null
+          ? (parsed.hoursStudiedSource === 'imported' ? finiteNumberOr(parsed.hoursStudied, 0) : 0)
+          : finiteNumberOr(parsed.importedHoursStudied, 0),
         aiFocusVerifiedSeconds: Math.max(
           0,
           finiteNumberOr(parsed.aiFocusVerifiedSeconds, defaults.aiFocusVerifiedSeconds || 0)
