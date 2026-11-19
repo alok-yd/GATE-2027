@@ -216,6 +216,7 @@ const mentorTools: FunctionDeclaration[] = [
       properties: {
         previewId: { type: 'string', description: 'Required exact ID returned by the preview that was displayed in the immediately preceding assistant response.' },
       },
+      required: ['previewId'],
     },
   },
   {
