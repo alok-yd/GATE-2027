@@ -459,8 +459,10 @@ const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
 const hasExplicitBulkConfirmation = (prompt: string): boolean => {
   const text = prompt.trim().toLowerCase();
   if (/\\b(no|not|don't|do not|cancel|reject|stop)\\b/i.test(text)) return false;
-  return /^(yes|y|confirm|confirmed|proceed|go ahead|approve|approved|do it|apply|import now|update now)(\\b|[.! ,])/i.test(text) ||
-    /\\b(confirm|approve|proceed with|go ahead with)\\b.{0,35}\\b(import|upload|bulk|records|study hours?)\\b/i.test(text);
+  const exactAffirmation = /^(yes|y|confirm|confirmed|proceed|go ahead|approve|approved|do it|apply|import now|update now)[.!]?$/i.test(text);
+  const explicitImportApproval =
+    /\\b(confirm|approve|proceed with|go ahead with|import now|update now)\\b.{0,45}\\b(import|upload|bulk|records|study hours?)\\b/i.test(text);
+  return exactAffirmation || explicitImportApproval;
 };
 
 const hasExplicitTaskWriteIntent = (prompt: string): boolean => {
@@ -734,7 +736,14 @@ const executeMentorTool = async (
       }
       const records = readArrayArg(args, 'records');
       const sourceText = readStringArg(args, 'source');
-      const source = ['manual', 'imported_json', 'imported_pdf'].includes(sourceText) ? sourceText : 'manual';
+      const sourceHint = (readStringArg(args, 'sourceDetails') + ' ' + latestUserPrompt).toLowerCase();
+      const source = ['manual', 'imported_json', 'imported_pdf'].includes(sourceText)
+        ? sourceText
+        : /\\.json\\b/i.test(sourceHint)
+          ? 'imported_json'
+          : /\\.pdf\\b/i.test(sourceHint)
+            ? 'imported_pdf'
+            : 'manual';
       const mode = readStringArg(args, 'mode') === 'skip_existing' ? 'skip_existing' : 'replace';
       return previewBulkDailyStudyHours({
         records: records as Array<{
