@@ -220,9 +220,11 @@ const getDailyTarget = (date: string): DailyTargetRecord | null => {
 };
 
 const getCloudDailyTarget = async (date: string, uid: string): Promise<DailyTargetRecord | null | undefined> => {
+  assertActiveUid(uid);
   const key = dailyKey(date);
   const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(key));
   const snapshot = await getDoc(reference);
+  assertActiveUid(uid);
   if (!snapshot.exists()) return undefined;
   const root = snapshot.data();
   if (root.deleted) return null;
@@ -230,6 +232,7 @@ const getCloudDailyTarget = async (date: string, uid: string): Promise<DailyTarg
   let rawValue = typeof root.value === 'string' ? root.value : '';
   if (root.chunked) {
     const chunkSnapshot = await getDocs(collection(reference, 'chunks'));
+    assertActiveUid(uid);
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
       .map((chunk) => String(chunk.data().value ?? ''));
@@ -266,8 +269,10 @@ const getAuditRows = (): Array<Record<string, unknown>> => {
 };
 
 const getCloudAuditRows = async (uid: string): Promise<Array<Record<string, unknown>>> => {
+  assertActiveUid(uid);
   const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(AUDIT_KEY));
   const snapshot = await getDoc(reference);
+  assertActiveUid(uid);
   if (!snapshot.exists()) return getAuditRows();
   if (snapshot.data().deleted) return [];
 
@@ -275,6 +280,7 @@ const getCloudAuditRows = async (uid: string): Promise<Array<Record<string, unkn
   let rawValue = typeof root.value === 'string' ? root.value : '';
   if (root.chunked) {
     const chunkSnapshot = await getDocs(collection(reference, 'chunks'));
+    assertActiveUid(uid);
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
       .map((chunk) => String(chunk.data().value ?? ''));
@@ -309,8 +315,10 @@ const makeAuditEntry = (input: {
 });
 
 const verifyCloudAuditEntries = async (uid: string, expectedIds: string[]): Promise<boolean> => {
+  assertActiveUid(uid);
   const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(AUDIT_KEY));
   const snapshot = await getDoc(reference);
+  assertActiveUid(uid);
   if (!snapshot.exists()) return false;
   const root = snapshot.data();
   if (root.deleted) return false;
@@ -335,8 +343,10 @@ const verifyCloudRecord = async (
   date: string,
   expectedMinutes?: number
 ): Promise<{ date: string; exists: boolean; verified: boolean; savedHours: number | null; message: string }> => {
+  assertActiveUid(uid);
   const key = dailyKey(date);
   const snapshot = await getDoc(doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(key)));
+  assertActiveUid(uid);
   if (!snapshot.exists()) {
     return { date, exists: false, verified: false, savedHours: null, message: 'No corresponding cloud record exists.' };
   }
@@ -347,6 +357,7 @@ const verifyCloudRecord = async (
   let rawValue = typeof data.value === 'string' ? data.value : '';
   if (data.chunked) {
     const chunkSnapshot = await getDocs(collection(snapshot.ref, 'chunks'));
+    assertActiveUid(uid);
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
       .map((chunk) => String(chunk.data().value ?? ''));
