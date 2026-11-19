@@ -1021,8 +1021,18 @@ export const commitCloudSyncableRecordsNow = async (
     unique.set(record.key, record.value);
   });
 
-  // Finish older pending writes first so they cannot overwrite this operation.
-  await flushAllPending();
+  // Finish pending writes for the exact keys being replaced. Unrelated live
+  // records (including an active AI Focus ledger) are not stalled by this action.
+  for (const key of unique.keys()) {
+    if (!pendingWrites.has(key)) continue;
+    const timer = pendingTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    pendingTimers.delete(key);
+    await flushKey(key);
+  }
+  if (Array.from(unique.keys()).some((key) => pendingWrites.has(key))) {
+    throw new Error('A related ACHIEVER record is still waiting to sync. Retry after its cloud write succeeds.');
+  }
   if (currentUser?.uid !== user.uid || getActiveUserStorageUid() !== user.uid) {
     throw new Error('The authenticated ACHIEVER account changed before the write could be committed.');
   }
@@ -1075,13 +1085,21 @@ export const commitCloudSyncableRecordsNow = async (
   return { uid: user.uid, keys: Array.from(unique.keys()), updatedAtClient };
 };
 
-export const flushCloudSyncWritesNow = async (): Promise<void> => {
-  if (!currentUser || !syncReady || getActiveUserStorageUid() !== currentUser.uid) {
+export const flushCloudSyncWritesNow = async (keys?: string[]): Promise<void> => {
+  const user = currentUser;
+  if (!user || !syncReady || getActiveUserStorageUid() !== user.uid) {
     throw new Error('A ready, authenticated ACHIEVER cloud account is required before modifying historical study hours.');
   }
-  await flushAllPending();
-  if (pendingWrites.size) {
-    throw new Error('Some existing ACHIEVER changes are still waiting to sync. Reconnect and retry so the historical import cannot overwrite pending work.');
+  const targets = Array.from(new Set(keys || Array.from(pendingWrites.keys())));
+  for (const key of targets) {
+    if (!pendingWrites.has(key)) continue;
+    const timer = pendingTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    pendingTimers.delete(key);
+    await flushKey(key);
+  }
+  if (targets.some((key) => pendingWrites.has(key))) {
+    throw new Error('A related Lecture Tracker record is still waiting to sync. Reconnect and retry so the historical import cannot overwrite pending work.');
   }
 };
 
