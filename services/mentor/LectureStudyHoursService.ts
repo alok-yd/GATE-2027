@@ -1119,6 +1119,13 @@ const parseStudyRowsFromJson = (rawText: string) => {
         invalidRecords.push({ path, reason: 'A study duration is missing, negative, or not in a supported hours/minutes format.' });
         return;
       }
+      if (hourKey && minuteKey && minuteValue > 59) {
+        invalidRecords.push({
+          path,
+          reason: 'When separate hours and minutes fields are supplied, the minutes component must be between 0 and 59. The row was not imported.',
+        });
+        return;
+      }
       // Separate hour and minute fields are components of one duration:
       // e.g. total_studied_hours=8 and total_studied_minutes=30 means 8h 30m.
       const totalMinutes = hoursValue + minuteValue;
