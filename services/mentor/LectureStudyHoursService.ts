@@ -1043,6 +1043,13 @@ const parseStudyRowsFromJson = (rawText: string) => {
       }
       const hourFieldIsWholeDuration = Boolean(hourKey && /(total|studied|study)/i.test(hourKey));
       const minuteFieldIsWholeDuration = Boolean(minuteKey && /(total|studied|study)/i.test(minuteKey));
+      if (hourFieldIsWholeDuration && minuteFieldIsWholeDuration && hoursValue !== minuteValue) {
+        invalidRecords.push({
+          path,
+          reason: 'The same whole-day duration appears in both hours and minutes fields, but the values conflict. This row was not imported.',
+        });
+        return;
+      }
       // Files often serialize the same whole-day duration in both hours and
       // minutes. Do not add those duplicate representations together.
       const totalMinutes = hourFieldIsWholeDuration && minuteFieldIsWholeDuration
