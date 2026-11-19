@@ -740,7 +740,8 @@ export const previewBulkDailyStudyHours = async (input: {
       continue;
     }
 
-    const previous = previousByDate.get(date) || getDailyTarget(date);
+    const cloudPrevious = previousByDate.get(date);
+    const previous = cloudPrevious === undefined ? getDailyTarget(date) : cloudPrevious;
     const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
     const previousHours = getDisplayedHours(previous, verifiedSeconds);
     const existingRecord = Boolean(previous);
@@ -1040,7 +1041,13 @@ const parseStudyRowsFromJson = (rawText: string) => {
         invalidRecords.push({ path, reason: 'A study duration is missing, negative, or not in a supported hours/minutes format.' });
         return;
       }
-      const totalMinutes = hoursValue + minuteValue;
+      const hourFieldIsWholeDuration = Boolean(hourKey && /(total|studied|study)/i.test(hourKey));
+      const minuteFieldIsWholeDuration = Boolean(minuteKey && /(total|studied|study)/i.test(minuteKey));
+      // Files often serialize the same whole-day duration in both hours and
+      // minutes. Do not add those duplicate representations together.
+      const totalMinutes = hourFieldIsWholeDuration && minuteFieldIsWholeDuration
+        ? hoursValue
+        : hoursValue + minuteValue;
       if (totalMinutes > 24 * 60) {
         invalidRecords.push({ path, reason: 'Combined duration exceeds 24 hours.' });
         return;
@@ -1049,7 +1056,8 @@ const parseStudyRowsFromJson = (rawText: string) => {
       const topicValue = value.topic ?? value.chapter ?? value.unit;
       const typeValue = String(value.recordType ?? value.record_type ?? value.type ?? '').toLowerCase();
       const isDailyTotal = /daily.?total|summary|whole.?day|total/i.test(typeValue) ||
-        /total_studied|totalStudied|total_hours|totalHours/i.test(hourKey || '');
+        /total_studied|totalStudied|total_hours|totalHours/i.test(hourKey || '') ||
+        /total_studied|totalStudied|total_minutes|totalMinutes/i.test(minuteKey || '');
       records.push({
         date,
         hours: Math.floor(totalMinutes / 60),
