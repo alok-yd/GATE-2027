@@ -848,14 +848,14 @@ export const previewBulkDailyStudyHours = async (input: {
   };
 };
 
-export const commitBulkDailyStudyHours = async (input: { previewId?: string } = {}) => {
+export const commitBulkDailyStudyHours = async (input: { previewId: string }) => {
   const uid = currentUid();
   const preview = safeParse<unknown>(localStorage.getItem(PENDING_IMPORT_KEY), null);
   if (!isRecord(preview) || preview.uid !== uid || preview.status !== 'pending') {
     throw new Error('No pending study-hour import preview exists for this signed-in account. Create a new preview first.');
   }
   const staged = preview as unknown as StoredImportPreview;
-  if (input.previewId && input.previewId !== staged.id) {
+  if (input.previewId !== staged.id) {
     throw new Error('The supplied preview ID does not match the latest pending import for this account.');
   }
   if (staged.expiresAt < Date.now()) {
