@@ -911,10 +911,6 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
     latestRows.push({ ...row, previousHours: alreadyApplied ? row.previousHours : previousHours });
   }
 
-  const finalizedPreview: StoredImportPreview = {
-    ...staged,
-    status: 'committed',
-  };
   const trimmedAudit = nextAudit.slice(-MAX_AUDIT_ROWS);
   cloudRecords.push({ key: AUDIT_KEY, value: JSON.stringify(trimmedAudit) });
 
