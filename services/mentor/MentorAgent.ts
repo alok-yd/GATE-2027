@@ -90,6 +90,8 @@ interface FunctionDeclaration {
 }
 
 const MAX_TOOL_ROUNDS = 6;
+const DOCUMENT_IMPORT_TOOL_ROUNDS = 22;
+const DOCUMENT_IMPORT_TOOL_CALLS = 26;
 const REQUEST_TIMEOUT_MS = 45000;
 
 const mentorTools: FunctionDeclaration[] = [
@@ -457,7 +459,8 @@ const readArrayArg = (args: unknown, key: string): unknown[] => {
 };
 
 const getPromptStudyDurationMinutes = (prompt: string): number | null => {
-  const match = prompt.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b(?:\s*(?:and\s*)?(\d+)\s*(?:minutes?|mins?|m)\b)?/i);
+  const matches = Array.from(prompt.matchAll(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b(?:\s*(?:and\s*)?(\d+)\s*(?:minutes?|mins?|m)\b)?/gi));
+  const match = matches[matches.length - 1];
   if (!match) return null;
   const hours = Number(match[1]);
   const minutes = Number(match[2] || 0);
@@ -1479,12 +1482,17 @@ const callGeminiWithTools = async (
     ...normaliseHistory(messages),
   ];
   let toolCallsExecuted = 0;
+  const latestUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
+  const isStudyDocumentImportRequest =
+    !executionProfile &&
+    /\\b(pdf|json|study report|study record|study history)\\b/i.test(latestUserPrompt) &&
+    /\\b(import|extract|upload|update|read)\\b/i.test(latestUserPrompt);
   const maxToolRounds = executionProfile?.maxToolRounds
     ? Math.max(1, Math.min(MAX_TOOL_ROUNDS, Math.floor(executionProfile.maxToolRounds)))
-    : MAX_TOOL_ROUNDS;
+    : isStudyDocumentImportRequest ? DOCUMENT_IMPORT_TOOL_ROUNDS : MAX_TOOL_ROUNDS;
   const maxToolCalls = executionProfile?.maxToolCalls
     ? Math.max(1, Math.min(MAX_TOOL_ROUNDS * 3, Math.floor(executionProfile.maxToolCalls)))
-    : MAX_TOOL_ROUNDS * 3;
+    : isStudyDocumentImportRequest ? DOCUMENT_IMPORT_TOOL_CALLS : MAX_TOOL_ROUNDS * 3;
   const availableTools = executionProfile
     ? mentorTools.filter((tool) => executionProfile.allowedTools.includes(tool.name))
     : mentorTools;
