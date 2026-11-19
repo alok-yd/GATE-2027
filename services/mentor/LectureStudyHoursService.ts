@@ -109,7 +109,7 @@ const todayInKolkata = (): string => {
 };
 
 const isValidIsoDate = (value: string): boolean => {
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const [year, month, day] = value.split('-').map(Number);
   const check = new Date(Date.UTC(year, month - 1, day));
   return check.getUTCFullYear() === year &&
@@ -122,7 +122,7 @@ const parseDocumentDate = (input: unknown): string | null => {
   const value = String(input).trim();
   if (isValidIsoDate(value)) return value;
 
-  let match = value.match(/\\b(\\d{1,2})[\\/-](\\d{1,2})[\\/-](20\\d{2})\\b/);
+  let match = value.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/);
   if (match) {
     const [, day, month, year] = match;
     const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
@@ -135,7 +135,7 @@ const parseDocumentDate = (input: unknown): string | null => {
     aug: '08', august: '08', sep: '09', sept: '09', september: '09',
     oct: '10', october: '10', nov: '11', november: '11', dec: '12', december: '12',
   };
-  match = value.match(/\\b(\\d{1,2})\\s+([A-Za-z]+)\\.?[,]?\\s+(20\\d{2})\\b/);
+  match = value.match(/\b(\d{1,2})\s+([A-Za-z]+)\.?[,]?\s+(20\d{2})\b/);
   if (match) {
     const [, day, monthName, year] = match;
     const month = monthMap[monthName.toLowerCase()];
@@ -143,7 +143,7 @@ const parseDocumentDate = (input: unknown): string | null => {
     const iso = `${year}-${month}-${day.padStart(2, '0')}`;
     return isValidIsoDate(iso) ? iso : null;
   }
-  match = value.match(/\\b([A-Za-z]+)\\s+(\\d{1,2})[,]?\\s+(20\\d{2})\\b/);
+  match = value.match(/\b([A-Za-z]+)\s+(\d{1,2})[,]?\s+(20\d{2})\b/);
   if (match) {
     const [, monthName, day, year] = match;
     const month = monthMap[monthName.toLowerCase()];
@@ -161,12 +161,26 @@ const parseDurationTextMinutes = (value: unknown): number | null => {
   }
   if (typeof value !== 'string' || !value.trim()) return null;
   const text = value.trim();
-  if (/^\\d+(?:\\.\\d+)?$/.test(text)) return Math.round(Number(text) * 60);
+  if (/^\d+(?:\.\d+)?$/.test(text)) return Math.round(Number(text) * 60);
 
-  const hours = text.match(/(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hour|hours)\\b/i);
-  const minutes = text.match(/(\\d+)\\s*(?:m|min|mins|minute|minutes)\\b/i);
+  const hours = text.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/i);
+  const minutes = text.match(/(\d+)\s*(?:m|min|mins|minute|minutes)\b/i);
   if (!hours && !minutes) return null;
   return Math.round((hours ? Number(hours[1]) * 60 : 0) + (minutes ? Number(minutes[1]) : 0));
+};
+
+const parseMinuteField = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 0 && value <= 24 * 60 ? value : null;
+  }
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const text = value.trim();
+  if (/^\d+$/.test(text)) {
+    const minutes = Number(text);
+    return minutes <= 24 * 60 ? minutes : null;
+  }
+  const duration = parseDurationTextMinutes(text);
+  return duration != null && duration <= 24 * 60 ? duration : null;
 };
 
 const durationMinutesFromInput = (hoursValue: unknown, minutesValue: unknown): number | null => {
@@ -278,7 +292,7 @@ export const getDailyStudyHours = async (input: {
   for (let index = 0; index < localStorage.length; index += 1) {
     const key = localStorage.key(index);
     if (!key) continue;
-    const match = key.match(/^gate_daily_target_(\\d{4}-\\d{2}-\\d{2})$/);
+    const match = key.match(/^gate_daily_target_(\d{4}-\d{2}-\d{2})$/);
     if (!match) continue;
     const date = match[1];
     if (date < startDate || date > endDate) continue;
@@ -577,7 +591,7 @@ export const previewBulkDailyStudyHours = (input: {
     uid,
     createdAt: now,
     expiresAt: Date.now() + PREVIEW_TTL_MS,
-    source: input.source,
+    source: (['ai_mentor', 'manual', 'imported_json', 'imported_pdf'].includes(input.source) ? input.source : 'manual'),
     mode,
     rows,
     invalidRecords,
@@ -745,11 +759,17 @@ const parseStudyRowsFromJson = (rawText: string) => {
   try {
     parsed = JSON.parse(rawText);
   } catch {
-    return { validJson: false, records: [] as StudyHoursInputRecord[], message: 'The document is not valid JSON.' };
+    return {
+      validJson: false,
+      records: [] as StudyHoursInputRecord[],
+      invalidRecords: [{ path: '$', reason: 'The document is not valid JSON.' }],
+      message: 'The document is not valid JSON.',
+    };
   }
   const records: StudyHoursInputRecord[] = [];
+  const invalidRecords: Array<{ path: string; reason: string }> = [];
   const visit = (value: unknown, path: string): void => {
-    if (records.length >= MAX_IMPORT_SOURCE_ROWS) return;
+    if (records.length + invalidRecords.length >= MAX_IMPORT_SOURCE_ROWS) return;
     if (Array.isArray(value)) {
       value.forEach((item, index) => visit(item, `${path}[${index}]`));
       return;
@@ -761,26 +781,34 @@ const parseStudyRowsFromJson = (rawText: string) => {
     if (dateKey && (hourKey || minuteKey)) {
       const date = parseDocumentDate(value[dateKey]);
       const hoursValue = hourKey ? parseDurationTextMinutes(value[hourKey]) : 0;
-      const minuteValue = minuteKey ? parseDurationTextMinutes(value[minuteKey]) : 0;
-      if (date && hoursValue != null && minuteValue != null) {
-        const totalMinutes = hoursValue + (minuteKey ? (typeof value[minuteKey] === 'number' ? Math.round(Number(value[minuteKey])) : minuteValue) : 0);
-        if (totalMinutes <= 24 * 60) {
-          const subjectValue = value.subject ?? value.course ?? value.subjectName ?? value.subject_name;
-          const topicValue = value.topic ?? value.chapter ?? value.unit;
-          const typeValue = String(value.recordType ?? value.record_type ?? value.type ?? '').toLowerCase();
-          const isDailyTotal = /daily.?total|summary|whole.?day|total/i.test(typeValue) ||
-            /total_studied|totalStudied|total_hours|totalHours/i.test(hourKey || '');
-          records.push({
-            date,
-            hours: Math.floor(totalMinutes / 60),
-            minutes: totalMinutes % 60,
-            ...(typeof subjectValue === 'string' ? { subject: subjectValue } : {}),
-            ...(typeof topicValue === 'string' ? { topic: topicValue } : {}),
-            recordType: isDailyTotal ? 'daily_total' : subjectValue ? 'session' : 'unknown',
-            sourceDetails: `JSON ${path}; fields: ${[dateKey, hourKey, minuteKey].filter(Boolean).join(', ')}`,
-          });
-        }
+      const minuteValue = minuteKey ? parseMinuteField(value[minuteKey]) : 0;
+      if (!date) {
+        invalidRecords.push({ path, reason: `Invalid or ambiguous date in field "${dateKey}".` });
+        return;
       }
+      if (hoursValue == null || minuteValue == null) {
+        invalidRecords.push({ path, reason: 'A study duration is missing, negative, or not in a supported hours/minutes format.' });
+        return;
+      }
+      const totalMinutes = hoursValue + minuteValue;
+      if (totalMinutes > 24 * 60) {
+        invalidRecords.push({ path, reason: 'Combined duration exceeds 24 hours.' });
+        return;
+      }
+      const subjectValue = value.subject ?? value.course ?? value.subjectName ?? value.subject_name;
+      const topicValue = value.topic ?? value.chapter ?? value.unit;
+      const typeValue = String(value.recordType ?? value.record_type ?? value.type ?? '').toLowerCase();
+      const isDailyTotal = /daily.?total|summary|whole.?day|total/i.test(typeValue) ||
+        /total_studied|totalStudied|total_hours|totalHours/i.test(hourKey || '');
+      records.push({
+        date,
+        hours: Math.floor(totalMinutes / 60),
+        minutes: totalMinutes % 60,
+        ...(typeof subjectValue === 'string' ? { subject: subjectValue } : {}),
+        ...(typeof topicValue === 'string' ? { topic: topicValue } : {}),
+        recordType: isDailyTotal ? 'daily_total' : subjectValue ? 'session' : 'unknown',
+        sourceDetails: `JSON ${path}; fields: ${[dateKey, hourKey, minuteKey].filter(Boolean).join(', ')}`,
+      });
       return;
     }
     Object.entries(value).forEach(([key, child]) => visit(child, path ? `${path}.${key}` : key));
@@ -789,6 +817,7 @@ const parseStudyRowsFromJson = (rawText: string) => {
   return {
     validJson: true,
     records,
+    invalidRecords,
     message: records.length
       ? 'Structured study-hour rows were extracted from the JSON document.'
       : 'The JSON is valid, but no objects with both a date and study duration were identified.',
@@ -846,6 +875,7 @@ export const getUploadedStudyHoursDocument = (input: { documentName?: string; do
         validJson: jsonExtraction.validJson,
         records: jsonExtraction.records,
         extractedRecordCount: jsonExtraction.records.length,
+        invalidRecords: jsonExtraction.invalidRecords,
         message: jsonExtraction.message,
       },
     } : {}),
