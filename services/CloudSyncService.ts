@@ -994,5 +994,132 @@ export const syncCloudDataNow = async (): Promise<void> => {
   });
 };
 
+
+export interface CloudSyncableRecordRead {
+  key: string;
+  value: string | null;
+}
+
+/**
+ * Immediate, authenticated read through the same UID-owned Firestore appData
+ * records used by the normal Cloud Sync service. No caller-supplied UID is
+ * accepted, and private records are never read from another account path.
+ */
+const requireImmediateCloudUid = (): string => {
+  const user = currentUser;
+  if (!user) throw new Error('Sign in to ACHIEVER before accessing private cloud records.');
+  if (!syncReady || state.user?.uid !== user.uid || getActiveUserStorageUid() !== user.uid) {
+    throw new Error('Your authenticated ACHIEVER cloud data is not ready. Wait for account sync to finish and retry.');
+  }
+  return user.uid;
+};
+
+export const readCloudSyncableRecordsNow = async (keys: string[]): Promise<CloudSyncableRecordRead[]> => {
+  const uid = requireImmediateCloudUid();
+  const uniqueKeys = [...new Set(keys)];
+  if (uniqueKeys.length > 400) throw new Error('A direct Lecture Tracker read is limited to 400 saved records.');
+  uniqueKeys.forEach((key) => {
+    if (!isCloudSyncableKey(key)) throw new Error('The requested key is outside the existing authenticated Cloud Sync data scope.');
+  });
+  return Promise.all(uniqueKeys.map(async (key) => {
+    const reference = recordDocument(uid, key);
+    const snapshot = await getDoc(reference);
+    if (!snapshot.exists()) return { key, value: null };
+    const record = snapshot.data() as CloudRecord;
+    if (record.deleted) return { key, value: null };
+    if (!record.chunked) return { key, value: typeof record.value === 'string' ? record.value : '' };
+    const chunkSnapshot = await getDocs(collection(reference, 'chunks'));
+    const chunks = chunkSnapshot.docs
+      .sort((left, right) => Number(left.data().index) - Number(right.data().index))
+      .map((chunk) => String(chunk.data().value ?? ''));
+    if (record.chunkCount && chunks.length !== record.chunkCount) {
+      throw new Error('Cloud data for "' + key + '" is incomplete. Reconnect and sync again.');
+    }
+    return { key, value: chunks.join('') };
+  }));
+};
+
+/**
+ * Persist the current values of existing logical appData keys immediately.
+ * A single Firestore batch makes a historical import all-or-nothing. The
+ * stored record format is identical to the application's existing sync schema.
+ */
+export const persistCloudSyncableRecordsNow = async (keys: string[]): Promise<{ persistedKeys: string[]; verified: boolean }> => {
+  const uid = requireImmediateCloudUid();
+  const uniqueKeys = [...new Set(keys)];
+  if (!uniqueKeys.length) return { persistedKeys: [], verified: true };
+  if (uniqueKeys.length > 400) throw new Error('A direct Lecture Tracker write is limited to 400 saved records per atomic batch.');
+  uniqueKeys.forEach((key) => {
+    if (!isCloudSyncableKey(key)) throw new Error('The requested key is outside the existing authenticated Cloud Sync data scope.');
+  });
+
+  const captured = new Map<string, string>();
+  uniqueKeys.forEach((key) => {
+    const value = window.localStorage.getItem(key);
+    if (value === null) throw new Error('Cannot persist "' + key + '" because its local value is missing.');
+    if (byteLength(value) > INLINE_VALUE_LIMIT_BYTES) {
+      throw new Error('The requested Lecture Tracker record is too large for this targeted atomic write.');
+    }
+    captured.set(key, value);
+  });
+
+  const existingSnapshots = await Promise.all(uniqueKeys.map((key) => getDoc(recordDocument(uid, key))));
+  const previousChunkCounts = existingSnapshots.map((snapshot) => Number(snapshot.data()?.chunkCount || 0));
+  const operationCount = uniqueKeys.length + previousChunkCounts.reduce((sum, count) => sum + count, 0);
+  if (operationCount > 450) {
+    throw new Error('The import is too large for one safe atomic database batch. Split it into a smaller preview.');
+  }
+
+  const modifiedAt = Date.now();
+  const batch = writeBatch(cloudDb);
+  uniqueKeys.forEach((key, index) => {
+    const reference = recordDocument(uid, key);
+    const oldChunkCount = previousChunkCounts[index];
+    const chunksCollection = collection(reference, 'chunks');
+    for (let chunkIndex = 0; chunkIndex < oldChunkCount; chunkIndex += 1) {
+      batch.delete(doc(chunksCollection, String(chunkIndex).padStart(4, '0')));
+    }
+    batch.set(reference, {
+      key,
+      value: captured.get(key),
+      deleted: false,
+      chunked: false,
+      chunkCount: 0,
+      updatedAtClient: modifiedAt,
+      updatedAt: serverTimestamp(),
+      writerId: deviceId,
+      schemaVersion: SCHEMA_VERSION,
+    }, { merge: true });
+  });
+
+  await batch.commit();
+
+  const readBack = await readCloudSyncableRecordsNow(uniqueKeys);
+  const readBackByKey = new Map(readBack.map((item) => [item.key, item.value]));
+  const failedKeys = uniqueKeys.filter((key) => readBackByKey.get(key) !== captured.get(key));
+  if (failedKeys.length) {
+    throw new Error('Firestore committed the write, but database read-back verification failed for: ' + failedKeys.join(', '));
+  }
+
+  uniqueKeys.forEach((key) => {
+    // A newer local edit made while the network operation was in flight must
+    // remain queued and must not be marked synced by this older snapshot.
+    if (window.localStorage.getItem(key) !== captured.get(key)) return;
+    const timer = pendingTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    pendingTimers.delete(key);
+    pendingWrites.delete(key);
+    markWriteSynced(uid, key, modifiedAt);
+  });
+  updateState({
+    status: pendingWrites.size ? 'syncing' : 'synced',
+    message: pendingWrites.size
+      ? 'The requested Lecture Tracker records are saved; other recent changes are still syncing.'
+      : 'The requested Lecture Tracker records were saved and verified in your private cloud account.',
+    lastSyncedAt: Date.now(),
+  });
+  return { persistedKeys: uniqueKeys, verified: true };
+};
+
 // Exported for verification and small unit tests without exposing stored values.
 export const isCloudSyncableStorageKey = isCloudSyncableKey;
