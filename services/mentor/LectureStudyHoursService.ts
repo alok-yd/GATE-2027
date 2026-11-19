@@ -131,6 +131,8 @@ const parseDocumentDate = (input: unknown): string | null => {
   if (typeof input !== 'string' && typeof input !== 'number') return null;
   const value = String(input).trim();
   if (isValidIsoDate(value)) return value;
+  const isoDatePrefix = value.match(/^(20\d{2}-\d{2}-\d{2})(?:[Tt ].*)?$/);
+  if (isoDatePrefix && isValidIsoDate(isoDatePrefix[1])) return isoDatePrefix[1];
 
   let match = value.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/);
   if (match) {
