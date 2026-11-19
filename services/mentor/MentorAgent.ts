@@ -661,7 +661,7 @@ const searchPreviousMentorConversations = (query: string) => {
   };
 };
 
-const executeMentorTool = (
+const executeMentorTool = async (
   name: string,
   args: unknown,
   latestUserPrompt = '',
@@ -683,6 +683,77 @@ const executeMentorTool = (
 
     case 'get_lecture_tracker_data':
       return getLectureTrackerMentorContext();
+
+    case 'get_daily_study_hours':
+      return getDailyStudyHours({
+        startDate: readStringArg(args, 'startDate') || undefined,
+        endDate: readStringArg(args, 'endDate') || undefined,
+      });
+
+    case 'get_uploaded_study_hours_document':
+      return getUploadedStudyHoursDocument({
+        documentName: readStringArg(args, 'documentName') || undefined,
+        documentId: readStringArg(args, 'documentId') || undefined,
+      });
+
+    case 'upsert_daily_study_hours': {
+      const prompt = latestUserPrompt.toLowerCase();
+      const multiple = /\\b(bulk|multiple|every|each|all days|all dates|date range)\\b/i.test(prompt) || /\\.(pdf|json)\\b/i.test(prompt);
+      if (!hasExplicitStudyHoursWriteIntent(latestUserPrompt) || multiple) {
+        return { status: 'not_authorized', saved: false, message: 'No study-hour record was changed. A single-date write needs an explicit request for one exact date and duration. Use the import preview flow for files or multiple dates.' };
+      }
+      const date = readStringArg(args, 'date');
+      const hours = readNumberArg(args, 'hours', NaN);
+      if (!date || !Number.isFinite(hours)) {
+        return { status: 'needs_clarification', missingFields: [!date ? 'date' : '', !Number.isFinite(hours) ? 'hours' : ''].filter(Boolean), message: 'No study-hour record was changed. Supply one exact date and duration.' };
+      }
+      const sourceText = readStringArg(args, 'source');
+      const source = ['ai_mentor', 'manual', 'imported_json', 'imported_pdf'].includes(sourceText) ? sourceText : 'ai_mentor';
+      return await upsertDailyStudyHours({
+        date,
+        hours,
+        minutes: readNumberArg(args, 'minutes', 0),
+        source: source as 'ai_mentor' | 'manual' | 'imported_json' | 'imported_pdf',
+        sourceDetails: readStringArg(args, 'sourceDetails') || latestUserPrompt.slice(0, 500),
+      });
+    }
+
+    case 'preview_bulk_daily_study_hours': {
+      if (!hasExplicitStudyHoursWriteIntent(latestUserPrompt)) {
+        return { status: 'not_authorized', confirmationRequired: false, message: 'No import preview was created. The latest user message did not explicitly ask to update historical study hours in Lecture Tracker.' };
+      }
+      const records = readArrayArg(args, 'records');
+      const sourceText = readStringArg(args, 'source');
+      const source = ['manual', 'imported_json', 'imported_pdf'].includes(sourceText) ? sourceText : 'manual';
+      const mode = readStringArg(args, 'mode') === 'skip_existing' ? 'skip_existing' : 'replace';
+      return previewBulkDailyStudyHours({
+        records: records as Array<{
+          date: string;
+          hours: number;
+          minutes?: number;
+          subject?: string;
+          topic?: string;
+          recordType?: 'session' | 'daily_total' | 'unknown';
+          sourceDetails?: string;
+        }>,
+        source: source as 'manual' | 'imported_json' | 'imported_pdf',
+        mode,
+        sourceDetails: readStringArg(args, 'sourceDetails') || latestUserPrompt.slice(0, 500),
+      });
+    }
+
+    case 'bulk_upsert_daily_study_hours': {
+      if (!hasExplicitBulkConfirmation(latestUserPrompt)) {
+        return { status: 'confirmation_required', saved: false, message: 'No bulk records were changed. Show the latest import preview and ask the user to confirm it explicitly before committing.' };
+      }
+      return await commitBulkDailyStudyHours({ previewId: readStringArg(args, 'previewId') || undefined });
+    }
+
+    case 'verify_daily_study_hours': {
+      const dates = readArrayArg(args, 'dates').filter((date): date is string => typeof date === 'string');
+      const expectedRecords = readArrayArg(args, 'expectedRecords').filter(isRecord) as Array<{ date: string; hours: number; minutes?: number }>;
+      return await verifyDailyStudyHours({ dates, expectedRecords });
+    }
 
     case 'get_speaking_coach_data':
       return getSpeakingCoachMentorContext();
