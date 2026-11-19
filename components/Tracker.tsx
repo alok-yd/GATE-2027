@@ -410,7 +410,9 @@ const Tracker: React.FC = () => {
     const syncedHours = Number((verifiedSeconds / 3600).toFixed(2));
     const manualBackup = dailyTarget.hoursStudiedSource === 'manual'
       ? Number(dailyTarget.hoursStudied) || 0
-      : Number(dailyTarget.manualHoursStudied) || 0;
+      : dailyTarget.hoursStudiedSource === 'imported'
+        ? Number(dailyTarget.importedHoursStudied ?? dailyTarget.hoursStudied) || 0
+        : Number(dailyTarget.manualHoursStudied) || 0;
     const updated: DailyTarget = {
       ...dailyTarget,
       hoursStudied: syncedHours,
