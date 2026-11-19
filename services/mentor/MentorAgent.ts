@@ -457,7 +457,7 @@ const readArrayArg = (args: unknown, key: string): unknown[] => {
 };
 
 const getPromptStudyDurationMinutes = (prompt: string): number | null => {
-  const match = prompt.match(/(\\d+(?:\\.\\d+)?)\\s*(?:hours?|hrs?|h)\\b(?:\\s*(?:and\\s*)?(\\d+)\\s*(?:minutes?|mins?|m)\\b)?/i);
+  const match = prompt.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b(?:\s*(?:and\s*)?(\d+)\s*(?:minutes?|mins?|m)\b)?/i);
   if (!match) return null;
   const hours = Number(match[1]);
   const minutes = Number(match[2] || 0);
@@ -471,37 +471,37 @@ const promptContainsExactIsoDate = (prompt: string, date: string): boolean =>
 const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
   const text = prompt.toLowerCase();
   if (
-    /\\b(don't|do not|never|no need to)\\s+(add|create|insert|save|update|change|import|record|backfill)\\b/i.test(text) ||
-    /\\b(how (?:do|can|could|should) i|tell me how|show me how|steps to|explain how|what is the way to)\\b/i.test(text)
+    /\b(don't|do not|never|no need to)\s+(add|create|insert|save|update|change|import|record|backfill)\b/i.test(text) ||
+    /\b(how (?:do|can|could|should) i|tell me how|show me how|steps to|explain how|what is the way to)\b/i.test(text)
   ) {
     return false;
   }
-  const action = /\\b(add|insert|record|set|update|change|correct|backfill|import|apply|save)\\b/i.test(text);
+  const action = /\b(add|insert|record|set|update|change|correct|backfill|import|apply|save)\b/i.test(text);
   const destination = /(lecture tracker|daily study log|study hours?|hours studied|total hours|study time|historical study records?)/i.test(text);
   return action && destination;
 };
 
 const hasExplicitBulkConfirmation = (prompt: string): boolean => {
   const text = prompt.trim().toLowerCase();
-  if (/\\b(no|not|don't|do not|cancel|reject|stop)\\b/i.test(text)) return false;
+  if (/\b(no|not|don't|do not|cancel|reject|stop)\b/i.test(text)) return false;
   const exactAffirmation = /^(yes|y|confirm|confirmed|proceed|go ahead|approve|approved|do it|apply|import now|update now)[.!]?$/i.test(text);
-  const affirmativeFollowUp = /^(yes|y)[,\\s]+(proceed|go ahead|confirm|do it|apply(?: the import)?|import now|update now)[.!]?$/i.test(text);
+  const affirmativeFollowUp = /^(yes|y)[,\s]+(proceed|go ahead|confirm|do it|apply(?: the import)?|import now|update now)[.!]?$/i.test(text);
   const explicitImportApproval =
-    /\\b(confirm|approve|proceed with|go ahead with|import now|update now)\\b.{0,45}\\b(import|upload|bulk|records|study hours?)\\b/i.test(text);
+    /\b(confirm|approve|proceed with|go ahead with|import now|update now)\b.{0,45}\b(import|upload|bulk|records|study hours?)\b/i.test(text);
   return exactAffirmation || affirmativeFollowUp || explicitImportApproval;
 };
 
 const hasExplicitTaskWriteIntent = (prompt: string): boolean => {
   const text = prompt.toLowerCase();
   if (
-    /\\b(don't|do not|never|no need to)\\s+(add|create|insert|save|schedule)\\b/i.test(text) ||
+    /\b(don't|do not|never|no need to)\s+(add|create|insert|save|schedule)\b/i.test(text) ||
     /(total studied hours|hours studied|study hours?|study time|daily total)/i.test(text)
   ) {
     return false;
   }
-  const hasActionVerb = /\\b(add|create|insert|save|schedule)\\b/i.test(text);
-  const namesTask = /\\b(task|tasks|study plan|daily plan)\\b/i.test(text);
-  const namesTracker = /\\b(lecture tracker|daily study log|my tracker|the tracker)\\b/i.test(text);
+  const hasActionVerb = /\b(add|create|insert|save|schedule)\b/i.test(text);
+  const namesTask = /\b(task|tasks|study plan|daily plan)\b/i.test(text);
+  const namesTracker = /\b(lecture tracker|daily study log|my tracker|the tracker)\b/i.test(text);
   return hasActionVerb && (namesTask || namesTracker);
 };
 
@@ -738,9 +738,9 @@ const executeMentorTool = async (
     case 'upsert_daily_study_hours': {
       const prompt = latestUserPrompt.toLowerCase();
       const multiple =
-        /\\b(bulk|multiple|every|each|all days?|all dates?|date range|from .{0,45} to |between .{0,45} and )\\b/i.test(prompt) ||
-        /\\b\\d{4}-\\d{2}-\\d{2}\\b.{0,80}\\b(and|,|&)\\b.{0,80}\\b\\d{4}-\\d{2}-\\d{2}\\b/i.test(prompt) ||
-        /\\.(pdf|json)\\b/i.test(prompt);
+        /\b(bulk|multiple|every|each|all days?|all dates?|date range|from .{0,45} to |between .{0,45} and )\b/i.test(prompt) ||
+        /\b\d{4}-\d{2}-\d{2}\b.{0,80}\b(and|,|&)\b.{0,80}\b\d{4}-\d{2}-\d{2}\b/i.test(prompt) ||
+        /\.(pdf|json)\b/i.test(prompt);
       if (!hasExplicitStudyHoursWriteIntent(latestUserPrompt) || multiple) {
         return { status: 'not_authorized', saved: false, message: 'No study-hour record was changed. A single-date write needs an explicit request for one exact date and duration. Use the import preview flow for files or multiple dates.' };
       }
@@ -798,7 +798,7 @@ const executeMentorTool = async (
         const hours = Number(range.hours);
         const minutes = range.minutes == null || range.minutes === '' ? undefined : Number(range.minutes);
         const parseExactDate = (value: string): Date | null => {
-          if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return null;
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
           const parsed = new Date(`${value}T00:00:00.000Z`);
           return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? null : parsed;
         };
@@ -867,9 +867,9 @@ const executeMentorTool = async (
       const sourceHint = (readStringArg(args, 'sourceDetails') + ' ' + latestUserPrompt).toLowerCase();
       const source = ['ai_mentor', 'manual', 'imported_json', 'imported_pdf'].includes(sourceText)
         ? sourceText
-        : /\\.json\\b/i.test(sourceHint)
+        : /\.json\b/i.test(sourceHint)
           ? 'imported_json'
-          : /\\.pdf\\b/i.test(sourceHint)
+          : /\.pdf\b/i.test(sourceHint)
             ? 'imported_pdf'
             : range
               ? 'ai_mentor'
@@ -1631,7 +1631,7 @@ export const generateMentorReply = async ({
     };
   }
   const isStudyHoursHowTo =
-    /\\b(how (?:do|can|could|should) i|tell me how|show me how|steps to|explain how|what is the way to)\\b/i.test(latestUserPrompt);
+    /\b(how (?:do|can|could|should) i|tell me how|show me how|steps to|explain how|what is the way to)\b/i.test(latestUserPrompt);
   if (
     /total studied hours|hours studied|study hours?|study time|how many hours did i study|hours for (?:the )?(?:last|past|previous)/i.test(latestUserPrompt) &&
     !hasExplicitStudyHoursWriteIntent(latestUserPrompt) &&
