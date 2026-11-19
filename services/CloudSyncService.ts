@@ -1018,6 +1018,9 @@ export const commitCloudSyncableRecordsNow = async (
     if (typeof record.value !== 'string') {
       throw new Error('Cloud record values must be serialized strings.');
     }
+    if (byteLength(record.value) > INLINE_VALUE_LIMIT_BYTES) {
+      throw new Error(`The record "${record.key}" is too large for this atomic write. Reduce its size and retry.`);
+    }
     unique.set(record.key, record.value);
   });
 
