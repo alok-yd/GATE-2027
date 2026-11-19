@@ -1,5 +1,5 @@
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
-import { cloudAuth, cloudDb, commitCloudSyncableRecordsNow } from '../CloudSyncService';
+import { cloudAuth, cloudDb, commitCloudSyncableRecordsNow, flushCloudSyncWritesNow } from '../CloudSyncService';
 import { getActiveUserStorageUid } from '../UserScopedStorage';
 import { StorageService } from '../../components/focus/services/storage';
 import { listDocuments } from '../AINativeServices';
@@ -200,6 +200,29 @@ const dailyKey = (date: string): string => `${DAILY_KEY_PREFIX}${date}`;
 const getDailyTarget = (date: string): DailyTargetRecord | null => {
   const value = safeParse<unknown>(localStorage.getItem(dailyKey(date)), null);
   return isRecord(value) ? value as DailyTargetRecord : null;
+};
+
+const getCloudDailyTarget = async (date: string): Promise<DailyTargetRecord | null> => {
+  const key = dailyKey(date);
+  const reference = doc(collection(cloudDb, 'users', currentUid(), 'appData'), encodeURIComponent(key));
+  const snapshot = await getDoc(reference);
+  if (!snapshot.exists()) return null;
+  const root = snapshot.data();
+  if (root.deleted) return null;
+
+  let rawValue = typeof root.value === 'string' ? root.value : '';
+  if (root.chunked) {
+    const chunkSnapshot = await getDocs(collection(reference, 'chunks'));
+    const chunks = chunkSnapshot.docs
+      .sort((left, right) => Number(left.data().index) - Number(right.data().index))
+      .map((chunk) => String(chunk.data().value ?? ''));
+    if (root.chunkCount && chunks.length !== Number(root.chunkCount)) {
+      throw new Error(`The existing daily record for ${date} is incomplete in Firebase. Refresh cloud sync before changing it.`);
+    }
+    rawValue = chunks.join('');
+  }
+  const parsed = safeParse<unknown>(rawValue, null);
+  return isRecord(parsed) ? parsed as DailyTargetRecord : null;
 };
 
 const getManualDisplayedHours = (record: DailyTargetRecord | null): number => {
@@ -446,8 +469,9 @@ export const upsertDailyStudyHours = async (input: {
 
   const source = input.source || 'ai_mentor';
   const sourceDetails = String(input.sourceDetails || 'Explicit single-date update requested in AI Mentor.').slice(0, 2000);
+  await flushCloudSyncWritesNow();
   const key = dailyKey(date);
-  const previous = getDailyTarget(date);
+  const previous = await getCloudDailyTarget(date) || getDailyTarget(date);
   const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
   const previousDisplayedHours = getDisplayedHours(previous, verifiedSeconds);
   const now = new Date().toISOString();
@@ -697,6 +721,14 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
     throw new Error('The pending import is larger than the supported 365 daily records.');
   }
 
+  // Flush earlier app edits, then re-read every affected date from the
+  // authenticated cloud account. Never apply a stale preview over newer data.
+  await flushCloudSyncWritesNow();
+  const cloudPreviousRecords = new Map<string, DailyTargetRecord | null>();
+  await Promise.all(eligibleRows.map(async (row) => {
+    cloudPreviousRecords.set(row.date, await getCloudDailyTarget(row.date));
+  }));
+
   const now = new Date().toISOString();
   const auditRows = getAuditRows();
   const nextAudit = [...auditRows];
@@ -705,9 +737,15 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   const latestRows: PreviewRow[] = [];
 
   for (const row of eligibleRows) {
-    const previous = getDailyTarget(row.date);
+    const previous = cloudPreviousRecords.get(row.date) || getDailyTarget(row.date);
     const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(row.date);
     const previousHours = getDisplayedHours(previous, verifiedSeconds);
+    if (
+      Boolean(previous) !== row.existingRecord ||
+      Math.round(previousHours * 60) !== Math.round(row.previousHours * 60)
+    ) {
+      throw new Error(`The Lecture Tracker record for ${row.date} changed after the preview was created. No bulk records were written. Create and review a fresh preview before confirming again.`);
+    }
     const totalHours = roundHours(row.totalMinutes);
     const importId = staged.id;
     const sourceDetails = [row.sourceDetails, `Imported via AI Mentor from ${staged.source}.`].filter(Boolean).join(' ').slice(0, 2000);
