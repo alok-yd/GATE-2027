@@ -808,12 +808,37 @@ const executeMentorTool = async (
         const requestedRangeDuration = Number.isFinite(hours) && (minutes === undefined || (Number.isInteger(minutes) && minutes >= 0 && minutes <= 59 && Number.isInteger(hours)))
           ? Math.round(hours * 60) + (minutes || 0)
           : NaN;
-        if (!promptContainsExactIsoDate(latestUserPrompt, startDate) || !promptContainsExactIsoDate(latestUserPrompt, endDate) ||
-            !Number.isFinite(requestedRangeDuration) || promptDuration !== requestedRangeDuration) {
-          return { status: 'not_authorized', message: 'No preview was created. The exact start date, end date and daily duration must all be stated in the latest user message; I will not infer missing values.' };
+
+        // First distinguish missing details from an authorization mismatch.
+        // Phrases like "every previous day" do not define a safe date range.
+        const missingRangeFields = [
+          !start ? 'fillEachDate.startDate (YYYY-MM-DD)' : '',
+          !end ? 'fillEachDate.endDate (YYYY-MM-DD)' : '',
+          !Number.isFinite(requestedRangeDuration) ? 'fillEachDate.hours' : '',
+        ].filter(Boolean);
+        if (missingRangeFields.length) {
+          return {
+            status: 'needs_clarification',
+            missingFields: missingRangeFields,
+            message: 'No preview was created. Please specify the exact inclusive start date and end date in YYYY-MM-DD format, plus the daily duration. "Every previous day" is ambiguous, so no dates will be assumed.',
+          };
         }
-        if (!start || !end || start.getTime() > end.getTime() || !Number.isFinite(hours)) {
-          return { status: 'needs_clarification', missingFields: [!start ? 'fillEachDate.startDate' : '', !end ? 'fillEachDate.endDate' : '', !Number.isFinite(hours) ? 'fillEachDate.hours' : ''].filter(Boolean), message: 'No preview was created. Supply exact valid start/end dates and a daily duration.' };
+        if (start.getTime() > end.getTime()) {
+          return {
+            status: 'needs_clarification',
+            missingFields: ['fillEachDate.startDate', 'fillEachDate.endDate'],
+            message: 'No preview was created because the start date is after the end date. Provide a valid inclusive date range.',
+          };
+        }
+        if (
+          !promptContainsExactIsoDate(latestUserPrompt, startDate) ||
+          !promptContainsExactIsoDate(latestUserPrompt, endDate) ||
+          promptDuration !== requestedRangeDuration
+        ) {
+          return {
+            status: 'not_authorized',
+            message: 'No preview was created. The exact start date, end date and daily duration must all appear in your latest message; I will not infer values from older conversation context or the uploaded file.',
+          };
         }
         if (minutes !== undefined && (!Number.isInteger(minutes) || minutes < 0 || minutes > 59 || !Number.isInteger(hours))) {
           return { status: 'needs_clarification', missingFields: ['fillEachDate.minutes'], message: 'No preview was created. Minutes must be an integer from 0 to 59, and hours must be a whole number when extra minutes are supplied.' };
@@ -1605,9 +1630,12 @@ export const generateMentorReply = async ({
       toolCalling: false,
     };
   }
+  const isStudyHoursHowTo =
+    /\\b(how (?:do|can|could|should) i|tell me how|show me how|steps to|explain how|what is the way to)\\b/i.test(latestUserPrompt);
   if (
     /total studied hours|hours studied|study hours?|study time|how many hours did i study|hours for (?:the )?(?:last|past|previous)/i.test(latestUserPrompt) &&
-    !hasExplicitStudyHoursWriteIntent(latestUserPrompt)
+    !hasExplicitStudyHoursWriteIntent(latestUserPrompt) &&
+    !isStudyHoursHowTo
   ) {
     return {
       content: 'I could not retrieve the authoritative date-wise Lecture Tracker history because the secure database tools are unavailable in this response. I will not infer totals from partial local context. Please retry when tool calling is available.',
