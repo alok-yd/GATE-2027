@@ -616,7 +616,7 @@ const normalizeInputRow = (row: StudyHoursInputRecord, index: number): Normalize
   };
 };
 
-export const previewBulkDailyStudyHours = (input: {
+export const previewBulkDailyStudyHours = async (input: {
   records: StudyHoursInputRecord[];
   source: StudyHoursSource;
   mode?: StudyHoursImportMode;
@@ -645,7 +645,16 @@ export const previewBulkDailyStudyHours = (input: {
   const conflicts: string[] = [];
   const rows: PreviewRow[] = [];
   const dates = Array.from(grouped.keys()).sort();
-  dates.forEach((date) => {
+
+  // Compare with the authenticated user's latest Firestore daily records.
+  // Pending local writes are flushed first so they cannot be missed or overwritten.
+  await flushCloudSyncWritesNow(dates.map(dailyKey));
+  const previousByDate = new Map<string, DailyTargetRecord | null>();
+  await Promise.all(dates.map(async (date) => {
+    previousByDate.set(date, await getCloudDailyTarget(date) || getDailyTarget(date));
+  }));
+
+  for (const date of dates) {
     const dayRows = grouped.get(date) || [];
     const explicitTotals = dayRows.filter((row) => row.recordType === 'daily_total');
     let totalMinutes = 0;
@@ -655,7 +664,7 @@ export const previewBulkDailyStudyHours = (input: {
       const totalValues = Array.from(new Set(explicitTotals.map((row) => row.totalMinutes)));
       if (totalValues.length > 1) {
         conflicts.push(`${date}: conflicting explicit daily totals (${totalValues.join(', ')} minutes). This date was not staged.`);
-        return;
+        continue;
       }
       totalMinutes = totalValues[0];
       chosenRows = explicitTotals.slice(0, 1);
@@ -676,10 +685,10 @@ export const previewBulkDailyStudyHours = (input: {
 
     if (totalMinutes > 24 * 60) {
       conflicts.push(`${date}: combined duration exceeds 24 hours. This date was not staged.`);
-      return;
+      continue;
     }
 
-    const previous = getDailyTarget(date);
+    const previous = previousByDate.get(date) || getDailyTarget(date);
     const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
     const previousHours = getDisplayedHours(previous, verifiedSeconds);
     const existingRecord = Boolean(previous);
@@ -698,7 +707,7 @@ export const previewBulkDailyStudyHours = (input: {
       action: shouldSkip ? 'skip' : existingRecord ? 'update' : 'insert',
       existingRecord,
     });
-  });
+  }
 
   if (!rows.length) {
     return {
