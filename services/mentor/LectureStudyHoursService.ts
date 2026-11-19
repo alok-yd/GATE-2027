@@ -291,10 +291,24 @@ const verifyCloudRecord = async (
     return { date, exists: false, verified: false, savedHours: null, message: 'No corresponding cloud record exists.' };
   }
   const data = snapshot.data();
-  if (data.deleted || typeof data.value !== 'string') {
-    return { date, exists: false, verified: false, savedHours: null, message: 'The cloud record is marked deleted or has no inline value.' };
+  if (data.deleted) {
+    return { date, exists: false, verified: false, savedHours: null, message: 'The cloud record is marked deleted.' };
   }
-  const record = safeParse<unknown>(data.value, null);
+  let rawValue = typeof data.value === 'string' ? data.value : '';
+  if (data.chunked) {
+    const chunkSnapshot = await getDocs(collection(snapshot.ref, 'chunks'));
+    const chunks = chunkSnapshot.docs
+      .sort((left, right) => Number(left.data().index) - Number(right.data().index))
+      .map((chunk) => String(chunk.data().value ?? ''));
+    if (data.chunkCount && chunks.length !== Number(data.chunkCount)) {
+      return { date, exists: true, verified: false, savedHours: null, message: 'The cloud record is incomplete because one or more chunks are missing.' };
+    }
+    rawValue = chunks.join('');
+  }
+  if (!rawValue) {
+    return { date, exists: true, verified: false, savedHours: null, message: 'The cloud record has no readable JSON value.' };
+  }
+  const record = safeParse<unknown>(rawValue, null);
   if (!isRecord(record)) {
     return { date, exists: true, verified: false, savedHours: null, message: 'The saved cloud record is not valid daily study-log JSON.' };
   }
@@ -321,13 +335,16 @@ export const getDailyStudyHours = async (input: {
   const uid = currentUid();
   const today = todayInKolkata();
   const endDate = input.endDate || today;
+  if (!isValidIsoDate(endDate)) {
+    throw new Error('Provide a valid endDate in YYYY-MM-DD format.');
+  }
   const startDate = input.startDate || (() => {
     const date = new Date(`${endDate}T00:00:00.000Z`);
     date.setUTCDate(date.getUTCDate() - 29);
     return date.toISOString().slice(0, 10);
   })();
 
-  if (!isValidIsoDate(startDate) || !isValidIsoDate(endDate) || startDate > endDate) {
+  if (!isValidIsoDate(startDate) || startDate > endDate) {
     throw new Error('Provide a valid date range in YYYY-MM-DD format, with startDate on or before endDate.');
   }
   if (endDate > today) throw new Error('Future dates are not accepted for historical study-hour records.');
@@ -350,9 +367,11 @@ export const getDailyStudyHours = async (input: {
     }
   }
 
-  // Read the authenticated user's canonical daily records directly from the
-  // existing Firestore appData collection. The hydrated local cache is retained
-  // as a fallback for a same-device write that is still waiting to sync.
+  // Flush pending daily-target writes in this range before reading Firestore.
+  // The cloud copy is canonical; the UID-private browser cache is used only
+  // when a date has no corresponding cloud record yet.
+  await flushCloudSyncWritesNow(Array.from(localKeys).map(dailyKey));
+
   const dailyPrefix = DAILY_KEY_PREFIX;
   const cloudQuery = query(
     collection(cloudDb, 'users', uid, 'appData'),
@@ -382,7 +401,8 @@ export const getDailyStudyHours = async (input: {
     }
 
     const parsed = safeParse<unknown>(rawValue, null);
-    if (isRecord(parsed) && !localKeys.has(date)) {
+    if (isRecord(parsed)) {
+      // Firestore is authoritative even if a local copy was stale.
       logsByDate.set(date, parsed as DailyTargetRecord);
     }
   }
