@@ -1091,7 +1091,8 @@ const parseStudyRowsFromJson = (rawText: string) => {
       const typeValue = String(value.recordType ?? value.record_type ?? value.type ?? '').toLowerCase();
       const isDailyTotal = /daily.?total|summary|whole.?day|total/i.test(typeValue) ||
         /total_studied|totalStudied|total_hours|totalHours/i.test(hourKey || '') ||
-        /total_studied|totalStudied|total_minutes|totalMinutes/i.test(minuteKey || '');
+        /total_studied|totalStudied|total_minutes|totalMinutes/i.test(minuteKey || '') ||
+        (!subjectValue && /(hoursStudied|hours_studied|studiedHours|studied_hours|studyHours|study_hours)/i.test(hourKey || ''));
       records.push({
         date,
         hours: Math.floor(totalMinutes / 60),
