@@ -210,9 +210,9 @@ const getDailyTarget = (date: string): DailyTargetRecord | null => {
   return isRecord(value) ? value as DailyTargetRecord : null;
 };
 
-const getCloudDailyTarget = async (date: string): Promise<DailyTargetRecord | null | undefined> => {
+const getCloudDailyTarget = async (date: string, uid: string): Promise<DailyTargetRecord | null | undefined> => {
   const key = dailyKey(date);
-  const reference = doc(collection(cloudDb, 'users', currentUid(), 'appData'), encodeURIComponent(key));
+  const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(key));
   const snapshot = await getDoc(reference);
   if (!snapshot.exists()) return undefined;
   const root = snapshot.data();
@@ -412,7 +412,7 @@ export const getDailyStudyHours = async (input: {
   // Flush pending daily-target writes in this range before reading Firestore.
   // The cloud copy is canonical; the UID-private browser cache is used only
   // when a date has no corresponding cloud record yet.
-  await flushCloudSyncWritesNow(Array.from(localKeys).map(dailyKey));
+  await flushCloudSyncWritesNow(Array.from(localKeys).map(dailyKey), uid);
 
   const dailyPrefix = DAILY_KEY_PREFIX;
   const cloudQuery = query(
@@ -575,9 +575,9 @@ export const upsertDailyStudyHours = async (input: {
 
   const source = input.source || 'ai_mentor';
   const sourceDetails = String(input.sourceDetails || 'Explicit single-date update requested in AI Mentor.').slice(0, 2000);
-  await flushCloudSyncWritesNow([dailyKey(date), AUDIT_KEY]);
+  await flushCloudSyncWritesNow([dailyKey(date), AUDIT_KEY], uid);
   const key = dailyKey(date);
-  const cloudPrevious = await getCloudDailyTarget(date);
+  const cloudPrevious = await getCloudDailyTarget(date, uid);
   const previous = cloudPrevious === undefined ? getDailyTarget(date) : cloudPrevious;
   const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
   const previousDisplayedHours = getDisplayedHours(previous, verifiedSeconds);
@@ -624,7 +624,7 @@ export const upsertDailyStudyHours = async (input: {
   await commitCloudSyncableRecordsNow([
     { key, value: JSON.stringify(updated) },
     { key: AUDIT_KEY, value: JSON.stringify(nextAudit) },
-  ]);
+  ], uid);
   const verification = await verifyCloudRecord(uid, date, totalMinutes);
   const auditTrailSaved = await verifyCloudAuditEntries(uid, [`${importId}:${date}`]);
   const fullyVerified = verification.verified && auditTrailSaved;
@@ -696,10 +696,10 @@ export const previewBulkDailyStudyHours = async (input: {
 
   // Compare with the authenticated user's latest Firestore daily records.
   // Pending local writes are flushed first so they cannot be missed or overwritten.
-  await flushCloudSyncWritesNow(dates.map(dailyKey));
+  await flushCloudSyncWritesNow(dates.map(dailyKey), uid);
   const previousByDate = new Map<string, DailyTargetRecord | null>();
   await Promise.all(dates.map(async (date) => {
-    const cloudRecord = await getCloudDailyTarget(date);
+    const cloudRecord = await getCloudDailyTarget(date, uid);
     previousByDate.set(date, cloudRecord === undefined ? getDailyTarget(date) : cloudRecord);
   }));
 
@@ -864,10 +864,10 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   await flushCloudSyncWritesNow([
     ...eligibleRows.map((row) => dailyKey(row.date)),
     AUDIT_KEY,
-  ]);
+  ], uid);
   const cloudPreviousRecords = new Map<string, DailyTargetRecord | null | undefined>();
   await Promise.all(eligibleRows.map(async (row) => {
-    cloudPreviousRecords.set(row.date, await getCloudDailyTarget(row.date));
+    cloudPreviousRecords.set(row.date, await getCloudDailyTarget(row.date, uid));
   }));
 
   const now = new Date().toISOString();
@@ -945,7 +945,7 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   cloudRecords.push({ key: AUDIT_KEY, value: JSON.stringify(trimmedAudit) });
 
   if (cloudRecords.length) {
-    await commitCloudSyncableRecordsNow(cloudRecords);
+    await commitCloudSyncableRecordsNow(cloudRecords, uid);
   }
 
   const verification = await verifyDailyStudyHours({
