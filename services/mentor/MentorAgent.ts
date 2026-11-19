@@ -122,6 +122,114 @@ const mentorTools: FunctionDeclaration[] = [
     parameters: { type: 'object', properties: {} },
   },
   {
+    name: 'get_daily_study_hours',
+    description:
+      'READ-ONLY Lecture Tracker study-hour history. Use when asked for total studied hours on previous dates, a date-wise summary, historical totals, or why a previous day shows zero. Read the canonical daily target records and the AI Focus verified-time ledger for the requested range. Report displayed total, verified hours, manual/imported override, and source separately. Optional startDate/endDate use YYYY-MM-DD in Asia/Kolkata; defaults to the most recent 30 days.',
+    parameters: {
+      type: 'object',
+      properties: {
+        startDate: { type: 'string', description: 'Optional inclusive start date YYYY-MM-DD.' },
+        endDate: { type: 'string', description: 'Optional inclusive end date YYYY-MM-DD. Defaults to today in Asia/Kolkata.' },
+      },
+    },
+  },
+  {
+    name: 'get_uploaded_study_hours_document',
+    description:
+      'READ-ONLY document extraction tool. Call when the user explicitly asks to import study-hour records from an uploaded PDF or JSON. Retrieve the full indexed extraction and warnings for the exact uploaded file. JSON uploads include deterministically parsed date/duration candidates where possible. For PDF, use only extracted text, preserve source dates, and never invent unreadable values. Specify the exact documentName or documentId visible in the conversation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        documentName: { type: 'string', description: 'Exact uploaded file name displayed in the AI Mentor conversation.' },
+        documentId: { type: 'string', description: 'Optional exact indexed document ID if the same file name is ambiguous.' },
+      },
+    },
+  },
+  {
+    name: 'upsert_daily_study_hours',
+    description:
+      'WRITE ACTION — insert or correct the whole-day Total Studied Hours for ONE explicitly named date. Call only when the latest user message clearly asks you to add/set/change/correct a specific date and exact duration in Lecture Tracker. Do not use for ranges or multiple dates. The function updates the existing gate_daily_target_YYYY-MM-DD record, preserves other daily fields, keeps AI Focus verified time untouched, commits to the current user Firebase appData, and verifies the saved value by reading Firestore back. Use hours as decimal hours OR integer hours plus minutes (not both). No userId is accepted; identity is derived from the current Firebase session.',
+    parameters: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: 'Exact calendar date YYYY-MM-DD in Asia/Kolkata.' },
+        hours: { type: 'number', description: 'Requested study hours. May be decimal, e.g. 7.5.' },
+        minutes: { type: 'integer', description: 'Optional extra minutes 0–59 when hours is a whole integer.' },
+        source: { type: 'string', description: 'Optional source: ai_mentor, manual, imported_json or imported_pdf.' },
+        sourceDetails: { type: 'string', description: 'Optional short provenance note such as the exact user request or source file name.' },
+      },
+      required: ['date', 'hours'],
+    },
+  },
+  {
+    name: 'preview_bulk_daily_study_hours',
+    description:
+      'PREVIEW ONLY — prepare a multi-date historical study-hour import. Call only after an explicit user request to import/update multiple study dates or an uploaded study-report PDF/JSON into Lecture Tracker. Do not write daily records. Provide extracted source rows; use recordType daily_total when a row is an explicit whole-day total, session when it is an individual subject/session row, and unknown only when uncertain. The service prevents adding a daily total to its constituent sessions, validates each day against the 24-hour limit, detects conflicts, compares with existing totals, and creates a 30-minute user-specific preview. After returning the preview, ask the user to confirm before calling bulk_upsert_daily_study_hours.',
+    parameters: {
+      type: 'object',
+      properties: {
+        records: {
+          type: 'array',
+          description: 'Extracted date-wise totals or individual subject/session rows from the user-provided source.',
+          maxItems: 2000,
+          items: {
+            type: 'object',
+            properties: {
+              date: { type: 'string', description: 'Source date; preferably YYYY-MM-DD. A clear day-month-year format is also accepted.' },
+              hours: { type: 'number', description: 'Duration in decimal hours, or integer hours when minutes is also supplied.' },
+              minutes: { type: 'integer', description: 'Optional remaining minutes 0–59.' },
+              subject: { type: 'string', description: 'Optional subject for an individual session row.' },
+              topic: { type: 'string', description: 'Optional topic for an individual session row.' },
+              recordType: { type: 'string', description: 'daily_total, session or unknown.' },
+              sourceDetails: { type: 'string', description: 'Optional excerpt/context to preserve as provenance.' },
+            },
+            required: ['date', 'hours'],
+          },
+        },
+        source: { type: 'string', description: 'Source kind: imported_json or imported_pdf. Use manual only for a user-supplied non-file list.' },
+        mode: { type: 'string', description: 'replace (default) updates existing daily totals; skip_existing preserves any existing daily record.' },
+        sourceDetails: { type: 'string', description: 'Source file name and extraction context.' },
+      },
+      required: ['records', 'source'],
+    },
+  },
+  {
+    name: 'bulk_upsert_daily_study_hours',
+    description:
+      'WRITE ACTION — commit the latest pending bulk study-hour preview ONLY after the user has explicitly confirmed that preview in a later message (for example: “yes, proceed”, “confirm”, or “go ahead”). Never call during the initial import request or before showing the preview. The service rechecks the signed-in UID, commits date records plus audit/preview state in one Firestore batch, reads every written daily record back from Firebase, and returns successful/failed/skipped counts. Use previewId from the earlier preview when available; otherwise the latest account-owned pending preview is used. Do not claim full success unless status is saved_and_verified.',
+    parameters: {
+      type: 'object',
+      properties: {
+        previewId: { type: 'string', description: 'Optional ID returned by preview_bulk_daily_study_hours.' },
+      },
+    },
+  },
+  {
+    name: 'verify_daily_study_hours',
+    description:
+      'READ-ONLY verification tool. Read the actual Firebase users/{uid}/appData daily-target records and compare them with expected totals when supplied. Use after a write or when the user asks whether historical study-hour changes persisted. Do not report success from local state alone.',
+    parameters: {
+      type: 'object',
+      properties: {
+        dates: { type: 'array', description: 'Optional date strings YYYY-MM-DD to verify.', items: { type: 'string' }, maxItems: 365 },
+        expectedRecords: {
+          type: 'array',
+          description: 'Optional expected totals for a date-wise comparison.',
+          maxItems: 365,
+          items: {
+            type: 'object',
+            properties: {
+              date: { type: 'string' },
+              hours: { type: 'number' },
+              minutes: { type: 'integer' },
+            },
+            required: ['date', 'hours'],
+          },
+        },
+      },
+    },
+  },
+  {
     name: 'get_speaking_coach_data',
     description:
       'READ-ONLY Speaking Coach access. Use when the user asks about English speaking practice, speaking streak, practice minutes, saved session scores, transcripts, AI feedback, audio metrics or speaking milestones. Read the existing Speaking Coach session and milestone records; do not create or update practice sessions.',
