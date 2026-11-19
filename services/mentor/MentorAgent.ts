@@ -485,9 +485,10 @@ const hasExplicitBulkConfirmation = (prompt: string): boolean => {
   const text = prompt.trim().toLowerCase();
   if (/\\b(no|not|don't|do not|cancel|reject|stop)\\b/i.test(text)) return false;
   const exactAffirmation = /^(yes|y|confirm|confirmed|proceed|go ahead|approve|approved|do it|apply|import now|update now)[.!]?$/i.test(text);
+  const affirmativeFollowUp = /^(yes|y)[,\\s]+(proceed|go ahead|confirm|do it|apply(?: the import)?|import now|update now)[.!]?$/i.test(text);
   const explicitImportApproval =
     /\\b(confirm|approve|proceed with|go ahead with|import now|update now)\\b.{0,45}\\b(import|upload|bulk|records|study hours?)\\b/i.test(text);
-  return exactAffirmation || explicitImportApproval;
+  return exactAffirmation || affirmativeFollowUp || explicitImportApproval;
 };
 
 const hasExplicitTaskWriteIntent = (prompt: string): boolean => {
