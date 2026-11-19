@@ -490,6 +490,12 @@ const applyRemoteRecord = async (
   });
   // Notify mounted modules that read the established logical localStorage keys.
   window.dispatchEvent(new Event('storage'));
+  const dailyTargetMatch = record.key.match(/^gate_daily_target_(\d{4}-\d{2}-\d{2})$/);
+  if (dailyTargetMatch) {
+    window.dispatchEvent(new CustomEvent('gate-lecture-study-hours-updated', {
+      detail: { dates: [dailyTargetMatch[1]], source: 'cloud-sync' },
+    }));
+  }
 };
 
 const flushKey = async (key: string): Promise<void> => {
@@ -977,6 +983,148 @@ export const signInForCloudSync = async (): Promise<CloudSyncUser> => {
 
 export const signOutFromCloudSync = async (): Promise<void> => {
   await signOut(cloudAuth);
+};
+
+export interface CloudSyncRecordWrite {
+  key: string;
+  value: string;
+}
+
+/**
+ * Atomically persist a bounded set of existing logical localStorage records to
+ * the authenticated user's existing users/{uid}/appData collection.
+ *
+ * This is used by authorised in-app workflows that must know the Firebase
+ * write completed before reporting success. The UID is always derived from the
+ * active Firebase session; callers cannot choose another account.
+ */
+export const commitCloudSyncableRecordsNow = async (
+  records: CloudSyncRecordWrite[],
+  expectedUid?: string
+): Promise<{ uid: string; keys: string[]; updatedAtClient: number }> => {
+  const user = currentUser;
+  if (!user) throw new Error('A signed-in Firebase account is required to modify Lecture Tracker records.');
+  if (expectedUid && user.uid !== expectedUid) {
+    throw new Error('The authenticated ACHIEVER account changed. No records were written; refresh the app and retry.');
+  }
+  if (!syncReady || getActiveUserStorageUid() !== user.uid) {
+    throw new Error('Your private ACHIEVER cloud space is still being prepared. Retry after account sync is ready.');
+  }
+  if (!Array.isArray(records) || records.length === 0 || records.length > 450) {
+    throw new Error('The cloud write must contain between 1 and 450 records.');
+  }
+
+  const unique = new Map<string, string>();
+  records.forEach((record) => {
+    if (!record || typeof record.key !== 'string' || !isCloudSyncableKey(record.key)) {
+      throw new Error('The requested record is not an approved ACHIEVER syncable key.');
+    }
+    if (typeof record.value !== 'string') {
+      throw new Error('Cloud record values must be serialized strings.');
+    }
+    if (byteLength(record.value) > INLINE_VALUE_LIMIT_BYTES) {
+      throw new Error(`The record "${record.key}" is too large for this atomic write. Reduce its size and retry.`);
+    }
+    unique.set(record.key, record.value);
+  });
+
+  // Finish pending writes for the exact keys being replaced. Unrelated live
+  // records (including an active AI Focus ledger) are not stalled by this action.
+  for (const key of unique.keys()) {
+    if (currentUser?.uid !== user.uid || getActiveUserStorageUid() !== user.uid || (expectedUid && user.uid !== expectedUid)) {
+      throw new Error('The authenticated ACHIEVER account changed while preparing the write. No records were committed.');
+    }
+    if (!pendingWrites.has(key)) continue;
+    const timer = pendingTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    pendingTimers.delete(key);
+    await flushKey(key);
+  }
+  if (Array.from(unique.keys()).some((key) => pendingWrites.has(key))) {
+    throw new Error('A related ACHIEVER record is still waiting to sync. Retry after its cloud write succeeds.');
+  }
+  if (
+    currentUser?.uid !== user.uid ||
+    getActiveUserStorageUid() !== user.uid ||
+    (expectedUid && user.uid !== expectedUid)
+  ) {
+    throw new Error('The authenticated ACHIEVER account changed before the write could be committed.');
+  }
+
+  const updatedAtClient = Date.now();
+  const batch = writeBatch(cloudDb);
+  unique.forEach((value, key) => {
+    batch.set(recordDocument(user.uid, key), {
+      key,
+      value,
+      deleted: false,
+      chunked: false,
+      chunkCount: 0,
+      updatedAtClient,
+      updatedAt: serverTimestamp(),
+      writerId: deviceId,
+      schemaVersion: SCHEMA_VERSION,
+    }, { merge: true });
+  });
+
+  await batch.commit();
+  if (
+    currentUser?.uid !== user.uid ||
+    getActiveUserStorageUid() !== user.uid ||
+    (expectedUid && user.uid !== expectedUid)
+  ) {
+    throw new Error('The Firebase account changed while the write was committing. Refresh the app before continuing.');
+  }
+
+  unique.forEach((value, key) => {
+    const timer = pendingTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    pendingTimers.delete(key);
+    pendingWrites.delete(key);
+    originalSetItem.call(window.localStorage, key, value);
+    markWriteSynced(user.uid, key, updatedAtClient);
+  });
+
+  window.dispatchEvent(new Event('storage'));
+  const dates = Array.from(unique.keys())
+    .map((key) => key.match(/^gate_daily_target_(\d{4}-\d{2}-\d{2})$/)?.[1])
+    .filter((date): date is string => Boolean(date));
+  if (dates.length) {
+    window.dispatchEvent(new CustomEvent('gate-lecture-study-hours-updated', {
+      detail: { dates, source: 'ai-mentor-cloud-write' },
+    }));
+  }
+  updateState({
+    status: pendingWrites.size ? 'syncing' : 'synced',
+    message: 'Lecture Tracker records were committed to your private Firebase account.',
+    lastSyncedAt: updatedAtClient,
+  });
+
+  return { uid: user.uid, keys: Array.from(unique.keys()), updatedAtClient };
+};
+
+export const flushCloudSyncWritesNow = async (keys?: string[], expectedUid?: string): Promise<void> => {
+  const user = currentUser;
+  if (!user || !syncReady || getActiveUserStorageUid() !== user.uid || (expectedUid && user.uid !== expectedUid)) {
+    throw new Error('A ready, authenticated ACHIEVER cloud account matching this operation is required before modifying historical study hours.');
+  }
+  const targets = Array.from(new Set(keys || Array.from(pendingWrites.keys())));
+  for (const key of targets) {
+    if (currentUser?.uid !== user.uid || getActiveUserStorageUid() !== user.uid || (expectedUid && user.uid !== expectedUid)) {
+      throw new Error('The authenticated ACHIEVER account changed while pending writes were flushing. Refresh and retry.');
+    }
+    if (!pendingWrites.has(key)) continue;
+    const timer = pendingTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    pendingTimers.delete(key);
+    await flushKey(key);
+  }
+  if (targets.some((key) => pendingWrites.has(key))) {
+    throw new Error('A related Lecture Tracker record is still waiting to sync. Reconnect and retry so the historical import cannot overwrite pending work.');
+  }
+  if (currentUser?.uid !== user.uid || getActiveUserStorageUid() !== user.uid || (expectedUid && user.uid !== expectedUid)) {
+    throw new Error('The authenticated ACHIEVER account changed while pending writes were syncing. Refresh and retry.');
+  }
 };
 
 export const syncCloudDataNow = async (): Promise<void> => {
