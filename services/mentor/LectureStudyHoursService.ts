@@ -217,13 +217,20 @@ const getCloudDailyTarget = async (date: string): Promise<DailyTargetRecord | nu
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
       .map((chunk) => String(chunk.data().value ?? ''));
-    if (root.chunkCount && chunks.length !== Number(root.chunkCount)) {
+    const expectedChunks = Number(root.chunkCount);
+    if (!Number.isInteger(expectedChunks) || expectedChunks < 1 || chunks.length !== expectedChunks) {
       throw new Error(`The existing daily record for ${date} is incomplete in Firebase. Refresh cloud sync before changing it.`);
     }
     rawValue = chunks.join('');
   }
+  if (!rawValue) {
+    throw new Error(`The existing daily record for ${date} has no readable value in Firebase. No update was made.`);
+  }
   const parsed = safeParse<unknown>(rawValue, null);
-  return isRecord(parsed) ? parsed as DailyTargetRecord : null;
+  if (!isRecord(parsed)) {
+    throw new Error(`The existing daily record for ${date} is not valid JSON in Firebase. No update was made.`);
+  }
+  return parsed as DailyTargetRecord;
 };
 
 const getManualDisplayedHours = (record: DailyTargetRecord | null): number => {
@@ -254,7 +261,8 @@ const getCloudAuditRows = async (uid: string): Promise<Array<Record<string, unkn
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
       .map((chunk) => String(chunk.data().value ?? ''));
-    if (root.chunkCount && chunks.length !== Number(root.chunkCount)) {
+    const expectedChunks = Number(root.chunkCount);
+    if (!Number.isInteger(expectedChunks) || expectedChunks < 1 || chunks.length !== expectedChunks) {
       throw new Error('The Lecture Tracker study-hour audit history is incomplete in Firebase. Refresh cloud sync before modifying it.');
     }
     rawValue = chunks.join('');
@@ -296,7 +304,8 @@ const verifyCloudAuditEntries = async (uid: string, expectedIds: string[]): Prom
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
       .map((chunk) => String(chunk.data().value ?? ''));
-    if (root.chunkCount && chunks.length !== Number(root.chunkCount)) return false;
+    const expectedChunks = Number(root.chunkCount);
+    if (!Number.isInteger(expectedChunks) || expectedChunks < 1 || chunks.length !== expectedChunks) return false;
     rawValue = chunks.join('');
   }
   const entries = safeParse<unknown>(rawValue, null);
@@ -324,7 +333,8 @@ const verifyCloudRecord = async (
     const chunks = chunkSnapshot.docs
       .sort((left, right) => Number(left.data().index) - Number(right.data().index))
       .map((chunk) => String(chunk.data().value ?? ''));
-    if (data.chunkCount && chunks.length !== Number(data.chunkCount)) {
+    const expectedChunks = Number(data.chunkCount);
+    if (!Number.isInteger(expectedChunks) || expectedChunks < 1 || chunks.length !== expectedChunks) {
       return { date, exists: true, verified: false, savedHours: null, message: 'The cloud record is incomplete because one or more chunks are missing.' };
     }
     rawValue = chunks.join('');
@@ -418,7 +428,8 @@ export const getDailyStudyHours = async (input: {
       const chunks = chunkSnapshot.docs
         .sort((left, right) => Number(left.data().index) - Number(right.data().index))
         .map((chunk) => String(chunk.data().value ?? ''));
-      if (cloudRecord.chunkCount && chunks.length !== Number(cloudRecord.chunkCount)) {
+      const expectedChunks = Number(cloudRecord.chunkCount);
+      if (!Number.isInteger(expectedChunks) || expectedChunks < 1 || chunks.length !== expectedChunks) {
         throw new Error(`Cloud history for ${date} is incomplete. Reconnect and sync again before relying on this total.`);
       }
       rawValue = chunks.join('');
