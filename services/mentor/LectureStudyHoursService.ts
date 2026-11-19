@@ -469,7 +469,7 @@ export const upsertDailyStudyHours = async (input: {
 
   const source = input.source || 'ai_mentor';
   const sourceDetails = String(input.sourceDetails || 'Explicit single-date update requested in AI Mentor.').slice(0, 2000);
-  await flushCloudSyncWritesNow();
+  await flushCloudSyncWritesNow([dailyKey(date), AUDIT_KEY]);
   const key = dailyKey(date);
   const previous = await getCloudDailyTarget(date) || getDailyTarget(date);
   const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
@@ -723,7 +723,11 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
 
   // Flush earlier app edits, then re-read every affected date from the
   // authenticated cloud account. Never apply a stale preview over newer data.
-  await flushCloudSyncWritesNow();
+  await flushCloudSyncWritesNow([
+    ...eligibleRows.map((row) => dailyKey(row.date)),
+    AUDIT_KEY,
+    PENDING_IMPORT_KEY,
+  ]);
   const cloudPreviousRecords = new Map<string, DailyTargetRecord | null>();
   await Promise.all(eligibleRows.map(async (row) => {
     cloudPreviousRecords.set(row.date, await getCloudDailyTarget(row.date));
