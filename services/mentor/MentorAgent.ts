@@ -139,7 +139,7 @@ const mentorTools: FunctionDeclaration[] = [
   {
     name: 'get_uploaded_study_hours_document',
     description:
-      'READ-ONLY document extraction tool. Call when the user explicitly asks to import study-hour records from an uploaded PDF or JSON. Retrieve indexed extraction and warnings for the exact uploaded file. JSON uploads include deterministic structured date/duration candidates and invalid rows. PDF/text extraction is returned in bounded 30,000-character chunks; when truncated is true, call this tool again using the returned nextOffset until all text has been reviewed. Retain dates/durations exactly as sourced, inspect every available page/chunk, and never invent unreadable values. Specify the exact documentName or documentId visible in the conversation.',
+      'READ-ONLY document extraction tool. Call when the user explicitly asks to import study-hour records from an uploaded PDF or JSON. Retrieve indexed extraction and warnings for the exact uploaded file. JSON uploads include deterministic structured date/duration candidates and invalid rows. PDF/text extraction is returned in bounded 40,000-character chunks; when truncated is true, call this tool again using the returned nextOffset until all text has been reviewed. Retain dates/durations exactly as sourced, inspect every available page/chunk, and never invent unreadable values. Specify the exact documentName or documentId visible in the conversation.',
     parameters: {
       type: 'object',
       properties: {
