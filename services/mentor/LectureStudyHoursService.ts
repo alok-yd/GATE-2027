@@ -387,11 +387,6 @@ export const getDailyStudyHours = async (input: {
     }
   }
 
-  const verifiedByDate = new Map(
-    StorageService.getVerifiedStudyTimeHistory(3650)
-      .filter((row) => row.date >= startDate && row.date <= endDate)
-      .map((row) => [row.date, row])
-  );
   const allDates = new Set<string>();
   const dateCursor = new Date(`${startDate}T00:00:00.000Z`);
   for (let offset = 0; offset < rangeDays; offset += 1) {
@@ -1020,7 +1015,9 @@ export const getUploadedStudyHoursDocument = (input: {
       kind: document.kind,
       extractionConfidence: document.extractionConfidence,
       warnings: document.warnings,
-      sourceTextComplete: document.extractionConfidence >= 0.8 && !document.warnings?.some((warning) => /index limit.*truncated|text.*truncated|unreadable|multimodal extraction was unavailable/i.test(warning)),
+      sourceTextComplete: document.extractionConfidence >= 0.8 &&
+        !document.warnings?.some((warning) => /index limit.*truncated|text.*truncated|unreadable|multimodal extraction was unavailable/i.test(warning)) &&
+        !/\\[unreadable(?: region)?\\]/i.test(document.text),
       textLength: document.text.length,
       startOffset,
       extractedText,
