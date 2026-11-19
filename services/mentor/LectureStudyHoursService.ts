@@ -1030,20 +1030,28 @@ export const commitBulkDailyStudyHours = async (input: { previewId: string }) =>
   };
 };
 
-const JSON_DATE_KEYS = ['date', 'studyDate', 'study_date', 'logDate', 'log_date', 'studyDay', 'study_day'];
+const JSON_DATE_KEYS = [
+  'date', 'studyDate', 'study_date', 'logDate', 'log_date', 'studyDay', 'study_day',
+];
 const JSON_HOUR_KEYS = [
-  'total_studied_hours', 'totalStudiedHours', 'hoursStudied', 'hours_studied',
-  'studiedHours', 'studied_hours', 'studyHours', 'study_hours', 'totalHours', 'total_hours', 'hours',
-  'durationHours', 'duration_hours', 'duration', 'studyDuration', 'study_duration', 'totalDuration', 'total_duration',
+  'total_studied_hours', 'totalStudiedHours', 'totalStudyHours', 'totalStudyTime',
+  'hoursStudied', 'hours_studied', 'studiedHours', 'studied_hours',
+  'studyHours', 'study_hours', 'totalHours', 'total_hours', 'totalTimeHours',
+  'hours', 'durationHours', 'duration_hours', 'duration', 'studyDuration',
+  'study_duration', 'totalDuration', 'total_duration',
 ];
 const JSON_MINUTE_KEYS = [
-  'total_studied_minutes', 'totalStudiedMinutes', 'minutesStudied', 'minutes_studied',
-  'studyMinutes', 'study_minutes', 'totalMinutes', 'total_minutes', 'minutes',
-  'durationMinutes', 'duration_minutes',
+  'total_studied_minutes', 'totalStudiedMinutes', 'totalStudyMinutes',
+  'minutesStudied', 'minutes_studied', 'studyMinutes', 'study_minutes',
+  'totalMinutes', 'total_minutes', 'minutes', 'durationMinutes', 'duration_minutes',
 ];
 
-const findKey = (object: Record<string, unknown>, keys: string[]) =>
-  keys.find((key) => Object.prototype.hasOwnProperty.call(object, key));
+const normalizeJsonKey = (key: string): string => key.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const findKey = (object: Record<string, unknown>, keys: string[]) => {
+  const accepted = new Set(keys.map(normalizeJsonKey));
+  return Object.keys(object).find((key) => accepted.has(normalizeJsonKey(key)));
+};
 
 const parseStudyRowsFromJson = (rawText: string) => {
   let parsed: unknown;
@@ -1086,8 +1094,10 @@ const parseStudyRowsFromJson = (rawText: string) => {
       }
       const date = parseDocumentDate(value[dateKey]);
       const rawDuration = hourKey ? value[hourKey] : undefined;
+      const normalizedHourKey = hourKey ? normalizeJsonKey(hourKey) : '';
+      const normalizedMinuteKey = minuteKey ? normalizeJsonKey(minuteKey) : '';
       const unitAmbiguousDurationKey = Boolean(
-        hourKey && /^(duration|studyDuration|study_duration|totalDuration|total_duration)$/i.test(hourKey)
+        ['duration', 'studyduration', 'totalduration'].includes(normalizedHourKey)
       );
       const numericDurationWithoutUnit = typeof rawDuration === 'number' ||
         (typeof rawDuration === 'string' && /^\s*\d+(?:\.\d+)?\s*$/.test(rawDuration));
@@ -1119,9 +1129,9 @@ const parseStudyRowsFromJson = (rawText: string) => {
       const topicValue = value.topic ?? value.chapter ?? value.unit;
       const typeValue = String(value.recordType ?? value.record_type ?? value.type ?? '').toLowerCase();
       const isDailyTotal = /daily.?total|summary|whole.?day|total/i.test(typeValue) ||
-        /total_studied|totalStudied|total_hours|totalHours/i.test(hourKey || '') ||
-        /total_studied|totalStudied|total_minutes|totalMinutes/i.test(minuteKey || '') ||
-        (!subjectValue && /(hoursStudied|hours_studied|studiedHours|studied_hours|studyHours|study_hours)/i.test(hourKey || ''));
+        /(totalstudied|totalhours|totalstudyhours|totaltimehours)/i.test(normalizedHourKey) ||
+        /(totalstudied|totalminutes|totalstudyminutes)/i.test(normalizedMinuteKey) ||
+        (!subjectValue && /(hoursstudied|studiedhours|studyhours|totalstudied|totalhours)/i.test(normalizedHourKey));
       records.push({
         date,
         hours: Math.floor(totalMinutes / 60),
