@@ -35,6 +35,14 @@ import {
 } from './MentorTrackerData';
 import { getSpeakingCoachMentorContext } from './MentorSpeakingData';
 import { getContextualGitaShloka } from './GitaWisdom';
+import {
+  commitBulkDailyStudyHours,
+  getDailyStudyHours,
+  getUploadedStudyHoursDocument,
+  previewBulkDailyStudyHours,
+  upsertDailyStudyHours,
+  verifyDailyStudyHours,
+} from './LectureStudyHoursService';
 
 export type MentorMode = 'chat' | 'concept' | 'problem' | 'strategy';
 export type MentorResponseChannel = 'text' | 'voice';
@@ -59,12 +67,23 @@ export interface MentorExecutionProfile {
   onToolCall?: (toolName: string) => void;
 }
 
+interface FunctionProperty {
+  type: string;
+  description?: string;
+  minimum?: number;
+  maximum?: number;
+  maxItems?: number;
+  enum?: string[];
+  items?: FunctionProperty;
+  properties?: Record<string, FunctionProperty>;
+}
+
 interface FunctionDeclaration {
   name: string;
   description: string;
   parameters: {
     type: 'object';
-    properties: Record<string, { type: string; description?: string; minimum?: number; maximum?: number }>;
+    properties: Record<string, FunctionProperty>;
     required?: string[];
   };
 }
@@ -307,6 +326,28 @@ const readNumberArg = (args: unknown, key: string, fallback: number) => {
   if (!isRecord(args) || args[key] == null || args[key] === '') return fallback;
   const value = Number(args[key]);
   return Number.isFinite(value) ? value : fallback;
+};
+
+const readArrayArg = (args: unknown, key: string): unknown[] => {
+  if (!isRecord(args) || !Array.isArray(args[key])) return [];
+  return (args[key] as unknown[]).slice(0, 2000);
+};
+
+const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
+  const text = prompt.toLowerCase();
+  if (/\\b(don't|do not|never|no need to)\\s+(add|create|insert|save|update|change|import|record|backfill)\\b/i.test(text)) {
+    return false;
+  }
+  const action = /\\b(add|insert|record|set|update|change|correct|backfill|import|apply|save)\\b/i.test(text);
+  const destination = /(lecture tracker|daily study log|study hours?|hours studied|total hours|study time|historical study records?)/i.test(text);
+  return action && destination;
+};
+
+const hasExplicitBulkConfirmation = (prompt: string): boolean => {
+  const text = prompt.trim().toLowerCase();
+  if (/\\b(no|not|don't|do not|cancel|reject|stop)\\b/i.test(text)) return false;
+  return /^(yes|y|confirm|confirmed|proceed|go ahead|approve|approved|do it|apply|import now|update now)(\\b|[.! ,])/i.test(text) ||
+    /\\b(confirm|approve|proceed with|go ahead with)\\b.{0,35}\\b(import|upload|bulk|records|study hours?)\\b/i.test(text);
 };
 
 const hasExplicitTaskWriteIntent = (prompt: string): boolean => {
