@@ -684,7 +684,8 @@ const executeMentorTool = async (
   name: string,
   args: unknown,
   latestUserPrompt = '',
-  allowedTools?: readonly string[]
+  allowedTools?: readonly string[],
+  conversationMessages: MentorHistoryMessage[] = []
 ): Promise<unknown> => {
   if (allowedTools && !allowedTools.includes(name)) {
     return { error: `Tool not permitted for this specialist: ${name}` };
@@ -746,7 +747,61 @@ const executeMentorTool = async (
       if (!hasExplicitStudyHoursWriteIntent(latestUserPrompt)) {
         return { status: 'not_authorized', confirmationRequired: false, message: 'No import preview was created. The latest user message did not explicitly ask to update historical study hours in Lecture Tracker.' };
       }
-      const records = readArrayArg(args, 'records');
+
+      const suppliedRecords = readArrayArg(args, 'records');
+      const range = isRecord(args) && isRecord(args.fillEachDate) ? args.fillEachDate : null;
+      if (range && suppliedRecords.length) {
+        return { status: 'needs_clarification', message: 'Provide either extracted source records or one fillEachDate range, not both. No preview was created.' };
+      }
+
+      let records = suppliedRecords as Array<{
+        date: string;
+        hours: number;
+        minutes?: number;
+        subject?: string;
+        topic?: string;
+        recordType?: 'session' | 'daily_total' | 'unknown';
+        sourceDetails?: string;
+      }>;
+
+      if (range) {
+        const startDate = typeof range.startDate === 'string' ? range.startDate.trim() : '';
+        const endDate = typeof range.endDate === 'string' ? range.endDate.trim() : '';
+        const hours = Number(range.hours);
+        const minutes = range.minutes == null || range.minutes === '' ? undefined : Number(range.minutes);
+        const parseExactDate = (value: string): Date | null => {
+          if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return null;
+          const parsed = new Date(`${value}T00:00:00.000Z`);
+          return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? null : parsed;
+        };
+        const start = parseExactDate(startDate);
+        const end = parseExactDate(endDate);
+        if (!start || !end || start.getTime() > end.getTime() || !Number.isFinite(hours)) {
+          return { status: 'needs_clarification', missingFields: [!start ? 'fillEachDate.startDate' : '', !end ? 'fillEachDate.endDate' : '', !Number.isFinite(hours) ? 'fillEachDate.hours' : ''].filter(Boolean), message: 'No preview was created. Supply exact valid start/end dates and a daily duration.' };
+        }
+        if (minutes !== undefined && (!Number.isInteger(minutes) || minutes < 0 || minutes > 59 || !Number.isInteger(hours))) {
+          return { status: 'needs_clarification', missingFields: ['fillEachDate.minutes'], message: 'No preview was created. Minutes must be an integer from 0 to 59, and hours must be a whole number when extra minutes are supplied.' };
+        }
+        const dayCount = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+        if (dayCount < 1 || dayCount > 365) {
+          return { status: 'range_limit_exceeded', maximumDays: 365, requestedDays: dayCount, message: 'A single preview can cover at most 365 consecutive dates. Split a longer range into smaller previews.' };
+        }
+        records = Array.from({ length: dayCount }, (_, index) => {
+          const date = new Date(start.getTime() + index * 86400000).toISOString().slice(0, 10);
+          return {
+            date,
+            hours,
+            ...(minutes !== undefined ? { minutes } : {}),
+            recordType: 'daily_total' as const,
+            sourceDetails: 'Same whole-day total explicitly requested for every calendar date in the selected range.',
+          };
+        });
+      }
+
+      if (!records.length) {
+        return { status: 'needs_clarification', missingFields: ['records or fillEachDate'], message: 'No preview was created. Provide date-wise source records or an exact inclusive fillEachDate range.' };
+      }
+
       const sourceText = readStringArg(args, 'source');
       const sourceHint = (readStringArg(args, 'sourceDetails') + ' ' + latestUserPrompt).toLowerCase();
       const source = ['manual', 'imported_json', 'imported_pdf'].includes(sourceText)
@@ -757,16 +812,8 @@ const executeMentorTool = async (
             ? 'imported_pdf'
             : 'manual';
       const mode = readStringArg(args, 'mode') === 'skip_existing' ? 'skip_existing' : 'replace';
-      return previewBulkDailyStudyHours({
-        records: records as Array<{
-          date: string;
-          hours: number;
-          minutes?: number;
-          subject?: string;
-          topic?: string;
-          recordType?: 'session' | 'daily_total' | 'unknown';
-          sourceDetails?: string;
-        }>,
+      return await previewBulkDailyStudyHours({
+        records,
         source: source as 'manual' | 'imported_json' | 'imported_pdf',
         mode,
         sourceDetails: readStringArg(args, 'sourceDetails') || latestUserPrompt.slice(0, 500),
@@ -777,7 +824,18 @@ const executeMentorTool = async (
       if (!hasExplicitBulkConfirmation(latestUserPrompt)) {
         return { status: 'confirmation_required', saved: false, message: 'No bulk records were changed. Show the latest import preview and ask the user to confirm it explicitly before committing.' };
       }
-      return await commitBulkDailyStudyHours({ previewId: readStringArg(args, 'previewId') || undefined });
+      const previewId = readStringArg(args, 'previewId');
+      if (!previewId) {
+        return { status: 'confirmation_required', saved: false, message: 'No bulk records were changed because the exact preview ID was not supplied.' };
+      }
+      const latestUserIndex = conversationMessages.map((message) => message.role).lastIndexOf('user');
+      const precedingAssistant = latestUserIndex > 0
+        ? [...conversationMessages.slice(0, latestUserIndex)].reverse().find((message) => message.role === 'assistant')
+        : undefined;
+      if (!precedingAssistant?.content.includes(previewId)) {
+        return { status: 'not_authorized', saved: false, message: 'No bulk records were changed. The exact preview ID must appear in the immediately preceding AI Mentor preview response in this conversation. Create and review a new preview if needed.' };
+      }
+      return await commitBulkDailyStudyHours({ previewId });
     }
 
     case 'verify_daily_study_hours': {
@@ -1058,7 +1116,7 @@ HISTORICAL LECTURE TRACKER STUDY-HOURS MANAGEMENT
 - For a single date and exact duration, call upsert_daily_study_hours only when the latest user message explicitly instructs you to insert, set, correct or change that date's Lecture Tracker total. Never make up a date or duration. The write preserves the existing daily record fields and verified AI Focus ledger, writes to the signed-in user's Firebase records, then reads the database value back. Report success only when the function returns saved_and_verified.
 - For an uploaded JSON/PDF study report, call get_uploaded_study_hours_document with its exact displayed file name. Review extraction warnings and confidence. For JSON, prefer the deterministic structured records and inspect invalidRecords; if json.recordLimitReached is true, do not preview or import the partial row set—ask for the source to be split into smaller files. For PDF/text, extract only dates and durations actually present in the supplied source. The tool returns bounded chunks: when document.truncated is true, call it again with the same documentName/documentId and document.nextOffset. Continue until truncated is false before presenting the complete import preview. If document.sourceTextComplete is false or warnings say the original local index was truncated/unreadable, do not claim the full source was processed and do not import a partial report. Do not silently omit pages or fabricate missing values.
 - Classify source rows carefully: a reported whole-day total is recordType daily_total; each individual subject or session line is recordType session. When a date has an explicit daily total and constituent subject/session lines, use the daily total only; do not add the session rows again. Otherwise aggregate distinct session rows for that date and remove exact duplicates. If the source has conflicting daily totals or ambiguous rows, leave those dates out of the preview and explain the conflict.
-- For multiple dates or file imports, call preview_bulk_daily_study_hours first. This does not modify Lecture Tracker records. Show the preview summary, previous vs imported totals, insert/update/skip actions, invalid rows and conflicts. Ask the user to confirm that exact preview before calling bulk_upsert_daily_study_hours in a later turn. A vague “yes” without a pending preview is not enough. If the user says no/cancel, do not write anything.
+- For multiple dates, an explicit identical-hours date range, or file imports, call preview_bulk_daily_study_hours first. This does not modify Lecture Tracker records. Show the inclusive date range, previous vs proposed totals, insert/update/skip actions, invalid rows, conflicts and any omitted preview rows. Include the exact returned Preview ID in the visible response. For an identical-hours range, ask for both exact start and end dates if either is missing; never assume when "every previous day" begins. Ask the user to confirm that exact preview before calling bulk_upsert_daily_study_hours in a later turn. A vague “yes” without the immediately preceding preview ID is not enough. If the user says no/cancel, do not write anything.
 - Bulk confirmation is a separate user authorization step. Call bulk_upsert_daily_study_hours only after a clear affirmative confirmation of the immediately preceding preview. Report inserted, updated, skipped, invalid, conflict and read-back verification counts accurately. If any record fails verification, clearly report partial failure and do not describe the entire import as successful.
 - AI Focus verified time is immutable from these tools. Never write to, alter, reset, synthesize or add to the AI Focus verified-time ledger. Imported/manual daily totals are whole-day overrides and must not be added on top of verified sessions. Preserve both the override and verified seconds separately, and tell the user which value drives the Lecture Tracker displayed total.
 - All dates use Asia/Kolkata. Reject future dates, invalid dates, negative values and totals over 24 hours. Never accept a userId from the model, document or function arguments; user identity is derived from the live Firebase authenticated session.
@@ -1423,7 +1481,8 @@ const callGeminiWithTools = async (
             call.name,
             call.args,
             latestUserPrompt,
-            executionProfile?.allowedTools
+            executionProfile?.allowedTools,
+            messages
           );
           functionResponses.push({
             functionResponse: {
