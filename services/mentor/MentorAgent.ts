@@ -1505,9 +1505,10 @@ const callGeminiWithTools = async (
   ];
   let toolCallsExecuted = 0;
   const latestUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
+  const studyDocumentContext = latestUserPrompt + '\\n' + summary;
   const isStudyDocumentImportRequest =
     !executionProfile &&
-    /\b(pdf|json|study report|study record|study history)\b/i.test(latestUserPrompt) &&
+    /\b(pdf|json|study report|study record|study history)\b/i.test(studyDocumentContext) &&
     /\b(import|extract|upload|update|read)\b/i.test(latestUserPrompt);
   const maxToolRounds = executionProfile?.maxToolRounds
     ? Math.max(1, Math.min(MAX_TOOL_ROUNDS, Math.floor(executionProfile.maxToolRounds)))
@@ -1697,7 +1698,14 @@ export const generateMentorReply = async ({
   if (signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
 
   const latestUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
-  if (hasExplicitStudyHoursWriteIntent(latestUserPrompt) || hasExplicitBulkConfirmation(latestUserPrompt)) {
+  const requestedStudyDocumentImport =
+    /\b(pdf|json|study report|study record|study history)\b/i.test(latestUserPrompt + '\\n' + summary) &&
+    /\b(import|extract|upload|update|read)\b/i.test(latestUserPrompt);
+  if (
+    hasExplicitStudyHoursWriteIntent(latestUserPrompt) ||
+    hasExplicitBulkConfirmation(latestUserPrompt) ||
+    requestedStudyDocumentImport
+  ) {
     return {
       content: 'I could not complete and verify this Lecture Tracker study-hours operation through the database tools. Please do not assume the records were updated. Retry when the secure tool connection is available, then ask me to verify the saved dates.',
       model: AI_MODEL_CONFIG.primaryModel,
