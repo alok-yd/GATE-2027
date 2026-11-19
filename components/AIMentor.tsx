@@ -76,6 +76,7 @@ import type {
 } from '../services/mentor/MentorStorage';
 import { base64ToBlob, blobToBase64, deleteMentorAttachments, readMentorAttachment, saveMentorAttachment } from '../services/mentor/MentorAttachmentStorage';
 import { parseHistoricalStudyHoursDocument, stageDailyStudyHoursImport } from '../services/mentor/LectureTrackerStudyHours';
+import type { DailyStudyHoursRecord } from '../services/mentor/LectureTrackerStudyHours';
 import { summarizeMentorConversation } from '../services/mentor/MentorAgent';
 import type { MentorMode } from '../services/mentor/MentorAgent';
 import { orchestrateJarvisMessage } from '../services/assistant/JarvisOrchestrator';
@@ -766,7 +767,7 @@ const AIMentor: React.FC = () => {
         const warnings = parsedImports.flatMap((item) => item.warnings);
         const duplicateCount = parsedImports.reduce((sum, item) => sum + item.duplicateRecords, 0);
         const invalidCount = parsedImports.reduce((sum, item) => sum + item.invalidRecords, 0);
-        const recordsByDate = new Map<string, { date: string; totalMinutes: number; breakdown?: Array<Record<string, unknown>>; sourceDetails?: string }>();
+        const recordsByDate = new Map<string, DailyStudyHoursRecord>();
         const conflictingDates = new Set<string>();
         parsedImports.forEach((parsed) => parsed.records.forEach((record) => {
           const prior = recordsByDate.get(record.date);
