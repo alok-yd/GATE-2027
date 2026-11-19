@@ -478,8 +478,13 @@ const PROMPT_MONTHS: Record<string, string> = {
 
 const parsePromptStudyDates = (prompt: string): string[] => {
   const dates = new Set<string>();
-  const yearCandidates = new Set(prompt.match(/\b20\d{2}\b/g) || []);
-  const inferredYear = yearCandidates.size === 1 ? Array.from(yearCandidates)[0] : null;
+  const explicitDateYears = new Set<string>();
+  const monthDayTokens: Array<{ month: string; day: string; year?: string }> = [];
+
+  const currentYear = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+  }).format(new Date());
 
   const add = (year: string, month: string, day: string) => {
     const normalized = year + '-' + month.padStart(2, '0') + '-' + day.padStart(2, '0');
@@ -492,21 +497,38 @@ const parsePromptStudyDates = (prompt: string): string[] => {
   };
 
   for (const match of prompt.matchAll(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g)) {
+    explicitDateYears.add(match[1]);
     add(match[1], match[2], match[3]);
   }
   for (const match of prompt.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](20\d{2})\b/g)) {
+    explicitDateYears.add(match[3]);
     add(match[3], match[2], match[1]);
   }
   for (const match of prompt.matchAll(/\b(\d{1,2})\s+([A-Za-z]+)\.?[,]?(?:\s+(20\d{2}))?\b/g)) {
     const month = PROMPT_MONTHS[match[2].toLowerCase()];
-    const year = match[3] || inferredYear;
-    if (month && year) add(year, month, match[1]);
+    if (month) {
+      if (match[3]) explicitDateYears.add(match[3]);
+      monthDayTokens.push({ month, day: match[1], year: match[3] });
+    }
   }
   for (const match of prompt.matchAll(/\b([A-Za-z]+)\s+(\d{1,2})[,]?(?:\s+(20\d{2}))?\b/g)) {
     const month = PROMPT_MONTHS[match[1].toLowerCase()];
-    const year = match[3] || inferredYear;
-    if (month && year) add(year, month, match[2]);
+    if (month) {
+      if (match[3]) explicitDateYears.add(match[3]);
+      monthDayTokens.push({ month, day: match[2], year: match[3] });
+    }
   }
+
+  const inferredYear = explicitDateYears.size === 1
+    ? Array.from(explicitDateYears)[0]
+    : explicitDateYears.size === 0
+      ? currentYear
+      : null;
+  monthDayTokens.forEach((token) => {
+    const year = token.year || inferredYear;
+    if (year) add(year, token.month, token.day);
+  });
+
   return Array.from(dates).sort();
 };
 
