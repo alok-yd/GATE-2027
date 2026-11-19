@@ -23,7 +23,14 @@ interface DailyTarget {
   hoursStudiedSource?: 'ai_focus' | 'manual';
   manualHoursStudied?: number;
   aiFocusVerifiedSeconds?: number;
-  studyHoursOverride?: { source?: string; sourceDetails?: string; importedAt?: string };
+  studyHoursOverride?: {
+    source?: string;
+    sourceDetails?: string;
+    importedAt?: string;
+    importId?: string;
+    verifiedSecondsAtImport?: number;
+    subjectBreakdown?: Array<{ subject: string; minutes: number; topic?: string }>;
+  };
 }
 
 const createDefaultDailyTarget = (date: string): DailyTarget => ({
@@ -82,6 +89,22 @@ const loadDailyTargetWithAiFocusSync = (date: string): DailyTarget => {
               source: typeof parsed.studyHoursOverride.source === 'string' ? parsed.studyHoursOverride.source : undefined,
               sourceDetails: typeof parsed.studyHoursOverride.sourceDetails === 'string' ? parsed.studyHoursOverride.sourceDetails : undefined,
               importedAt: typeof parsed.studyHoursOverride.importedAt === 'string' ? parsed.studyHoursOverride.importedAt : undefined,
+              importId: typeof parsed.studyHoursOverride.importId === 'string' ? parsed.studyHoursOverride.importId : undefined,
+              verifiedSecondsAtImport: Math.max(0, finiteNumberOr(parsed.studyHoursOverride.verifiedSecondsAtImport, 0)),
+              subjectBreakdown: Array.isArray(parsed.studyHoursOverride.subjectBreakdown)
+                ? parsed.studyHoursOverride.subjectBreakdown
+                    .filter((item): item is Record<string, unknown> =>
+                      isPlainRecord(item) &&
+                      typeof item.subject === 'string' &&
+                      Number.isFinite(Number(item.minutes)) &&
+                      Number(item.minutes) >= 0
+                    )
+                    .map((item) => ({
+                      subject: String(item.subject).slice(0, 100),
+                      minutes: Math.floor(Number(item.minutes)),
+                      ...(typeof item.topic === 'string' ? { topic: item.topic.slice(0, 160) } : {}),
+                    }))
+                : undefined,
             }
           : undefined,
         date,
@@ -98,6 +121,9 @@ const loadDailyTargetWithAiFocusSync = (date: string): DailyTarget => {
       hoursStudied: manualHours,
       hoursStudiedSource: 'manual',
       manualHoursStudied: manualHours,
+      // Keep the webcam-verified ledger current even while a whole-day
+      // manual/imported override is the value displayed as Total Studied Hours.
+      aiFocusVerifiedSeconds: StorageService.getVerifiedStudySecondsForDate(date),
     };
   }
 
@@ -366,6 +392,13 @@ const Tracker: React.FC = () => {
         ? {
             hoursStudiedSource: 'manual' as const,
             manualHoursStudied: Number(value) || 0,
+            studyHoursOverride: {
+              source: 'manual',
+              sourceDetails: 'Manually entered or corrected in Lecture Tracker.',
+              importedAt: new Date().toISOString(),
+              verifiedSecondsAtImport: StorageService.getVerifiedStudySecondsForDate(dailyTarget.date),
+              subjectBreakdown: [],
+            },
           }
         : {}),
     };
@@ -418,10 +451,21 @@ const Tracker: React.FC = () => {
   useEffect(() => {
     const refreshSyncedHours = () => {
       setDailyTarget((current) => {
-        if (current.date !== selectedDate || current.hoursStudiedSource === 'manual') return current;
+        if (current.date !== selectedDate) return current;
 
         const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(selectedDate);
         const syncedHours = Number((verifiedSeconds / 3600).toFixed(2));
+        if (current.hoursStudiedSource === 'manual') {
+          if (current.aiFocusVerifiedSeconds === verifiedSeconds) return current;
+          const updated: DailyTarget = { ...current, aiFocusVerifiedSeconds: verifiedSeconds };
+          try {
+            localStorage.setItem(`gate_daily_target_${selectedDate}`, JSON.stringify(updated));
+          } catch (error) {
+            console.error('[Lecture Tracker] Could not save refreshed verified-time metadata:', error);
+          }
+          return updated;
+        }
+
         if (
           current.aiFocusVerifiedSeconds === verifiedSeconds &&
           current.hoursStudied === syncedHours
@@ -709,7 +753,11 @@ const Tracker: React.FC = () => {
                     <label className="block text-sm font-bold text-slate-700">Total Hours Studied</label>
                     {dailyTarget.hoursStudiedSource === 'manual' ? (
                       <span className="rounded-full bg-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-600">
-                        {dailyTarget.studyHoursOverride?.source?.startsWith('imported_') ? 'Imported history' : 'Manual entry'}
+                        {dailyTarget.studyHoursOverride?.source?.startsWith('imported_')
+                          ? 'Imported history'
+                          : dailyTarget.studyHoursOverride?.source === 'ai_mentor'
+                            ? 'AI Mentor update'
+                            : 'Manual entry'}
                       </span>
                     ) : (
                       <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">
@@ -734,9 +782,21 @@ const Tracker: React.FC = () => {
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                     <p className="text-[11px] text-slate-500">
                       {dailyTarget.hoursStudiedSource === 'manual'
-                        ? 'Manual hours are kept separate from the AI Focus verified-time ledger.'
+                        ? `Reported whole-day total is kept separate from AI Focus. Verified time: ${Math.floor((dailyTarget.aiFocusVerifiedSeconds || 0) / 3600)}h ${Math.floor(((dailyTarget.aiFocusVerifiedSeconds || 0) % 3600) / 60)}m ${(dailyTarget.aiFocusVerifiedSeconds || 0) % 60}s`
                         : `Verified AI Focus time: ${Math.floor((dailyTarget.aiFocusVerifiedSeconds || 0) / 3600)}h ${Math.floor(((dailyTarget.aiFocusVerifiedSeconds || 0) % 3600) / 60)}m ${(dailyTarget.aiFocusVerifiedSeconds || 0) % 60}s`}
                     </p>
+                    {dailyTarget.hoursStudiedSource === 'manual' && dailyTarget.studyHoursOverride?.subjectBreakdown?.length ? (
+                      <div className="mt-3 border-t border-slate-200 pt-3">
+                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Imported subject breakdown</p>
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
+                          {dailyTarget.studyHoursOverride.subjectBreakdown.map((item, index) => (
+                            <span key={item.subject + '-' + item.topic + '-' + index}>
+                              {item.subject}{item.topic ? ' · ' + item.topic : ''}: {Math.floor(item.minutes / 60) ? Math.floor(item.minutes / 60) + 'h ' : ''}{item.minutes % 60 ? (item.minutes % 60) + 'm' : item.minutes % 60 === 0 && item.minutes >= 60 ? '' : '0m'}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       onClick={dailyTarget.hoursStudiedSource === 'manual'
