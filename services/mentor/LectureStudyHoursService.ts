@@ -1017,7 +1017,7 @@ export const getUploadedStudyHoursDocument = (input: {
       warnings: document.warnings,
       sourceTextComplete: document.extractionConfidence >= 0.8 &&
         !document.warnings?.some((warning) => /index limit.*truncated|text.*truncated|unreadable|multimodal extraction was unavailable/i.test(warning)) &&
-        !/\\[unreadable(?: region)?\\]/i.test(document.text),
+        !/\[unreadable(?: region)?\]/i.test(document.text),
       textLength: document.text.length,
       startOffset,
       extractedText,
