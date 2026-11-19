@@ -689,7 +689,8 @@ export const processTextDocument = async (
 
 export const processUploadedDocument = async (
   file: File,
-  purpose: DocumentPurpose
+  purpose: DocumentPurpose,
+  options: { skipDerivedRecords?: boolean } = {}
 ): Promise<StoredDocument> => {
   if (file.size > MAX_DOCUMENT_BYTES) {
     throw new Error('File exceeds the 8 MB local import limit.');
@@ -780,7 +781,7 @@ export const processUploadedDocument = async (
   };
 
   saveDocumentAndChunks(document);
-  createDerivedRecords(document);
+  if (!options.skipDerivedRecords) createDerivedRecords(document);
   return document;
 };
 
