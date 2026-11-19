@@ -176,9 +176,9 @@ const parseMinuteField = (value: unknown): number | null => {
   }
   if (typeof value !== 'string' || !value.trim()) return null;
   const text = value.trim();
-  if (/^\d+$/.test(text)) {
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
     const minutes = Number(text);
-    return minutes <= 24 * 60 ? minutes : null;
+    return Number.isInteger(minutes) && minutes <= 24 * 60 ? minutes : null;
   }
   const duration = parseDurationTextMinutes(text);
   return duration != null && duration <= 24 * 60 ? duration : null;
@@ -1005,7 +1005,7 @@ export const getUploadedStudyHoursDocument = (input: {
       kind: document.kind,
       extractionConfidence: document.extractionConfidence,
       warnings: document.warnings,
-      sourceTextComplete: !document.warnings?.some((warning) => /index limit.*truncated|text.*truncated/i.test(warning)),
+      sourceTextComplete: document.extractionConfidence >= 0.8 && !document.warnings?.some((warning) => /index limit.*truncated|text.*truncated|unreadable|multimodal extraction was unavailable/i.test(warning)),
       textLength: document.text.length,
       startOffset,
       extractedText,
