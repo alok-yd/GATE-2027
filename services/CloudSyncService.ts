@@ -1075,6 +1075,16 @@ export const commitCloudSyncableRecordsNow = async (
   return { uid: user.uid, keys: Array.from(unique.keys()), updatedAtClient };
 };
 
+export const flushCloudSyncWritesNow = async (): Promise<void> => {
+  if (!currentUser || !syncReady || getActiveUserStorageUid() !== currentUser.uid) {
+    throw new Error('A ready, authenticated ACHIEVER cloud account is required before modifying historical study hours.');
+  }
+  await flushAllPending();
+  if (pendingWrites.size) {
+    throw new Error('Some existing ACHIEVER changes are still waiting to sync. Reconnect and retry so the historical import cannot overwrite pending work.');
+  }
+};
+
 export const syncCloudDataNow = async (): Promise<void> => {
   if (!currentUser) throw new Error('Connect your Google account before syncing.');
   updateState({ status: 'syncing', message: 'Syncing recent ACHIEVER changes…' });
