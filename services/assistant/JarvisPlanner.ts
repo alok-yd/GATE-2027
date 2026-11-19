@@ -20,6 +20,16 @@ const hasExplicitLectureTrackerWriteRequest = (prompt: string): boolean => {
   return action && (destination || task && /\b(lecture tracker|tracker)\b/i.test(text));
 };
 
+const hasExplicitLectureStudyHoursWriteRequest = (prompt: string): boolean => {
+  const text = prompt.toLowerCase();
+  if (/\b(don't|do not|never|no need to)\s+(add|insert|save|update|change|correct|import|record|backfill|set)\b/i.test(text)) {
+    return false;
+  }
+  const action = /\b(add|insert|save|update|change|correct|import|record|backfill|set|apply)\b/i.test(text);
+  const destination = /(lecture tracker|daily study log|study hours?|hours studied|total hours|study time|historical study records?)/i.test(text);
+  return action && destination;
+};
+
 const isOverallPreparationRequest = (prompt: string): boolean =>
   /overall preparation|overall gate preparation|comprehensive preparation analysis|full preparation analysis|analyse my preparation|analyze my preparation|how is my (?:gate )?preparation|preparation status|overall progress|complete preparation review|daily intelligence briefing|daily briefing|all sections|all tracker data|full workspace|complete workspace|entire achiever|everything in achiever|complete app snapshot/i.test(prompt);
 
@@ -70,11 +80,12 @@ export const planJarvisExecution = (
     return { mode: 'direct', reason: 'Empty request', agents: [], maxParallelAgents: 0, readOnly: true };
   }
 
-  // Preserve the existing single, narrowly authorized Lecture Tracker write path.
-  if (hasExplicitLectureTrackerWriteRequest(text)) {
+  // Keep explicitly authorized Lecture Tracker task and study-hour writes
+  // on the direct permission-checked Mentor tool path, never a read-only specialist.
+  if (hasExplicitLectureTrackerWriteRequest(text) || hasExplicitLectureStudyHoursWriteRequest(text)) {
     return {
       mode: 'direct',
-      reason: 'Explicit Lecture Tracker write request must use the existing permission-checked Mentor tool.',
+      reason: 'Explicit Lecture Tracker write request must use the permission-checked Mentor database tools.',
       agents: [],
       maxParallelAgents: 0,
       readOnly: false,
