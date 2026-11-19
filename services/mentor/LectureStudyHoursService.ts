@@ -68,7 +68,8 @@ interface StoredImportPreview {
 
 const DAILY_KEY_PREFIX = 'gate_daily_target_';
 const AUDIT_KEY = 'gate_daily_study_hours_audit_v1';
-const PENDING_IMPORT_KEY = 'gate_daily_study_hours_pending_import_v1';
+// Pending confirmation state is private per-UID browser storage, not shared cloud data.
+const PENDING_IMPORT_KEY = '__achiever_study_hours_pending_import_v1';
 const MAX_IMPORT_SOURCE_ROWS = 2000;
 const MAX_IMPORT_DATES = 365;
 const MAX_AUDIT_ROWS = 800;
@@ -253,9 +254,31 @@ const makeAuditEntry = (input: {
   timestamp: string;
 }) => ({
   ...input,
+  sourceDetails: input.sourceDetails.slice(0, 180),
   action: input.previousSource === 'missing' ? 'insert' : 'update',
   note: 'Historical whole-day total override. AI Focus verified-time ledger remains unchanged.',
 });
+
+const verifyCloudAuditEntries = async (uid: string, expectedIds: string[]): Promise<boolean> => {
+  const reference = doc(collection(cloudDb, 'users', uid, 'appData'), encodeURIComponent(AUDIT_KEY));
+  const snapshot = await getDoc(reference);
+  if (!snapshot.exists()) return false;
+  const root = snapshot.data();
+  if (root.deleted) return false;
+
+  let rawValue = typeof root.value === 'string' ? root.value : '';
+  if (root.chunked) {
+    const chunkSnapshot = await getDocs(collection(reference, 'chunks'));
+    const chunks = chunkSnapshot.docs
+      .sort((left, right) => Number(left.data().index) - Number(right.data().index))
+      .map((chunk) => String(chunk.data().value ?? ''));
+    if (root.chunkCount && chunks.length !== Number(root.chunkCount)) return false;
+    rawValue = chunks.join('');
+  }
+  const entries = safeParse<unknown>(rawValue, null);
+  if (!Array.isArray(entries)) return false;
+  return expectedIds.every((id) => entries.some((entry) => isRecord(entry) && entry.id === id));
+};
 
 const verifyCloudRecord = async (
   uid: string,
@@ -519,8 +542,10 @@ export const upsertDailyStudyHours = async (input: {
     { key: AUDIT_KEY, value: JSON.stringify(nextAudit) },
   ]);
   const verification = await verifyCloudRecord(uid, date, totalMinutes);
+  const auditTrailSaved = await verifyCloudAuditEntries(uid, [`${importId}:${date}`]);
+  const fullyVerified = verification.verified && auditTrailSaved;
   return {
-    status: verification.verified ? 'saved_and_verified' : 'verification_failed',
+    status: fullyVerified ? 'saved_and_verified' : 'verification_failed',
     date,
     previousHours: previousDisplayedHours,
     savedHours: totalHours,
@@ -528,9 +553,10 @@ export const upsertDailyStudyHours = async (input: {
     source,
     firebaseUid: uid,
     verification,
-    message: verification.verified
-      ? 'The existing Lecture Tracker daily record was written to Firebase and read back successfully.'
-      : 'The cloud write was attempted, but read-back verification did not match. Do not report success.',
+    auditTrailSaved,
+    message: fullyVerified
+      ? 'The Lecture Tracker daily record and its audit entry were written to Firebase and read back successfully.'
+      : 'The daily record or its audit entry failed read-back verification. Do not report success.',
   };
 };
 
@@ -726,7 +752,6 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   await flushCloudSyncWritesNow([
     ...eligibleRows.map((row) => dailyKey(row.date)),
     AUDIT_KEY,
-    PENDING_IMPORT_KEY,
   ]);
   const cloudPreviousRecords = new Map<string, DailyTargetRecord | null>();
   await Promise.all(eligibleRows.map(async (row) => {
@@ -796,16 +821,22 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
   };
   const trimmedAudit = nextAudit.slice(-MAX_AUDIT_ROWS);
   cloudRecords.push({ key: AUDIT_KEY, value: JSON.stringify(trimmedAudit) });
-  cloudRecords.push({ key: PENDING_IMPORT_KEY, value: JSON.stringify(finalizedPreview) });
 
   await commitCloudSyncableRecordsNow(cloudRecords);
+  // Store completion state locally in this UID's private browser namespace.
+  // The staged preview is not part of the shared Firestore tracker record set.
+  localStorage.setItem(PENDING_IMPORT_KEY, JSON.stringify(finalizedPreview));
 
   const verification = await verifyDailyStudyHours({
     expectedRecords: committedRows,
   });
   const verifiedDates = verification.checks.filter((check) => check.verified).map((check) => check.date);
+  const auditTrailSaved = await verifyCloudAuditEntries(
+    uid,
+    committedRows.map((row) => `${staged.id}:${row.date}`)
+  );
   return {
-    status: verification.failed === 0 ? 'saved_and_verified' : 'partial_verification_failure',
+    status: verification.failed === 0 && auditTrailSaved ? 'saved_and_verified' : 'partial_verification_failure',
     previewId: staged.id,
     mode: staged.mode,
     inserted: latestRows.filter((row) => !row.existingRecord).length,
@@ -815,11 +846,11 @@ export const commitBulkDailyStudyHours = async (input: { previewId?: string } = 
     totalImportedHours: Number(committedRows.reduce((sum, row) => sum + row.hours + row.minutes / 60, 0).toFixed(2)),
     verifiedDates,
     failedDates: verification.checks.filter((check) => !check.verified),
-    auditTrailSaved: verification.successful === committedRows.length,
+    auditTrailSaved,
     firebaseUid: uid,
-    message: verification.failed === 0
-      ? 'Bulk study-hour records were written atomically to the authenticated Firebase user and read back successfully.'
-      : 'Some cloud records did not pass read-back verification. Do not report the entire import as successful.',
+    message: verification.failed === 0 && auditTrailSaved
+      ? 'Bulk study-hour records and the complete audit trail were written atomically to the authenticated Firebase user and read back successfully.'
+      : 'Some daily records or audit entries did not pass read-back verification. Do not report the entire import as successful.',
   };
 };
 
