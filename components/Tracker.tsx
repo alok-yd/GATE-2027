@@ -20,9 +20,12 @@ interface DailyTarget {
   goalDescription: string;
   hoursStudied: number;
   completionPercentage: number;
-  hoursStudiedSource?: 'ai_focus' | 'manual';
+  hoursStudiedSource?: 'ai_focus' | 'manual' | 'imported';
   manualHoursStudied?: number;
+  importedHoursStudied?: number;
   aiFocusVerifiedSeconds?: number;
+  studyHoursSourceDetails?: Record<string, unknown>;
+  studyHoursBreakdown?: Array<Record<string, unknown>>;
 }
 
 const createDefaultDailyTarget = (date: string): DailyTarget => ({
@@ -70,26 +73,34 @@ const loadDailyTargetWithAiFocusSync = (date: string): DailyTarget => {
           0,
           Math.min(100, finiteNumberOr(parsed.completionPercentage, defaults.completionPercentage))
         ),
-        hoursStudiedSource: parsed.hoursStudiedSource === 'manual' ? 'manual' : 'ai_focus',
+        hoursStudiedSource:
+          parsed.hoursStudiedSource === 'manual' || parsed.hoursStudiedSource === 'imported' || parsed.hoursStudiedSource === 'ai_focus'
+            ? parsed.hoursStudiedSource
+            : finiteNumberOr(parsed.hoursStudied, 0) > 0 ? 'manual' : 'ai_focus',
         manualHoursStudied: finiteNumberOr(parsed.manualHoursStudied, defaults.manualHoursStudied || 0),
+        importedHoursStudied: finiteNumberOr(parsed.importedHoursStudied, 0),
         aiFocusVerifiedSeconds: Math.max(
           0,
           finiteNumberOr(parsed.aiFocusVerifiedSeconds, defaults.aiFocusVerifiedSeconds || 0)
         ),
+        studyHoursSourceDetails: isPlainRecord(parsed.studyHoursSourceDetails) ? parsed.studyHoursSourceDetails : undefined,
+        studyHoursBreakdown: Array.isArray(parsed.studyHoursBreakdown) ? parsed.studyHoursBreakdown : [],
         date,
       }
     : defaults;
 
-  if (stored.hoursStudiedSource === 'manual') {
-    const manualHours = Math.max(0, finiteNumberOr(
-      stored.manualHoursStudied ?? stored.hoursStudied,
-      0
-    ));
+  if (stored.hoursStudiedSource === 'manual' || stored.hoursStudiedSource === 'imported') {
+    const reportedHours = stored.hoursStudiedSource === 'imported'
+      ? stored.importedHoursStudied ?? stored.hoursStudied
+      : stored.manualHoursStudied ?? stored.hoursStudied;
+    const preservedHours = Math.max(0, finiteNumberOr(reportedHours, 0));
+    const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(date);
     return {
       ...stored,
-      hoursStudied: manualHours,
-      hoursStudiedSource: 'manual',
-      manualHoursStudied: manualHours,
+      hoursStudied: preservedHours,
+      manualHoursStudied: stored.manualHoursStudied,
+      importedHoursStudied: stored.importedHoursStudied,
+      aiFocusVerifiedSeconds: verifiedSeconds,
     };
   }
 
@@ -374,7 +385,9 @@ const Tracker: React.FC = () => {
   };
 
   const handleUseManualStudyHours = () => {
-    const preservedManualHours = Number(dailyTarget.manualHoursStudied ?? dailyTarget.hoursStudied ?? 0);
+    const preservedManualHours = Number(dailyTarget.hoursStudiedSource === 'imported'
+      ? dailyTarget.importedHoursStudied ?? dailyTarget.hoursStudied
+      : dailyTarget.manualHoursStudied ?? dailyTarget.hoursStudied ?? 0);
     const manualHours = Number.isFinite(preservedManualHours) && preservedManualHours > 0
       ? preservedManualHours
       : 0;
@@ -410,7 +423,12 @@ const Tracker: React.FC = () => {
   useEffect(() => {
     const refreshSyncedHours = () => {
       setDailyTarget((current) => {
-        if (current.date !== selectedDate || current.hoursStudiedSource === 'manual') return current;
+        if (current.date !== selectedDate) return current;
+
+        if (current.hoursStudiedSource === 'manual' || current.hoursStudiedSource === 'imported') {
+          const refreshed = loadDailyTargetWithAiFocusSync(selectedDate);
+          return JSON.stringify(current) === JSON.stringify(refreshed) ? current : refreshed;
+        }
 
         const verifiedSeconds = StorageService.getVerifiedStudySecondsForDate(selectedDate);
         const syncedHours = Number((verifiedSeconds / 3600).toFixed(2));
@@ -437,9 +455,11 @@ const Tracker: React.FC = () => {
     };
 
     window.addEventListener('gate-ai-focus-study-time-updated', refreshSyncedHours);
+    window.addEventListener('gate-lecture-tracker-study-hours-updated', refreshSyncedHours);
     window.addEventListener('storage', refreshSyncedHours);
     return () => {
       window.removeEventListener('gate-ai-focus-study-time-updated', refreshSyncedHours);
+      window.removeEventListener('gate-lecture-tracker-study-hours-updated', refreshSyncedHours);
       window.removeEventListener('storage', refreshSyncedHours);
     };
   }, [selectedDate]);
@@ -691,6 +711,10 @@ const Tracker: React.FC = () => {
                       <span className="rounded-full bg-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-600">
                         Manual entry
                       </span>
+                    ) : dailyTarget.hoursStudiedSource === 'imported' ? (
+                      <span className="rounded-full bg-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-600">
+                        Imported historical total
+                      </span>
                     ) : (
                       <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">
                         ✓ Synced from AI Focus
@@ -713,8 +737,8 @@ const Tracker: React.FC = () => {
                   </div>
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                     <p className="text-[11px] text-slate-500">
-                      {dailyTarget.hoursStudiedSource === 'manual'
-                        ? 'Manual hours are kept separate from the AI Focus verified-time ledger.'
+                      {dailyTarget.hoursStudiedSource === 'manual' || dailyTarget.hoursStudiedSource === 'imported'
+                        ? `Reported whole-day hours are kept separate from AI Focus verified time (${Math.floor((dailyTarget.aiFocusVerifiedSeconds || 0) / 3600)}h ${Math.floor(((dailyTarget.aiFocusVerifiedSeconds || 0) % 3600) / 60)}m ${(dailyTarget.aiFocusVerifiedSeconds || 0) % 60}s).`
                         : `Verified AI Focus time: ${Math.floor((dailyTarget.aiFocusVerifiedSeconds || 0) / 3600)}h ${Math.floor(((dailyTarget.aiFocusVerifiedSeconds || 0) % 3600) / 60)}m ${(dailyTarget.aiFocusVerifiedSeconds || 0) % 60}s`}
                     </p>
                     <button
