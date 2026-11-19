@@ -1349,28 +1349,33 @@ const callGeminiWithTools = async (
       // Echo the model content exactly, including Gemini 3 thought signatures.
       contents.push(candidate.content);
 
-      const functionResponses = await Promise.all(functionCalls.map(async (call: any) => {
+      const functionResponses: Array<Record<string, unknown>> = [];
+      // Run tool calls sequentially: an import preview must finish before any
+      // subsequent action, and two writes must never race within one model turn.
+      for (const call of functionCalls) {
         toolCallsExecuted += 1;
         if (toolCallsExecuted > maxToolCalls) {
-          return {
+          functionResponses.push({
             functionResponse: {
               name: call.name,
               ...(typeof call.id === 'string' ? { id: call.id } : {}),
               response: { error: 'Maximum tool-call budget reached. Answer with the evidence already collected.' },
             },
-          };
+          });
+          continue;
         }
 
         try {
           const latestUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
           if (executionProfile && !executionProfile.allowedTools.includes(call.name)) {
-            return {
+            functionResponses.push({
               functionResponse: {
                 name: call.name,
                 ...(typeof call.id === 'string' ? { id: call.id } : {}),
                 response: { error: `Tool not permitted for this specialist: ${call.name}` },
               },
-            };
+            });
+            continue;
           }
           try {
             executionProfile?.onToolCall?.(call.name);
@@ -1383,23 +1388,23 @@ const callGeminiWithTools = async (
             latestUserPrompt,
             executionProfile?.allowedTools
           );
-          return {
+          functionResponses.push({
             functionResponse: {
               name: call.name,
               ...(typeof call.id === 'string' ? { id: call.id } : {}),
               response: { result },
             },
-          };
+          });
         } catch (error) {
-          return {
+          functionResponses.push({
             functionResponse: {
               name: call.name,
               ...(typeof call.id === 'string' ? { id: call.id } : {}),
               response: { error: error instanceof Error ? error.message : String(error) },
             },
-          };
+          });
         }
-      }));
+      }
 
       // Gemini's REST function-calling continuation sends functionResponse parts in a user turn.
       contents.push({ role: 'user', parts: functionResponses });
