@@ -144,7 +144,7 @@ const durationFromObject = (object: Record<string, unknown>) => {
   if (minuteField || hourField) {
     const minuteValue = minuteField ? numericMinutes(minuteField.value, 'minutes') : 0;
     const hourValue = hourField ? numericMinutes(hourField.value, 'hours') : 0;
-    if (minuteValue === null || hourValue === null) return null;
+    if (minuteValue === null || hourValue === null || minuteValue < 0 || hourValue < 0) return null;
     const hasSubject = Boolean(getField(object, ['subject', 'course']));
     const totalLike = Boolean((minuteField && /total|studied/i.test(minuteField.key)) || (hourField && /total|studied/i.test(hourField.key)) || !hasSubject);
     return { minutes: minuteValue + hourValue, totalLike };
@@ -388,6 +388,7 @@ const normaliseIncomingRecord = (value: unknown): DailyStudyHoursRecord => {
     const hours = Number(value.hours ?? value.total_studied_hours ?? 0);
     const minutes = Number(value.minutes ?? value.total_studied_minutes ?? 0);
     if (!Number.isFinite(hours) || !Number.isFinite(minutes)) throw new Error(date + ': hours and minutes must be numeric.');
+    if (hours < 0 || hours > 24) throw new Error(date + ': hours must be between 0 and 24.');
     if (!Number.isInteger(minutes) || minutes < 0 || minutes >= 60) throw new Error(date + ': minutes must be an integer from 0 to 59.');
     totalMinutes = Math.round(hours * 60) + minutes;
   }
