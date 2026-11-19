@@ -724,15 +724,11 @@ export const previewBulkDailyStudyHours = async (input: {
         conflicts.push(`${date}: an explicit daily total was used; accompanying subject/session rows are retained as a breakdown only and are not added again.`);
       }
     } else {
-      const signatures = new Set<string>();
-      const uniqueRows = dayRows.filter((row) => {
-        const signature = [row.totalMinutes, row.subjectBreakdown[0]?.subject || '', row.subjectBreakdown[0]?.topic || '', row.sourceDetails].join('|');
-        if (signatures.has(signature)) return false;
-        signatures.add(signature);
-        return true;
-      });
-      chosenRows = uniqueRows;
-      totalMinutes = uniqueRows.reduce((sum, row) => sum + row.totalMinutes, 0);
+      // Preserve each source row as a distinct study session. Equal durations
+      // for the same subject can be legitimate separate sessions; silently
+      // deduplicating by value would under-report the user's source history.
+      chosenRows = dayRows;
+      totalMinutes = dayRows.reduce((sum, row) => sum + row.totalMinutes, 0);
     }
 
     if (totalMinutes > 24 * 60) {
@@ -1072,7 +1068,7 @@ const parseStudyRowsFromJson = (rawText: string) => {
         ...(typeof subjectValue === 'string' ? { subject: subjectValue } : {}),
         ...(typeof topicValue === 'string' ? { topic: topicValue } : {}),
         recordType: isDailyTotal ? 'daily_total' : subjectValue ? 'session' : 'unknown',
-        sourceDetails: `JSON row; fields: ${[dateKey, hourKey, minuteKey].filter(Boolean).join(', ')}`,
+        sourceDetails: `JSON row ${path}; fields: ${[dateKey, hourKey, minuteKey].filter(Boolean).join(', ')}`,
       });
       return;
     }
