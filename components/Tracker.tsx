@@ -23,6 +23,7 @@ interface DailyTarget {
   hoursStudiedSource?: 'ai_focus' | 'manual';
   manualHoursStudied?: number;
   aiFocusVerifiedSeconds?: number;
+  studyHoursOverride?: { source?: string; sourceDetails?: string; importedAt?: string };
 }
 
 const createDefaultDailyTarget = (date: string): DailyTarget => ({
@@ -444,6 +445,18 @@ const Tracker: React.FC = () => {
     };
   }, [selectedDate]);
 
+  // Refresh the selected daily record after an authorised AI Mentor historical-hours write.
+  useEffect(() => {
+    const refreshImportedStudyHours = (event: Event) => {
+      const detail = (event as CustomEvent<{ dates?: string[] }>).detail;
+      if (Array.isArray(detail?.dates) && !detail.dates.includes(selectedDate)) return;
+      setDailyTarget(loadDailyTargetWithAiFocusSync(selectedDate));
+    };
+
+    window.addEventListener('gate-lecture-study-hours-updated', refreshImportedStudyHours);
+    return () => window.removeEventListener('gate-lecture-study-hours-updated', refreshImportedStudyHours);
+  }, [selectedDate]);
+
   // Save Weekly Target
   const handleWeeklyChange = (field: keyof WeeklyTarget, value: any) => {
     const updated = { ...weeklyTarget, [field]: value };
@@ -689,7 +702,7 @@ const Tracker: React.FC = () => {
                     <label className="block text-sm font-bold text-slate-700">Total Hours Studied</label>
                     {dailyTarget.hoursStudiedSource === 'manual' ? (
                       <span className="rounded-full bg-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-600">
-                        Manual entry
+                        {dailyTarget.studyHoursOverride?.source?.startsWith('imported_') ? 'Imported history' : 'Manual entry'}
                       </span>
                     ) : (
                       <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">
