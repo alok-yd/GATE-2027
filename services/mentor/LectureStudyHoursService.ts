@@ -72,7 +72,7 @@ const AUDIT_KEY = 'gate_daily_study_hours_audit_v1';
 const PENDING_IMPORT_KEY = '__achiever_study_hours_pending_import_v1';
 const MAX_IMPORT_SOURCE_ROWS = 2000;
 const MAX_IMPORT_DATES = 365;
-const MAX_AUDIT_ROWS = 800;
+const MAX_AUDIT_ROWS = 500;
 const PREVIEW_TTL_MS = 30 * 60 * 1000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -574,7 +574,9 @@ const normalizeInputRow = (row: StudyHoursInputRecord, index: number): Normalize
       ? [{ subject: row.subject.trim().slice(0, 100), minutes: totalMinutes, ...(row.topic?.trim() ? { topic: row.topic.trim().slice(0, 160) } : {}) }]
       : [],
     sourceDetails: String(row.sourceDetails || '').trim().slice(0, 500),
-    recordType: row.recordType || 'unknown',
+    recordType: row.recordType === 'daily_total' || row.recordType === 'session' || row.recordType === 'unknown'
+      ? row.recordType
+      : 'unknown',
   };
 };
 
@@ -922,7 +924,7 @@ const parseStudyRowsFromJson = (rawText: string) => {
         ...(typeof subjectValue === 'string' ? { subject: subjectValue } : {}),
         ...(typeof topicValue === 'string' ? { topic: topicValue } : {}),
         recordType: isDailyTotal ? 'daily_total' : subjectValue ? 'session' : 'unknown',
-        sourceDetails: `JSON ${path}; fields: ${[dateKey, hourKey, minuteKey].filter(Boolean).join(', ')}`,
+        sourceDetails: `JSON row; fields: ${[dateKey, hourKey, minuteKey].filter(Boolean).join(', ')}`,
       });
       return;
     }
