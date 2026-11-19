@@ -297,9 +297,11 @@ export const getDailyStudyHours = async (input: {
     if (!match) continue;
     const date = match[1];
     if (date < startDate || date > endDate) continue;
-    localKeys.add(date);
     const value = safeParse<unknown>(localStorage.getItem(key), null);
-    if (isRecord(value)) logsByDate.set(date, value as DailyTargetRecord);
+    if (isRecord(value)) {
+      localKeys.add(date);
+      logsByDate.set(date, value as DailyTargetRecord);
+    }
   }
 
   // Read the authenticated user's canonical daily records directly from the
@@ -783,7 +785,7 @@ const JSON_DATE_KEYS = ['date', 'studyDate', 'study_date', 'logDate', 'log_date'
 const JSON_HOUR_KEYS = [
   'total_studied_hours', 'totalStudiedHours', 'hoursStudied', 'hours_studied',
   'studiedHours', 'studied_hours', 'studyHours', 'study_hours', 'totalHours', 'total_hours', 'hours',
-  'durationHours', 'duration_hours',
+  'durationHours', 'duration_hours', 'duration', 'studyDuration', 'study_duration', 'totalDuration', 'total_duration',
 ];
 const JSON_MINUTE_KEYS = [
   'total_studied_minutes', 'totalStudiedMinutes', 'minutesStudied', 'minutes_studied',
@@ -864,7 +866,12 @@ const parseStudyRowsFromJson = (rawText: string) => {
   };
 };
 
-export const getUploadedStudyHoursDocument = (input: { documentName?: string; documentId?: string } = {}) => {
+export const getUploadedStudyHoursDocument = (input: {
+  documentName?: string;
+  documentId?: string;
+  startOffset?: number;
+  maxChars?: number;
+} = {}) => {
   currentUid();
   const documents = listDocuments();
   let matches = documents;
@@ -897,7 +904,11 @@ export const getUploadedStudyHoursDocument = (input: { documentName?: string; do
   const document = matches[0];
   const isJson = document.name.toLowerCase().endsWith('.json');
   const jsonExtraction = isJson ? parseStudyRowsFromJson(document.text) : null;
-  const maxChars = 120000;
+  const requestedOffset = Number.isFinite(Number(input.startOffset)) ? Math.floor(Number(input.startOffset)) : 0;
+  const startOffset = Math.max(0, Math.min(document.text.length, requestedOffset));
+  const maxChars = Math.max(5000, Math.min(40000, Math.floor(Number(input.maxChars) || 30000)));
+  const extractedText = document.text.slice(startOffset, startOffset + maxChars);
+  const nextOffset = startOffset + extractedText.length;
   return {
     status: document.text.trim() ? 'ready' : 'no_readable_text',
     document: {
@@ -907,8 +918,10 @@ export const getUploadedStudyHoursDocument = (input: { documentName?: string; do
       extractionConfidence: document.extractionConfidence,
       warnings: document.warnings,
       textLength: document.text.length,
-      extractedText: document.text.slice(0, maxChars),
-      truncated: document.text.length > maxChars,
+      startOffset,
+      extractedText,
+      truncated: nextOffset < document.text.length,
+      nextOffset: nextOffset < document.text.length ? nextOffset : null,
     },
     ...(jsonExtraction ? {
       json: {
