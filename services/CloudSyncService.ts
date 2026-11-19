@@ -1031,6 +1031,9 @@ export const commitCloudSyncableRecordsNow = async (
   // Finish pending writes for the exact keys being replaced. Unrelated live
   // records (including an active AI Focus ledger) are not stalled by this action.
   for (const key of unique.keys()) {
+    if (currentUser?.uid !== user.uid || getActiveUserStorageUid() !== user.uid || (expectedUid && user.uid !== expectedUid)) {
+      throw new Error('The authenticated ACHIEVER account changed while preparing the write. No records were committed.');
+    }
     if (!pendingWrites.has(key)) continue;
     const timer = pendingTimers.get(key);
     if (timer) window.clearTimeout(timer);
@@ -1107,6 +1110,9 @@ export const flushCloudSyncWritesNow = async (keys?: string[], expectedUid?: str
   }
   const targets = Array.from(new Set(keys || Array.from(pendingWrites.keys())));
   for (const key of targets) {
+    if (currentUser?.uid !== user.uid || getActiveUserStorageUid() !== user.uid || (expectedUid && user.uid !== expectedUid)) {
+      throw new Error('The authenticated ACHIEVER account changed while pending writes were flushing. Refresh and retry.');
+    }
     if (!pendingWrites.has(key)) continue;
     const timer = pendingTimers.get(key);
     if (timer) window.clearTimeout(timer);
