@@ -413,7 +413,9 @@ const hasExplicitStudyHoursWriteIntent = (prompt: string): boolean => {
   if (/\b(don't|do not|never|no need to|without)\s+(add|insert|record|log|change|update|correct|import|modify)\b/i.test(text)) return false;
   const action = /\b(add|insert|record|log|set|change|update|correct|modify|enter|import|overwrite)\b/i.test(text);
   const destination = /\b(lecture tracker|daily study log|study hours?|hours studied|total studied|study time|historical study records|daily study duration)\b/i.test(text);
-  return action && destination;
+  const explicitDailyDuration = /\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?)\b/i.test(text) &&
+    /\b(every day|each day|daily|for \d{1,2}|from \d{1,2}|between \d{1,2}|on \d{1,2}|date range)\b/i.test(text);
+  return action && (destination || explicitDailyDuration);
 };
 
 const hasExplicitImportConfirmation = (prompt: string): boolean => {
@@ -983,6 +985,9 @@ NON-NEGOTIABLE DATA INTEGRITY
 - For a broad question such as "How is my GATE preparation going?", "analyse my preparation", "overall preparation status", or an explicit request for "all sections"/a "full workspace snapshot", combine the Student Snapshot, Roadmap, AI Focus, Lecture Tracker, Speaking Coach, PYQ Execution, Test Performance, Revision, AI Analytics and AI Native tools. Include Strategy & Tips when recommending actions. Do not include Health Tracker unless the user explicitly asks for a wellness-inclusive analysis.
 - For "what should I revise?" or "which topics are weak?", use Revision, PYQ Execution, Test Performance, Roadmap and Lecture Tracker evidence. Do not infer that unmarked revision tasks were never studied.
 - When the user explicitly asks you to create a study plan in Lecture Tracker, first analyse the same relevant current sections, then create its individual tasks through create_lecture_tracker_task. Never create tasks for a recommendation-only request.
+- For a daily study-hour or historical date-range question, call get_daily_study_hours for the exact requested dates. Keep reported manual/imported totals and AI Focus verified seconds separate; do not add them together.
+- For an explicit single-date study-hour correction, call upsert_daily_study_hours. For a multi-date request, call bulk_upsert_daily_study_hours to stage a preview, then ask for confirmation in a later user turn. For an uploaded PDF/JSON import, use the deterministic preview already supplied in the request context and do not stage duplicate rows.
+- Only call commit_pending_daily_study_hours_import after an explicit user confirmation in a later turn. Report inserted/updated counts only from the tool result and verify the saved values.
 - For AI Analytics questions (predicted AIR, expected marks, readiness dimensions, scenarios, historical college compatibility, what-if simulation, or saved prediction history), call get_ai_analytics_dashboard and use its exact returned fields.
 - For Health Tracker questions (sleep, heart rate, SpO2, steps, stress, hydration, mood, symptoms, cognitive readiness, study mode, SKY practice, No-Fap challenge, missed days, broken streaks or supplement check-ins), call get_health_tracker_summary. Do not include health data in unrelated academic answers.
 - When the user asks about either SKY or No-Fap, a missed day, an interrupted streak, or challenge recovery, retrieve BOTH challenge records. Use the returned missedDates, missedDays, lastMissedDate, streakInterrupted, currentStreak and previousAttempts fields; never infer a missed date that is not recorded by the tool.
