@@ -779,7 +779,7 @@ const executeMentorTool = async (
         documentName: readStringArg(args, 'documentName') || undefined,
         documentId: readStringArg(args, 'documentId') || undefined,
         startOffset: readNumberArg(args, 'startOffset', 0),
-        maxChars: readNumberArg(args, 'maxChars', 30000),
+        maxChars: readNumberArg(args, 'maxChars', 40000),
       });
 
     case 'upsert_daily_study_hours': {
@@ -1485,8 +1485,8 @@ const callGeminiWithTools = async (
   const latestUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
   const isStudyDocumentImportRequest =
     !executionProfile &&
-    /\\b(pdf|json|study report|study record|study history)\\b/i.test(latestUserPrompt) &&
-    /\\b(import|extract|upload|update|read)\\b/i.test(latestUserPrompt);
+    /\b(pdf|json|study report|study record|study history)\b/i.test(latestUserPrompt) &&
+    /\b(import|extract|upload|update|read)\b/i.test(latestUserPrompt);
   const maxToolRounds = executionProfile?.maxToolRounds
     ? Math.max(1, Math.min(MAX_TOOL_ROUNDS, Math.floor(executionProfile.maxToolRounds)))
     : isStudyDocumentImportRequest ? DOCUMENT_IMPORT_TOOL_ROUNDS : MAX_TOOL_ROUNDS;
