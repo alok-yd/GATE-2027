@@ -12,6 +12,34 @@ The root `firebase.json` configures Firebase Hosting to publish Vite's productio
 
 Do not run `firebase init` again for this setup. It is unnecessary and can overwrite the Hosting configuration.
 
+
+## Deploy without installing VS Code or Firebase CLI
+
+A manual GitHub Actions workflow is included at `.github/workflows/deploy-firebase-hosting.yml`. It builds the app on GitHub-hosted runners and deploys to the live Firebase Hosting channel. You only need a browser for this path.
+
+### One-time secure GitHub setup
+
+1. In Google Cloud Console, select project `gate-2027-a8850` and open **IAM & Admin → Service Accounts**.
+2. Create a dedicated service account such as `github-firebase-hosting-deploy`.
+3. Grant it the **Firebase Hosting Admin** role. Do not use a personal account key or grant broad Owner access. The Firebase Hosting deploy action requires a service-account JSON key stored as a GitHub Actions secret. See the official action's [service-account instructions](https://github.com/FirebaseExtended/action-hosting-deploy/blob/main/docs/service-account.md).
+4. Create a JSON key for that service account and download it. Treat this file as a password: never commit it, paste it into chat, or upload it anywhere except the repository's encrypted Actions secret.
+5. Open GitHub repository **Settings → Secrets and variables → Actions → New repository secret**:
+   - Name: `FIREBASE_SERVICE_ACCOUNT_GATE_2027_A8850`
+   - Secret: paste the complete JSON key file contents.
+6. Optionally add these repository Actions secrets if you need the respective capabilities:
+   - `VITE_AI_GATEWAY_URL`: the real public base URL of the existing Render Node AI Gateway (not the frontend URL). The gateway code appends `/api/ai` itself. Leave unset only if you accept that server-backed AI Mentor gateway calls will not be routed from Firebase Hosting.
+   - `VITE_FIREBASE_APPCHECK_SITE_KEY`: the reCAPTCHA Enterprise site key registered for this Firebase project, if App Check is configured for production.
+
+### Run the deployment
+
+1. Open the repository's **Actions** tab.
+2. Select **Deploy ACHIEVER to Firebase Hosting**.
+3. Click **Run workflow**, keep branch `main`, then run it.
+4. Wait for the workflow to complete successfully.
+5. Open `https://gate-2027-a8850.web.app`.
+
+The workflow deploys Hosting only; it does not publish Firestore or Storage rules, change Authentication providers, or deploy the separate Node AI Gateway. It is deliberately manual-triggered so an unconfigured secret cannot cause every normal push to fail. After the first successful deployment, automatic deployments on pushes can be enabled separately if desired.
+
 ## First deployment from Windows PowerShell
 
 Run these commands from the repository root (the directory containing `package.json`):
