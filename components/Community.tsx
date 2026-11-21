@@ -216,7 +216,14 @@ const Community: React.FC = () => {
   }, [selectedRoomId]);
 
   const handleChooseFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(event.currentTarget.files || []);
+    const selected: File[] = [];
+    const fileList = event.currentTarget.files;
+    if (fileList) {
+      for (let index = 0; index < fileList.length; index += 1) {
+        const file = fileList.item(index);
+        if (file) selected.push(file);
+      }
+    }
     event.currentTarget.value = '';
     if (!selected.length) return;
 
