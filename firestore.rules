@@ -63,8 +63,11 @@ service cloud.firestore {
       allow update, delete: if false;
 
       match /members/{memberUid} {
-        // Only students who joined this room can view its member directory.
-        allow get, list: if isRoomMember(roomId);
+        // A student may check their own membership document before joining.
+        // Only existing room members can list the member directory.
+        allow get: if isSignedIn()
+          && (memberUid == request.auth.uid || isRoomMember(roomId));
+        allow list: if isRoomMember(roomId);
 
         allow create: if isSignedIn()
           && memberUid == request.auth.uid
@@ -89,47 +92,47 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastReadAt'])
           && request.resource.data.lastReadAt == request.time;
         allow delete: if isSignedIn() && memberUid == request.auth.uid;
+      }
 
-        match /messages/{messageId} {
-          // Messages are private to authenticated members of this room.
-          allow get, list: if isRoomMember(roomId);
+      match /messages/{messageId} {
+        // Messages are stored directly under communityRooms/{roomId}/messages.
+        allow get, list: if isRoomMember(roomId);
 
-          allow create: if isRoomMember(roomId)
-            && request.resource.data.keys().hasAll([
-              'senderUid', 'senderName', 'senderPhotoURL', 'text', 'createdAt',
-              'replyToMessageId', 'replyToSenderName', 'replyToText'
-            ])
-            && request.resource.data.keys().hasOnly([
-              'senderUid', 'senderName', 'senderPhotoURL', 'text', 'createdAt',
-              'replyToMessageId', 'replyToSenderName', 'replyToText'
-            ])
-            && request.resource.data.senderUid == request.auth.uid
-            && request.resource.data.senderName is string
-            && request.resource.data.senderName.size() <= 60
-            && request.resource.data.senderPhotoURL is string
-            && request.resource.data.senderPhotoURL.size() <= 1024
-            && request.resource.data.text is string
-            && request.resource.data.text.size() > 0
-            && request.resource.data.text.size() <= 4000
-            && request.resource.data.createdAt == request.time
-            && request.resource.data.replyToMessageId is string
-            && request.resource.data.replyToMessageId.size() <= 128
-            && request.resource.data.replyToSenderName is string
-            && request.resource.data.replyToSenderName.size() <= 60
-            && request.resource.data.replyToText is string
-            && request.resource.data.replyToText.size() <= 240;
+        allow create: if isRoomMember(roomId)
+          && request.resource.data.keys().hasAll([
+            'senderUid', 'senderName', 'senderPhotoURL', 'text', 'createdAt',
+            'replyToMessageId', 'replyToSenderName', 'replyToText'
+          ])
+          && request.resource.data.keys().hasOnly([
+            'senderUid', 'senderName', 'senderPhotoURL', 'text', 'createdAt',
+            'replyToMessageId', 'replyToSenderName', 'replyToText'
+          ])
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.senderName is string
+          && request.resource.data.senderName.size() <= 60
+          && request.resource.data.senderPhotoURL is string
+          && request.resource.data.senderPhotoURL.size() <= 1024
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 4000
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.replyToMessageId is string
+          && request.resource.data.replyToMessageId.size() <= 128
+          && request.resource.data.replyToSenderName is string
+          && request.resource.data.replyToSenderName.size() <= 60
+          && request.resource.data.replyToText is string
+          && request.resource.data.replyToText.size() <= 240;
 
-          allow update: if isRoomMember(roomId)
-            && resource.data.senderUid == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt'])
-            && request.resource.data.text is string
-            && request.resource.data.text.size() > 0
-            && request.resource.data.text.size() <= 4000
-            && request.resource.data.editedAt == request.time;
+        allow update: if isRoomMember(roomId)
+          && resource.data.senderUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 4000
+          && request.resource.data.editedAt == request.time;
 
-          allow delete: if isRoomMember(roomId)
-            && resource.data.senderUid == request.auth.uid;
-        }
+        allow delete: if isRoomMember(roomId)
+          && resource.data.senderUid == request.auth.uid;
       }
     }
   }
