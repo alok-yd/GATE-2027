@@ -10,6 +10,91 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isApprovedDefaultRoomSeed(roomId) {
+      return (
+        (roomId == 'general-community'
+          && request.resource.data.name == 'General Community'
+          && request.resource.data.description == 'Introductions, preparation updates and general GATE conversations.'
+          && request.resource.data.category == 'General'
+          && request.resource.data.sortOrder == 1)
+        || (roomId == 'doubt-solving'
+          && request.resource.data.name == 'Doubt Solving'
+          && request.resource.data.description == 'Ask questions, explain concepts and help fellow aspirants.'
+          && request.resource.data.category == 'General'
+          && request.resource.data.sortOrder == 2)
+        || (roomId == 'pyq-discussion'
+          && request.resource.data.name == 'PYQ Discussion'
+          && request.resource.data.description == 'Discuss previous-year questions, approaches and tricky options.'
+          && request.resource.data.category == 'Practice'
+          && request.resource.data.sortOrder == 3)
+        || (roomId == 'mock-test-analysis'
+          && request.resource.data.name == 'Mock Test Analysis'
+          && request.resource.data.description == 'Discuss mock-test mistakes, strategies and time management.'
+          && request.resource.data.category == 'Practice'
+          && request.resource.data.sortOrder == 4)
+        || (roomId == 'c-programming'
+          && request.resource.data.name == 'C Programming'
+          && request.resource.data.description == 'Pointers, arrays, expressions, storage classes and output questions.'
+          && request.resource.data.category == 'Computer Science'
+          && request.resource.data.sortOrder == 5)
+        || (roomId == 'data-structures'
+          && request.resource.data.name == 'Data Structures'
+          && request.resource.data.description == 'Trees, graphs, hashing, stacks, queues and complexity.'
+          && request.resource.data.category == 'Computer Science'
+          && request.resource.data.sortOrder == 6)
+        || (roomId == 'algorithms'
+          && request.resource.data.name == 'Algorithms'
+          && request.resource.data.description == 'Greedy, dynamic programming, graphs, sorting and analysis.'
+          && request.resource.data.category == 'Computer Science'
+          && request.resource.data.sortOrder == 7)
+        || (roomId == 'dbms'
+          && request.resource.data.name == 'DBMS'
+          && request.resource.data.description == 'SQL, normalization, transactions, indexing and relational algebra.'
+          && request.resource.data.category == 'Computer Science'
+          && request.resource.data.sortOrder == 8)
+        || (roomId == 'operating-systems'
+          && request.resource.data.name == 'Operating Systems'
+          && request.resource.data.description == 'Processes, threads, scheduling, synchronization, memory and files.'
+          && request.resource.data.category == 'Computer Science'
+          && request.resource.data.sortOrder == 9)
+        || (roomId == 'computer-organization'
+          && request.resource.data.name == 'COA'
+          && request.resource.data.description == 'Pipelining, cache, memory hierarchy, instructions and I/O.'
+          && request.resource.data.category == 'Computer Science'
+          && request.resource.data.sortOrder == 10)
+        || (roomId == 'computer-networks'
+          && request.resource.data.name == 'Computer Networks'
+          && request.resource.data.description == 'TCP/IP, routing, congestion control, protocols and numericals.'
+          && request.resource.data.category == 'Computer Science'
+          && request.resource.data.sortOrder == 11)
+        || (roomId == 'toc-compiler-design'
+          && request.resource.data.name == 'TOC & Compiler Design'
+          && request.resource.data.description == 'Automata, grammars, decidability, parsing and code generation.'
+          && request.resource.data.category == 'Computer Science'
+          && request.resource.data.sortOrder == 12)
+        || (roomId == 'discrete-mathematics'
+          && request.resource.data.name == 'Discrete Mathematics'
+          && request.resource.data.description == 'Logic, sets, relations, combinatorics, graphs and recurrence.'
+          && request.resource.data.category == 'Mathematics'
+          && request.resource.data.sortOrder == 13)
+        || (roomId == 'engineering-mathematics'
+          && request.resource.data.name == 'Engineering Mathematics'
+          && request.resource.data.description == 'Linear algebra, calculus, probability and numerical methods.'
+          && request.resource.data.category == 'Mathematics'
+          && request.resource.data.sortOrder == 14)
+        || (roomId == 'data-science-ai'
+          && request.resource.data.name == 'Data Science & AI'
+          && request.resource.data.description == 'Probability, statistics, machine learning and artificial intelligence.'
+          && request.resource.data.category == 'Data Science & AI'
+          && request.resource.data.sortOrder == 15)
+        || (roomId == 'gate-da'
+          && request.resource.data.name == 'GATE DA'
+          && request.resource.data.description == 'Dedicated discussions for Data Science and Artificial Intelligence.'
+          && request.resource.data.category == 'Data Science & AI'
+          && request.resource.data.sortOrder == 16)
+      );
+    }
+
     function isRoomMember(roomId) {
       return isSignedIn()
         && exists(/databases/$(database)/documents/communityRooms/$(roomId)/members/$(request.auth.uid));
@@ -34,13 +119,7 @@ service cloud.firestore {
     match /communityRooms/{roomId} {
       allow get, list: if isSignedIn();
       allow create: if isSignedIn()
-        && roomId in [
-          'general-community', 'doubt-solving', 'pyq-discussion', 'mock-test-analysis',
-          'c-programming', 'data-structures', 'algorithms', 'dbms',
-          'operating-systems', 'computer-organization', 'computer-networks',
-          'toc-compiler-design', 'discrete-mathematics', 'engineering-mathematics',
-          'data-science-ai', 'gate-da'
-        ]
+        && isApprovedDefaultRoomSeed(roomId)
         && request.resource.data.keys().hasAll([
           'slug', 'name', 'description', 'category', 'sortOrder',
           'visibility', 'createdBy', 'createdAt'
