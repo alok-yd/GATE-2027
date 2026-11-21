@@ -14,6 +14,7 @@ import HealthTracker from './components/HealthTracker';
 import SpeakingDashboard from './components/SpeakingDashboard';
 import AINativeWorkbench from './components/AINativeWorkbench';
 import FocusTracker from './components/FocusTracker';
+import Community from './components/Community';
 import SectionErrorBoundary from './components/SectionErrorBoundary';
 import AuthGate from './components/auth/AuthGate';
 
@@ -37,6 +38,7 @@ const App: React.FC = () => {
           <Route path="/speaking" element={protectSection('Speaking Coach', <SpeakingDashboard />)} />
           <Route path="/tests" element={protectSection('Test Performance', <TestPerformance />)} />
           <Route path="/revision" element={protectSection('Revision', <Revision />)} />
+          <Route path="/community" element={protectSection('Community', <Community />)} />
           <Route path="/mentor" element={protectSection('AI Mentor', <AIMentor />)} />
           <Route path="/analytics" element={protectSection('AI Analytics', <AIAnalyticsDashboard />)} />
           <Route path="/ai-native" element={protectSection('AI Native', <AINativeWorkbench />)} />

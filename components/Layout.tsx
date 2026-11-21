@@ -138,6 +138,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { name: 'Speaking Coach', path: '/speaking', icon: (
       <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 18a4 4 0 004-4V7a4 4 0 10-8 0v7a4 4 0 004 4z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 11v3a7 7 0 0014 0v-3M12 21v-3"></path></svg>
     )},
+    { name: 'Community', path: '/community', icon: (
+      <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.196-2.04M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.196-2.04M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+    )},
     { name: 'Test Performance', path: '/tests', icon: (
       <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 19V5m5 14V9m5 10v-7m5 7V7M3 19h18"></path></svg>
     )},
