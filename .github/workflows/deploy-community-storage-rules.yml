@@ -1,0 +1,27 @@
+name: Deploy ACHIEVER Community Storage Rules
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-storage-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Authenticate to Google Cloud with Firebase service account
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GATE_2027_A8850 }}
+
+      - name: Deploy Firebase Storage rules only
+        run: npx --yes firebase-tools deploy --only storage --project gate-2027-a8850

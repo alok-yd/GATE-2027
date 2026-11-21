@@ -95,6 +95,35 @@ service cloud.firestore {
       );
     }
 
+    function isValidCommunityAttachment(attachment, roomId) {
+      return attachment is map
+        && attachment.keys().hasAll([
+          'id', 'name', 'contentType', 'size', 'kind', 'storagePath'
+        ])
+        && attachment.keys().hasOnly([
+          'id', 'name', 'contentType', 'size', 'kind', 'storagePath'
+        ])
+        && attachment.id is string
+        && attachment.id.size() <= 64
+        && attachment.name is string
+        && attachment.name.size() > 0
+        && attachment.name.size() <= 120
+        && attachment.contentType in [
+          'image/png', 'image/jpeg', 'image/webp',
+          'application/pdf', 'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'text/plain', 'text/markdown', 'text/csv'
+        ]
+        && attachment.size is int
+        && attachment.size > 0
+        && attachment.size <= 10 * 1024 * 1024
+        && attachment.kind in ['image', 'document']
+        && attachment.storagePath is string
+        && attachment.storagePath.matches(
+          'communityRooms/' + roomId + '/attachments/' + request.auth.uid + '/[A-Za-z0-9_-]+'
+        );
+    }
+
     function isRoomMember(roomId) {
       return isSignedIn()
         && exists(/databases/$(database)/documents/communityRooms/$(roomId)/members/$(request.auth.uid));
@@ -179,11 +208,11 @@ service cloud.firestore {
 
         allow create: if isRoomMember(roomId)
           && request.resource.data.keys().hasAll([
-            'senderUid', 'senderName', 'senderPhotoURL', 'text', 'createdAt',
+            'senderUid', 'senderName', 'senderPhotoURL', 'text', 'attachments', 'createdAt',
             'replyToMessageId', 'replyToSenderName', 'replyToText'
           ])
           && request.resource.data.keys().hasOnly([
-            'senderUid', 'senderName', 'senderPhotoURL', 'text', 'createdAt',
+            'senderUid', 'senderName', 'senderPhotoURL', 'text', 'attachments', 'createdAt',
             'replyToMessageId', 'replyToSenderName', 'replyToText'
           ])
           && request.resource.data.senderUid == request.auth.uid
@@ -192,8 +221,26 @@ service cloud.firestore {
           && request.resource.data.senderPhotoURL is string
           && request.resource.data.senderPhotoURL.size() <= 1024
           && request.resource.data.text is string
-          && request.resource.data.text.size() > 0
           && request.resource.data.text.size() <= 4000
+          && request.resource.data.attachments is list
+          && request.resource.data.attachments.size() <= 4
+          && (
+            request.resource.data.attachments.size() == 0
+            || isValidCommunityAttachment(request.resource.data.attachments[0], roomId)
+          )
+          && (
+            request.resource.data.attachments.size() < 2
+            || isValidCommunityAttachment(request.resource.data.attachments[1], roomId)
+          )
+          && (
+            request.resource.data.attachments.size() < 3
+            || isValidCommunityAttachment(request.resource.data.attachments[2], roomId)
+          )
+          && (
+            request.resource.data.attachments.size() < 4
+            || isValidCommunityAttachment(request.resource.data.attachments[3], roomId)
+          )
+          && (request.resource.data.text.size() > 0 || request.resource.data.attachments.size() > 0)
           && request.resource.data.createdAt == request.time
           && request.resource.data.replyToMessageId is string
           && request.resource.data.replyToMessageId.size() <= 128

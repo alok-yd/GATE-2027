@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
+  FileText,
   Hash,
+  Paperclip,
   LoaderCircle,
   LogOut,
   MessageCircle,
@@ -15,12 +17,14 @@ import {
 } from 'lucide-react';
 import { cloudAuth } from '../services/CloudSyncService';
 import {
+  CommunityAttachment,
   CommunityMember,
   CommunityMessage,
   CommunityRoom,
   deleteCommunityMessage,
   ensureDefaultCommunityRooms,
   getCommunityMembership,
+  getCommunityAttachmentUrl,
   joinCommunityRoom,
   leaveCommunityRoom,
   sendCommunityMessage,
@@ -32,6 +36,40 @@ import type { Timestamp } from 'firebase/firestore';
 
 type MembershipState = 'checking' | 'joined' | 'not-joined';
 const MESSAGE_MAX_LENGTH = 4000;
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const COMMUNITY_FILE_ACCEPT =
+  'image/png,image/jpeg,image/webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv,.png,.jpg,.jpeg,.webp,.pdf,.doc,.docx,.txt,.md,.csv';
+
+interface PendingCommunityFile {
+  id: string;
+  file: File;
+  previewUrl: string | null;
+}
+
+const getCommunityFileKind = (file: File): 'image' | 'document' | null => {
+  const extension = file.name.split('.').pop()?.toLowerCase() || '';
+  const imageTypes = ['image/png', 'image/jpeg', 'image/webp'];
+  const documentTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain',
+    'text/markdown',
+    'text/csv',
+  ];
+  const knownTypes = [...imageTypes, ...documentTypes];
+  if (knownTypes.includes(file.type)) return imageTypes.includes(file.type) ? 'image' : 'document';
+  if (['png', 'jpg', 'jpeg', 'webp'].includes(extension)) return 'image';
+  if (['pdf', 'doc', 'docx', 'txt', 'md', 'csv'].includes(extension)) return 'document';
+  return null;
+};
+
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+};
 
 const timestampDate = (value: Timestamp | null | undefined): Date | null => {
   if (!value || typeof value.toDate !== 'function') return null;
@@ -59,6 +97,76 @@ const Avatar: React.FC<{ name: string; photoURL?: string; size?: 'sm' | 'md' }> 
   </div>
 );
 
+const CommunityAttachmentCard: React.FC<{ attachment: CommunityAttachment }> = ({ attachment }) => {
+  const [downloadUrl, setDownloadUrl] = useState('');
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    getCommunityAttachmentUrl(attachment.storagePath)
+      .then((url) => {
+        if (active) setDownloadUrl(url);
+      })
+      .catch(() => {
+        if (active) setLoadError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [attachment.storagePath]);
+
+  if (loadError) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-500">
+        <FileText className="h-4 w-4 shrink-0" />
+        <span className="truncate">{attachment.name} · Attachment unavailable</span>
+      </div>
+    );
+  }
+
+  if (attachment.kind === 'image') {
+    return (
+      <div className="max-w-full">
+        {downloadUrl ? (
+          <a href={downloadUrl} target="_blank" rel="noreferrer" title={'Open ' + attachment.name}>
+            <img
+              src={downloadUrl}
+              alt={'Question attachment: ' + attachment.name}
+              loading="lazy"
+              className="max-h-72 max-w-full rounded-xl border border-slate-200 bg-white object-contain"
+            />
+          </a>
+        ) : (
+          <div className="flex h-28 w-48 items-center justify-center rounded-xl bg-slate-100 text-xs text-slate-500">
+            <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> Loading image…
+          </div>
+        )}
+        <p className="mt-1 truncate text-[10px] opacity-75">{attachment.name} · {formatFileSize(attachment.size)}</p>
+      </div>
+    );
+  }
+
+  return (
+    <a
+      href={downloadUrl || undefined}
+      target="_blank"
+      rel="noreferrer"
+      className={"flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2.5 transition " + (downloadUrl ? "border-slate-200 bg-white text-slate-800 hover:border-indigo-300 hover:bg-indigo-50" : "border-slate-200 bg-slate-100 text-slate-500")}
+      aria-disabled={!downloadUrl}
+      onClick={(event) => { if (!downloadUrl) event.preventDefault(); }}
+    >
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
+        <FileText className="h-5 w-5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs font-semibold">{attachment.name}</span>
+        <span className="mt-0.5 block text-[10px] text-slate-500">{attachment.contentType.split('/').pop()?.toUpperCase()} · {formatFileSize(attachment.size)}</span>
+      </span>
+      {downloadUrl ? <span className="text-xs font-semibold text-indigo-600">Open</span> : <LoaderCircle className="h-4 w-4 animate-spin" />}
+    </a>
+  );
+};
+
 const Community: React.FC = () => {
   const user = cloudAuth.currentUser;
   const uid = user?.uid || '';
@@ -78,8 +186,81 @@ const Community: React.FC = () => {
   const [deletingMessageId, setDeletingMessageId] = useState('');
   const [error, setError] = useState('');
   const [successNotice, setSuccessNotice] = useState('');
+  const [pendingFiles, setPendingFiles] = useState<PendingCommunityFile[]>([]);
+  const [uploadStatus, setUploadStatus] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingFilesRef = useRef<PendingCommunityFile[]>([]);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const replacePendingFiles = (nextFiles: PendingCommunityFile[]) => {
+    pendingFilesRef.current = nextFiles;
+    setPendingFiles(nextFiles);
+  };
+
+  const releasePendingFiles = (files: PendingCommunityFile[]) => {
+    files.forEach((item) => {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    });
+  };
+
+  useEffect(() => () => releasePendingFiles(pendingFilesRef.current), []);
+
+  useEffect(() => {
+    const previous = pendingFilesRef.current;
+    if (previous.length) {
+      releasePendingFiles(previous);
+      replacePendingFiles([]);
+    }
+    setUploadStatus('');
+  }, [selectedRoomId]);
+
+  const handleChooseFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.currentTarget.files || []);
+    event.currentTarget.value = '';
+    if (!selected.length) return;
+
+    const availableSlots = MAX_ATTACHMENTS - pendingFiles.length;
+    const accepted: PendingCommunityFile[] = [];
+    const rejected: string[] = [];
+
+    selected.forEach((file) => {
+      const kind = getCommunityFileKind(file);
+      if (!kind) {
+        rejected.push(file.name + ' (unsupported type)');
+        return;
+      }
+      if (file.size <= 0 || file.size > MAX_ATTACHMENT_BYTES) {
+        rejected.push(file.name + ' (over 10 MB or empty)');
+        return;
+      }
+      if (accepted.length >= availableSlots) {
+        rejected.push(file.name + ' (maximum 4 files per message)');
+        return;
+      }
+      accepted.push({
+        id: typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : 'pending_' + Date.now() + '_' + accepted.length,
+        file,
+        previewUrl: kind === 'image' ? URL.createObjectURL(file) : null,
+      });
+    });
+
+    if (accepted.length) replacePendingFiles([...pendingFiles, ...accepted]);
+    if (rejected.length) {
+      setError('Some files were not added: ' + rejected.join(', ') + '. Supported: PNG, JPG, WEBP, PDF, DOC, DOCX, TXT, MD and CSV; up to 10 MB each.');
+    } else {
+      setError('');
+    }
+  };
+
+  const handleRemovePendingFile = (fileId: string) => {
+    const nextFiles = pendingFiles.filter((item) => item.id !== fileId);
+    const removed = pendingFiles.find((item) => item.id === fileId);
+    if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+    replacePendingFiles(nextFiles);
+  };
 
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) || null;
   const categories = useMemo(
@@ -202,21 +383,31 @@ const Community: React.FC = () => {
 
   const handleSendMessage = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!selectedRoom || membership !== 'joined' || !draft.trim() || sending) return;
+    if (!selectedRoom || membership !== 'joined' || (!draft.trim() && pendingFiles.length === 0) || sending) return;
     setSending(true);
+    setUploadStatus(pendingFiles.length ? 'Uploading attachments and sending…' : 'Sending…');
     setError('');
     try {
       await sendCommunityMessage(
         selectedRoom.id,
         draft,
+        pendingFiles.map((item) => item.file),
         replyTo ? { id: replyTo.id, senderName: replyTo.senderName, text: replyTo.text } : undefined
       );
       setDraft('');
       setReplyTo(null);
+      releasePendingFiles(pendingFiles);
+      replacePendingFiles([]);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Message could not be sent.');
+      const message = cause instanceof Error ? cause.message : 'Message could not be sent.';
+      if (message.toLowerCase().includes('storage') || message.toLowerCase().includes('bucket')) {
+        setError(message + ' File sharing requires Firebase Cloud Storage to be enabled and the project to use the Blaze plan.');
+      } else {
+        setError(message);
+      }
     } finally {
       setSending(false);
+      setUploadStatus('');
       composerRef.current?.focus();
     }
   };
@@ -403,7 +594,14 @@ const Community: React.FC = () => {
                                   <p className="mt-0.5 line-clamp-2">{message.replyToText}</p>
                                 </div>
                               )}
-                              <p className="whitespace-pre-wrap break-words text-sm leading-6">{message.text}</p>
+                              {message.text && <p className="whitespace-pre-wrap break-words text-sm leading-6">{message.text}</p>}
+                              {message.attachments?.length > 0 && (
+                                <div className="mt-2 space-y-2">
+                                  {message.attachments.map((attachment) => (
+                                    <CommunityAttachmentCard key={attachment.id} attachment={attachment} />
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             <div className={`mt-1 flex items-center gap-3 text-[11px] ${ownMessage ? 'justify-end' : ''}`}>
                               <button type="button" onClick={() => { setReplyTo(message); composerRef.current?.focus(); }} className="inline-flex items-center gap-1 rounded px-1 py-1 font-medium text-slate-500 hover:text-indigo-600">
@@ -431,7 +629,45 @@ const Community: React.FC = () => {
                         <button type="button" aria-label="Cancel reply" onClick={() => setReplyTo(null)} className="rounded p-1 hover:bg-indigo-100"><X className="h-4 w-4" /></button>
                       </div>
                     )}
+                    {pendingFiles.length > 0 && (
+                      <div className="mb-3 flex flex-wrap gap-2">
+                        {pendingFiles.map((item) => (
+                          <div key={item.id} className="flex min-w-0 max-w-full items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50/70 p-2">
+                            {item.previewUrl ? (
+                              <img src={item.previewUrl} alt={'Preview of ' + item.file.name} className="h-11 w-11 rounded-lg object-cover" />
+                            ) : (
+                              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-600"><FileText className="h-5 w-5" /></span>
+                            )}
+                            <span className="min-w-0">
+                              <span className="block max-w-40 truncate text-xs font-semibold text-slate-700">{item.file.name}</span>
+                              <span className="text-[10px] text-slate-500">{formatFileSize(item.file.size)}</span>
+                            </span>
+                            <button type="button" onClick={() => handleRemovePendingFile(item.id)} disabled={sending} aria-label={'Remove ' + item.file.name} className="ml-1 rounded-full p-1 text-slate-400 hover:bg-rose-100 hover:text-rose-600 disabled:opacity-50">
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={COMMUNITY_FILE_ACCEPT}
+                      multiple
+                      className="hidden"
+                      onChange={handleChooseFiles}
+                    />
                     <div className="flex items-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={sending || pendingFiles.length >= MAX_ATTACHMENTS}
+                        title="Attach images or documents"
+                        aria-label="Attach images or documents"
+                        className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Paperclip className="h-5 w-5" />
+                      </button>
                       <textarea
                         ref={composerRef}
                         rows={2}
@@ -439,17 +675,17 @@ const Community: React.FC = () => {
                         value={draft}
                         onChange={(event) => setDraft(event.target.value)}
                         onKeyDown={handleComposerKeyDown}
-                        placeholder={`Message ${selectedRoom.name}…`}
+                        placeholder={'Message ' + selectedRoom.name + '…'}
                         aria-label="Write a community message"
                         className="min-h-12 min-w-0 flex-1 resize-y rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
                       />
-                      <button type="submit" disabled={!draft.trim() || sending} className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300">
+                      <button type="submit" disabled={(!draft.trim() && pendingFiles.length === 0) || sending} className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300">
                         {sending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                         <span className="hidden sm:inline">{sending ? 'Sending' : 'Send'}</span>
                       </button>
                     </div>
-                    <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] text-slate-400">
-                      <span>Enter a message · Ctrl/⌘ + Enter to send</span>
+                    <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
+                      <span>{uploadStatus || 'Attach up to 4 images or documents · 10 MB each · Ctrl/⌘ + Enter to send'}</span>
                       <span>{draft.length}/{MESSAGE_MAX_LENGTH}</span>
                     </div>
                   </form>

@@ -26,5 +26,40 @@ service firebase.storage {
           'text/csv'
         ];
     }
+    function isCommunityRoomMember(roomId) {
+      return request.auth != null
+        && firestore.exists(
+          /databases/(default)/documents/communityRooms/$(roomId)/members/$(request.auth.uid)
+        );
+    }
+
+    match /communityRooms/{roomId}/attachments/{uploaderUid}/{attachmentId} {
+      allow read: if isCommunityRoomMember(roomId);
+
+      allow create: if isCommunityRoomMember(roomId)
+        && uploaderUid == request.auth.uid
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType in [
+          'image/png',
+          'image/jpeg',
+          'image/webp',
+          'application/pdf',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'text/plain',
+          'text/markdown',
+          'text/csv'
+        ]
+        && request.resource.metadata.uploadedBy == request.auth.uid
+        && request.resource.metadata.roomId == roomId;
+
+      allow update: if false;
+
+      allow delete: if request.auth != null
+        && uploaderUid == request.auth.uid
+        && resource.metadata.uploadedBy == request.auth.uid;
+    }
+
   }
 }
