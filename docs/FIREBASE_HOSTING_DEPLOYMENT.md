@@ -104,3 +104,23 @@ If Firebase App Check enforcement is enabled, also provide the registered reCAPT
 5. Inspect browser developer tools for failed API requests and App Check diagnostics.
 
 A successful Hosting deployment proves that the static frontend was published; it does not, by itself, prove that Authentication providers, Firestore/Storage rules, App Check, or the separate AI gateway are configured correctly.
+
+
+## Deploying the Community Firestore rules
+
+The ACHIEVER Community feature adds rules under `communityRooms` while preserving the existing owner-only `users/{uid}/appData` rules. Deploy the rules before expecting room joining or messaging to work.
+
+Browser-only route:
+
+1. Open **Actions → Deploy ACHIEVER Firestore Rules**.
+2. Select **Run workflow** on branch `main`.
+3. Wait for the rules deployment to succeed.
+
+The workflow uses the same `FIREBASE_SERVICE_ACCOUNT_GATE_2027_A8850` repository secret. The service account must have both **Firebase Hosting Admin** and **Firebase Rules Admin** roles. The Firestore-rules workflow deploys only Firestore rules; it does not alter Firestore documents or Storage rules.
+
+Alternatively, from a Firebase CLI-authenticated repository checkout:
+
+```powershell
+firebase deploy --only firestore:rules --project gate-2027-a8850
+```
+
